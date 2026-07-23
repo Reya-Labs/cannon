@@ -35,5 +35,11 @@ const configSpecs = {
 export type Config = Omit<CleanedEnv<typeof configSpecs>, keyof CleanedEnvAccessors>;
 
 export function loadConfig(environment: unknown) {
-  return cleanEnv(environment, configSpecs);
+  const config = cleanEnv(environment, configSpecs);
+
+  if ((config.NODE_ENV === 'production' || config.NODE_ENV === 'staging') && config.S3_READ_KEY === config.S3_WRITE_KEY) {
+    throw new EnvError('S3_READ_KEY and S3_WRITE_KEY must identify different object-storage credentials');
+  }
+
+  return config;
 }

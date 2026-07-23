@@ -27,7 +27,17 @@ store rather than `CANNON_SETTINGS` or browser configuration.
 All four credential fields are required. There is deliberately no fallback to
 a shared S3 identity: a partially migrated deployment fails configuration
 validation instead of silently restoring write access to the public read path.
+Production and staging also reject identical read/write access-key IDs. Create
+two bucket-scoped identities with distinct keys; do not copy one read/write
+token into both pairs.
 Neither identity is exposed to browsers; they remain server-side credentials.
+
+Before activation, use a known backfilled CID to prove that the reader can
+head/read objects, then require an `AccessDenied` result when that same identity
+attempts to write a disposable object under `${S3_FOLDER}/.cannon/preflight/`.
+Remove any disposable object using the writer identity after the check. This
+permission-denial smoke test complements `/health`, which verifies bucket
+access but cannot infer the provider-side policy attached to a credential.
 
 Reads are local-only. A missing CID returns 404; the service does not contact a
 public IPFS gateway or hosted Cannon repository at runtime. Backfill legacy

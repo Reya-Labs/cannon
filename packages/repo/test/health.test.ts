@@ -40,14 +40,13 @@ describe('GET /health', function () {
   });
 
   it('should reject an object store that ignores conditional writes', async function () {
-    const strictS3 = getS3Client(
-      ctx.config,
-      {
+    const strictS3 = getS3Client(ctx.config, {
+      credentials: {
         accessKeyId: ctx.config.S3_WRITE_KEY,
         secretAccessKey: ctx.config.S3_WRITE_SECRET,
       },
-      ctx.config.MEMORY_CACHE
-    );
+      cache: ctx.config.MEMORY_CACHE,
+    });
     const putObject = vi.spyOn(strictS3.client, 'putObject');
     const transientError = new Error('transient S3 failure');
 

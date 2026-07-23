@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import packageJson from '../../package.json';
-import { RepoContext } from '../types';
+import { HealthContext } from '../types';
 
-export function health(ctx: RepoContext) {
+export function health(ctx: HealthContext) {
   const app: Router = Router();
 
   app.get('/health', async (_, res) => {

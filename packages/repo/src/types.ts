@@ -24,3 +24,8 @@ export interface RepoContext {
   s3Read: S3ReadClient;
   s3Write: S3WriteClient;
 }
+
+export type AddContext = Pick<RepoContext, 'config' | 'rdb' | 's3Write'>;
+export type CatContext = Pick<RepoContext, 's3Read'>;
+export type HealthContext = Pick<RepoContext, 'rdb' | 's3Read' | 's3Write'>;
+export type AuthenticationContext = Pick<RepoContext, 'config'>;

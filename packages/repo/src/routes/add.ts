@@ -6,12 +6,12 @@ import { InvalidUploadError, readRequestFile, UploadTooLargeError } from '../hel
 import { DeploymentInfo } from '@usecannon/builder';
 import { Response } from 'express';
 
-import type { RepoContext, RepoRequest } from '../types';
+import type { AddContext, RepoRequest } from '../types';
 import { validateBearerToken } from '../helpers/validateBearerToken';
 
 const RKEY_FRESH_GRACE_PERIOD = 5 * 60; // 5 minutes, or else we delete any uploaded artifacts from fresh
 
-async function readUpload(req: RepoRequest, res: Response, ctx: RepoContext) {
+async function readUpload(req: RepoRequest, res: Response, ctx: AddContext) {
   try {
     const file = await readRequestFile(req, ctx.config.MAX_ARTIFACT_BYTES);
 
@@ -39,7 +39,7 @@ async function readUpload(req: RepoRequest, res: Response, ctx: RepoContext) {
 }
 
 // Middleware for handling regular file uploads
-async function handleFileUpload(req: RepoRequest, res: Response, ctx: RepoContext) {
+async function handleFileUpload(req: RepoRequest, res: Response, ctx: AddContext) {
   const file = await readUpload(req, res, ctx);
   if (!file) return;
 
@@ -96,7 +96,7 @@ async function handleFileUpload(req: RepoRequest, res: Response, ctx: RepoContex
   }
 }
 
-export function add(ctx: RepoContext) {
+export function add(ctx: AddContext) {
   const app: Router = Router();
 
   app.post(

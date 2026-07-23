@@ -62,24 +62,22 @@ export function bootstrap() {
       API_TOKEN_SECRET: 'repo-test-secret',
     };
 
-    const s3Read = getS3Client(
-      config,
-      {
+    const s3Read = getS3Client(config, {
+      credentials: {
         accessKeyId: config.S3_READ_KEY,
         secretAccessKey: config.S3_READ_SECRET,
       },
-      config.MEMORY_CACHE,
-      false
-    );
-    const s3Write = getS3Client(
-      config,
-      {
+      cache: config.MEMORY_CACHE,
+      enforceConditionalWrites: false,
+    });
+    const s3Write = getS3Client(config, {
+      credentials: {
         accessKeyId: config.S3_WRITE_KEY,
         secretAccessKey: config.S3_WRITE_SECRET,
       },
-      config.MEMORY_CACHE,
-      false
-    );
+      cache: config.MEMORY_CACHE,
+      enforceConditionalWrites: false,
+    });
     const rdb = await getDb(config.REDIS_URL);
     const server = await repoServer({ config, s3Read, s3Write, rdb });
     apiTokenSecret = config.API_TOKEN_SECRET;

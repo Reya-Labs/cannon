@@ -66,4 +66,14 @@ describe('repository configuration', function () {
       S3_READ_KEY: '',
     });
   });
+
+  it.each(['production', 'staging'])('rejects a shared read/write identity in %s', function (nodeEnvironment) {
+    expect(() =>
+      loadConfig({
+        ...validEnvironment,
+        NODE_ENV: nodeEnvironment,
+        S3_WRITE_KEY: validEnvironment.S3_READ_KEY,
+      })
+    ).toThrow('S3_READ_KEY and S3_WRITE_KEY must identify different object-storage credentials');
+  });
 });

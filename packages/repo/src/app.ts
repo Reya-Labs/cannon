@@ -35,9 +35,21 @@ export function createApp(ctx: RepoContext): { app: Express; start: () => Promis
     })
   );
 
-  app.use(routes.add(ctx));
-  app.use(routes.cat(ctx));
-  app.use(routes.health(ctx));
+  app.use(
+    routes.add({
+      config: ctx.config,
+      rdb: ctx.rdb,
+      s3Write: ctx.s3Write,
+    })
+  );
+  app.use(routes.cat({ s3Read: ctx.s3Read }));
+  app.use(
+    routes.health({
+      rdb: ctx.rdb,
+      s3Read: ctx.s3Read,
+      s3Write: ctx.s3Write,
+    })
+  );
 
   return {
     app,

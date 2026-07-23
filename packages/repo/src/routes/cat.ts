@@ -1,8 +1,8 @@
 import { Response as ExpressResponse, Router } from 'express';
 import { getContentCID, parseIpfsCid } from '@usecannon/builder/dist/src/ipfs';
-import { RepoContext } from '../types';
+import { CatContext } from '../types';
 
-async function readStoredArtifact(ctx: RepoContext, cid: string) {
+async function readStoredArtifact(ctx: CatContext, cid: string) {
   if (!(await ctx.s3Read.objectExists(cid))) {
     return null;
   }
@@ -24,7 +24,7 @@ function sendArtifact(res: ExpressResponse, data: Buffer) {
   return res.end(data);
 }
 
-export function cat(ctx: RepoContext) {
+export function cat(ctx: CatContext) {
   const app: Router = Router();
 
   app.head('/api/v0/cat', async (req, res) => {

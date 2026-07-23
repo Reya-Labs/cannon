@@ -81,4 +81,16 @@ describe('POST /api/v0/cat', function () {
       writeObject.mockRestore();
     }
   });
+
+  it('should return an artifact immediately after a previously cached miss is uploaded', async function () {
+    const { cid, data } = await loadFixture('registry');
+
+    await ctx.repo.post(`/api/v0/cat?arg=${cid}`).expect(404, 'unregistered ipfs data');
+    await ctx.repo
+      .post('/api/v0/add')
+      .set('Authorization', `Bearer ${ctx.authToken}`)
+      .attach('file', data)
+      .expect(200, { Hash: cid });
+    await ctx.repo.post(`/api/v0/cat?arg=${cid}`).expect(200);
+  });
 });

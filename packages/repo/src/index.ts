@@ -12,23 +12,21 @@ async function main() {
 
   const ctx = { config } as unknown as RepoContext;
 
-  ctx.s3Read = getS3Client(
-    config,
-    {
+  ctx.s3Read = getS3Client(config, {
+    credentials: {
       accessKeyId: config.S3_READ_KEY,
       secretAccessKey: config.S3_READ_SECRET,
     },
-    config.MEMORY_CACHE,
-    false
-  );
-  ctx.s3Write = getS3Client(
-    config,
-    {
+    cache: config.MEMORY_CACHE,
+    enforceConditionalWrites: false,
+  });
+  ctx.s3Write = getS3Client(config, {
+    credentials: {
       accessKeyId: config.S3_WRITE_KEY,
       secretAccessKey: config.S3_WRITE_SECRET,
     },
-    config.MEMORY_CACHE
-  );
+    cache: config.MEMORY_CACHE,
+  });
   ctx.rdb = await getDb(config.REDIS_URL);
 
   const app = createApp(ctx);
