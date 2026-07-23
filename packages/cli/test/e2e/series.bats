@@ -131,6 +131,10 @@ teardown() {
 }
 
 @test "Verify - Verify greeter packages" {
+  if [[ -z "$CANNON_ETHERSCAN_API_KEY" ]]; then
+    skip "CANNON_ETHERSCAN_API_KEY is not configured"
+  fi
+
   set_custom_config
   run verify.sh
   echo $output
