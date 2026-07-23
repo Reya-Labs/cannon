@@ -59,56 +59,9 @@ describe('POST /api/v0/cat', function () {
     await ctx.repo.post(`/api/v0/cat?arg=${cid}`).expect(502, 'stored artifact integrity check failed');
   });
 
-  it('should reject fallback bytes that do not match the requested CID', async function () {
-    const requested = await loadFixture('registry');
-    const wrong = await loadFixture('owned-greeter');
-    ctx.ipfsMock.set(requested.cid, wrong.data);
-
-    await ctx.repo.post(`/api/v0/cat?arg=${requested.cid}`).expect(502, 'upstream artifact integrity check failed');
-
-    expect(await ctx.s3.objectExists(requested.cid)).toBe(false);
-  });
-
-  it('should reject an oversized fallback artifact with 413', async function () {
-    const requested = await loadFixture('registry');
-    ctx.ipfsMock.set(requested.cid, Buffer.alloc(1024 * 1024 + 1));
-
-    await ctx.repo.post(`/api/v0/cat?arg=${requested.cid}`).expect(413, 'upstream artifact too large');
-
-    expect(await ctx.s3.objectExists(requested.cid)).toBe(false);
-  });
-
-  it('should return a pinned file that is not registered but it is available on ipfs', async function () {
-    const { cid, data, content } = await loadFixture('registry');
-
-    await ctx.ipfsMock.add(data);
-
-    const res = await ctx.repo
-      .post(`/api/v0/cat?arg=${cid}`)
-      .set('Accept', 'application/octet-stream')
-      .parse((res, callback) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
-        res.on('end', () => callback(null, Buffer.concat(chunks)));
-      })
-      .expect(200);
-
-    const result = JSON.parse(uncompress(res.body));
-    expect(result).toEqual(content);
-
-    expect(Buffer.from(await ctx.s3.getObject(cid))).toEqual(data);
-    await ctx.ipfsMock.remove(cid);
-
-    const backfilled = await ctx.repo
-      .post(`/api/v0/cat?arg=${cid}`)
-      .set('Accept', 'application/octet-stream')
-      .parse((res, callback) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
-        res.on('end', () => callback(null, Buffer.concat(chunks)));
-      })
-      .expect(200);
-
-    expect(backfilled.body).toEqual(data);
+  it('should not fetch a missing artifact from an upstream IPFS service', async function () {
+    const { cid } = await loadFixture('registry');
+    await ctx.repo.post(`/api/v0/cat?arg=${cid}`).expect(404, 'unregistered ipfs data');
+    expect(await ctx.s3.objectExists(cid)).toBe(false);
   });
 });

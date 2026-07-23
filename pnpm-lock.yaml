@@ -702,9 +702,6 @@ importers:
       redis:
         specifier: ^4.6.13
         version: 4.7.0
-      unzipper:
-        specifier: ^0.12.3
-        version: 0.12.3
     devDependencies:
       '@types/busboy':
         specifier: ^1.5.4
@@ -751,9 +748,6 @@ importers:
       '@types/tmp':
         specifier: ^0.2.6
         version: 0.2.6
-      '@types/unzipper':
-        specifier: ^0.10.11
-        version: 0.10.11
       axios:
         specifier: ^1.9.0
         version: 1.9.0(debug@4.4.0)

@@ -15,12 +15,11 @@ store rather than `CANNON_SETTINGS` or browser configuration.
 - `REDIS_URL`: dedicated persistent Valkey/Redis endpoint.
 - `S3_ENDPOINT`, `S3_BUCKET`, `S3_FOLDER`, `S3_REGION`, `S3_KEY`, `S3_SECRET`:
   private S3-compatible object storage.
-- `IPFS_URL`: temporary read fallback during migration.
-- `MAX_ARTIFACT_BYTES`: maximum upload and fallback response size; defaults to
-  50 MiB.
-- `MAX_ARCHIVE_FILES` and `MAX_ARCHIVE_EXTRACTED_BYTES`: folder-upload
-  expansion limits; default to 1,000 files and 50 MiB.
-- `UPSTREAM_TIMEOUT_MS`: fallback request timeout; defaults to 30 seconds.
+- `MAX_ARTIFACT_BYTES`: maximum upload size; defaults to 50 MiB.
+
+Reads are local-only. A missing CID returns 404; the service does not contact a
+public IPFS gateway or hosted Cannon repository at runtime. Backfill legacy
+artifacts into S3 and verify their CIDs before activating this endpoint.
 
 ## Generate JWT token
 
@@ -48,8 +47,9 @@ API_TOKEN_SECRET=someSecret npx tsx src/scripts/validateToken.ts "someToken"
   -F "file=@./artifact.bin"
 ```
 
-Folder uploads use the same authentication requirement and add
-`?wrap-with-directory=true`.
+Directory uploads (`?wrap-with-directory=true`) are deliberately unsupported
+and return 501. Reya hosts website bundles through its normal static-asset
+pipeline, so the artifact service does not require Pinata credentials.
 
 ## Integrity failure recovery
 
@@ -57,6 +57,6 @@ Artifact reads fail closed if the bytes stored at a CID key do not recompute to
 that CID. The immutable `putObject` path will not overwrite the corrupted
 object automatically. An operator must quarantine and remove the exact
 `${S3_FOLDER}/${CID}` object, verify the replacement bytes locally against the
-CID, and then retry the read while the configured IPFS fallback is available
-or re-publish the verified artifact. Keep this remediation restricted to the
-single affected key and record it in the operational audit trail.
+CID, and then re-publish the verified artifact. Keep this remediation
+restricted to the single affected key and record it in the operational audit
+trail.
