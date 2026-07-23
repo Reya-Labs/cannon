@@ -63,9 +63,11 @@ export async function startServer(): Promise<{
     }
 
     await Promise.all(
-      config.safeTargets.map(({ address, chainId }) =>
-        checkSafeReadiness(providers.get(chainId)!, address, chainId, config.maxBlockAgeSeconds)
-      )
+      config.safeTargets.map(({ address, chainId }) => {
+        const client = providers.get(chainId);
+        if (!client) throw new Error(`RPC client for chain ${chainId} is not configured`);
+        return checkSafeReadiness(client, address, chainId, config.maxBlockAgeSeconds);
+      })
     );
 
     const app = createApp({
@@ -75,6 +77,12 @@ export async function startServer(): Promise<{
       store,
     });
     server = createServer(app);
+    server.on('error', (error) => {
+      console.error('server socket error', {
+        code: errorCode(error, 'unknown'),
+        name: error.name,
+      });
+    });
     await new Promise<void>((resolve, reject) => {
       server!.once('error', reject);
       server!.listen(config.port, () => {
