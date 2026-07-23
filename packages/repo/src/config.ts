@@ -1,4 +1,12 @@
-import { bool, CleanedEnv, CleanedEnvAccessors, cleanEnv, num, str } from 'envalid';
+import { bool, CleanedEnv, CleanedEnvAccessors, cleanEnv, EnvError, makeValidator, num, str } from 'envalid';
+
+const nonEmptyStr = makeValidator<string>((input) => {
+  if (!input.trim()) {
+    throw new EnvError('Value must not be empty');
+  }
+
+  return input;
+});
 
 const configSpecs = {
   NODE_ENV: str({
@@ -17,8 +25,10 @@ const configSpecs = {
   S3_BUCKET: str({ devDefault: 'cannon' }),
   S3_FOLDER: str({ devDefault: 'repo-v2' }),
   S3_REGION: str({ devDefault: 'us-east-1' }),
-  S3_KEY: str({ devDefault: '' }),
-  S3_SECRET: str({ devDefault: '' }),
+  S3_READ_KEY: nonEmptyStr(),
+  S3_READ_SECRET: nonEmptyStr(),
+  S3_WRITE_KEY: nonEmptyStr(),
+  S3_WRITE_SECRET: nonEmptyStr(),
   API_TOKEN_SECRET: str({ devDefault: 'development-secret-key' }),
 };
 

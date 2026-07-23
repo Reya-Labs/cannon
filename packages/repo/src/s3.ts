@@ -10,8 +10,11 @@ interface Params {
   S3_REGION: string;
   S3_BUCKET: string;
   S3_FOLDER: string;
-  S3_KEY: string;
-  S3_SECRET: string;
+}
+
+export interface S3Credentials {
+  accessKeyId: string;
+  secretAccessKey: string;
 }
 
 const retryOptions = {
@@ -50,15 +53,12 @@ function retryS3<T>(operation: () => Promise<T>, shouldRetry: (err: unknown) => 
   }, retryOptions);
 }
 
-export function getS3Client(config: Params, cache = 10_000, enforceConditionalWrites = true) {
+export function getS3Client(config: Params, credentials: S3Credentials, cache = 10_000, enforceConditionalWrites = true) {
   const client = new S3({
     forcePathStyle: false, // Configures to use subdomain/virtual calling format.
     endpoint: config.S3_ENDPOINT,
     region: config.S3_REGION,
-    credentials: {
-      accessKeyId: config.S3_KEY,
-      secretAccessKey: config.S3_SECRET,
-    },
+    credentials,
   });
 
   const cacheOptions = {
