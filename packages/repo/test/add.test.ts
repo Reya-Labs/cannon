@@ -29,6 +29,24 @@ describe('POST /api/v0/add', function () {
     await addRequest().query({ 'wrap-with-directory': 'true' }).expect(501, 'directory uploads are disabled');
   });
 
+  it('should reject directory uploads when any repeated value enables wrapping', async function () {
+    await addRequest()
+      .query({ 'wrap-with-directory': ['false', 'true'] })
+      .expect(501, 'directory uploads are disabled');
+  });
+
+  it('should treat explicitly disabled directory wrapping as a regular upload', async function () {
+    const pkg = await loadFixture('registry');
+
+    await addRequest()
+      .query({ 'wrap-with-directory': 'false' })
+      .attach('file', pkg.data)
+      .expect(200)
+      .expect((res) => {
+        expect(JSON.parse(res.text)).toEqual({ Hash: pkg.cid });
+      });
+  });
+
   it('should return 400 when no data is provided', async function () {
     await addRequest().expect(400, 'no upload data');
   });

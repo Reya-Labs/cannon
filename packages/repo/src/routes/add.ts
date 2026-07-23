@@ -103,7 +103,8 @@ export function add(ctx: RepoContext) {
     '/api/v0/add',
     (req, res, next) => validateBearerToken(req as RepoRequest, res, next, ctx),
     (req, res, next) => {
-      if (req.query['wrap-with-directory'] !== undefined) {
+      const wrapWithDirectory = req.query['wrap-with-directory'];
+      if (wrapWithDirectory === 'true' || (Array.isArray(wrapWithDirectory) && wrapWithDirectory.includes('true'))) {
         return res.status(501).end('directory uploads are disabled');
       }
 
