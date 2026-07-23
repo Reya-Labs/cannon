@@ -42,7 +42,7 @@ function retryS3<T>(operation: () => Promise<T>, shouldRetry: (err: unknown) => 
   }, retryOptions);
 }
 
-export function getS3Client(config: Params, cache = 10_000) {
+export function getS3Client(config: Params, cache = 10_000, enforceConditionalWrites = true) {
   const client = new S3({
     forcePathStyle: false, // Configures to use subdomain/virtual calling format.
     endpoint: config.S3_ENDPOINT,
@@ -60,11 +60,59 @@ export function getS3Client(config: Params, cache = 10_000) {
     max: cache,
   };
 
+  const capabilityKey = `${config.S3_FOLDER}/.cannon/conditional-put-v1`;
+  const capabilityMarker = Buffer.from('cannon-repo-conditional-put-v1');
+  const conflictingMarker = Buffer.from('cannon-repo-conditional-put-conflict');
+  let conditionalWriteValidation: Promise<void> | undefined;
+
+  async function validateConditionalWrites() {
+    if (!enforceConditionalWrites) return;
+
+    conditionalWriteValidation ??= (async () => {
+      try {
+        await client.putObject({
+          Bucket: config.S3_BUCKET,
+          Key: capabilityKey,
+          Body: capabilityMarker,
+          IfNoneMatch: '*',
+        });
+      } catch (err) {
+        if (!isPreconditionFailure(err)) throw err;
+      }
+
+      let conflictRejected = false;
+
+      try {
+        await client.putObject({
+          Bucket: config.S3_BUCKET,
+          Key: capabilityKey,
+          Body: conflictingMarker,
+          IfNoneMatch: '*',
+        });
+      } catch (err) {
+        if (!isPreconditionFailure(err)) throw err;
+        conflictRejected = true;
+      }
+
+      const stored = await client.getObject({
+        Bucket: config.S3_BUCKET,
+        Key: capabilityKey,
+      });
+      const storedBytes = stored.Body ? Buffer.from(await stored.Body.transformToByteArray()) : null;
+
+      if (!conflictRejected || !storedBytes?.equals(capabilityMarker)) {
+        throw new Error('S3 backend does not enforce atomic If-None-Match conditional writes');
+      }
+    })();
+
+    return conditionalWriteValidation;
+  }
+
   const s3 = {
     client,
 
     async healthCheck() {
-      await client.headBucket({ Bucket: config.S3_BUCKET });
+      await Promise.all([client.headBucket({ Bucket: config.S3_BUCKET }), validateConditionalWrites()]);
     },
 
     objectExists: memoize(async function objectExists(key: string) {
@@ -88,6 +136,7 @@ export function getS3Client(config: Params, cache = 10_000) {
 
     async putObject(key: string, data: Buffer) {
       console.log('[s3][putObject]', key);
+      await validateConditionalWrites();
 
       if (await s3.objectExists(key)) {
         const existing = Buffer.from(await s3.getObject(key));

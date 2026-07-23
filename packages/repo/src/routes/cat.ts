@@ -4,11 +4,33 @@ import { getContentCID, parseIpfsCid, uncompress } from '@usecannon/builder/dist
 import { RKEY_FRESH_UPLOAD_HASHES, RKEY_PKG_HASHES, RKEY_EXTRA_HASHES } from '../db';
 import { RepoContext } from '../types';
 
+class ArtifactTooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super(`upstream artifact exceeds the ${maxBytes} byte limit`);
+    this.name = 'ArtifactTooLargeError';
+  }
+}
+
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 async function readBoundedResponse(response: Response, maxBytes: number) {
   const contentLength = Number(response.headers.get('content-length'));
 
   if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-    throw new Error('upstream artifact exceeds size limit');
+    throw new ArtifactTooLargeError(maxBytes);
   }
 
   if (!response.body) {
@@ -23,7 +45,7 @@ async function readBoundedResponse(response: Response, maxBytes: number) {
     totalBytes += data.length;
 
     if (totalBytes > maxBytes) {
-      throw new Error('upstream artifact exceeds size limit');
+      throw new ArtifactTooLargeError(maxBytes);
     }
 
     chunks.push(data);
@@ -101,7 +123,7 @@ export function cat(ctx: RepoContext) {
           method: 'POST',
           signal: AbortSignal.timeout(ctx.config.UPSTREAM_TIMEOUT_MS),
         }),
-        batch.exec(),
+        withTimeout(batch.exec(), ctx.config.UPSTREAM_TIMEOUT_MS, 'Redis artifact lookup timed out'),
       ]);
 
       if (!upstreamRes.ok) {
@@ -130,6 +152,10 @@ export function cat(ctx: RepoContext) {
       await ctx.s3.putObject(cid, rawData);
       return sendArtifact(res, rawData);
     } catch (err) {
+      if (err instanceof ArtifactTooLargeError) {
+        return res.status(413).end('upstream artifact too large');
+      }
+
       console.error('Cannon artifact fallback failed', err);
       return res.status(502).end('cannon package download ipfs fail');
     }

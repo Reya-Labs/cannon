@@ -1,4 +1,5 @@
 import { RedisMemoryServer } from 'redis-memory-server';
+import { createClient } from 'redis';
 
 const servers: RedisMemoryServer[] = [];
 
@@ -10,9 +11,20 @@ function withDatabase(redisUrl: string, database: number) {
 
 export async function redisServerMock(database = 0) {
   if (process.env.TEST_REDIS_URL) {
+    const url = withDatabase(process.env.TEST_REDIS_URL, database);
+
     return {
-      REDIS_URL: withDatabase(process.env.TEST_REDIS_URL, database),
-      close: async () => undefined,
+      REDIS_URL: url,
+      async close() {
+        const client = createClient({ url });
+        await client.connect();
+
+        try {
+          await client.flushDb();
+        } finally {
+          await client.quit();
+        }
+      },
     };
   }
 

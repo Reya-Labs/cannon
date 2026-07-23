@@ -1,6 +1,7 @@
-import { describe, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { version } from '../package.json';
 import { bootstrap } from './helpers/bootstrap';
+import { getS3Client } from '../src/s3';
 
 describe('GET /health', function () {
   const ctx = bootstrap();
@@ -21,5 +22,17 @@ describe('GET /health', function () {
     });
 
     healthCheck.mockRestore();
+  });
+
+  it('should reject an object store that ignores conditional writes', async function () {
+    const strictS3 = getS3Client(ctx.config, ctx.config.MEMORY_CACHE);
+
+    try {
+      await expect(strictS3.healthCheck()).rejects.toThrow(
+        'S3 backend does not enforce atomic If-None-Match conditional writes'
+      );
+    } finally {
+      strictS3.client.destroy();
+    }
   });
 });

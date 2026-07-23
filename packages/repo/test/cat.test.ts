@@ -69,6 +69,15 @@ describe('POST /api/v0/cat', function () {
     expect(await ctx.s3.objectExists(requested.cid)).toBe(false);
   });
 
+  it('should reject an oversized fallback artifact with 413', async function () {
+    const requested = await loadFixture('registry');
+    ctx.ipfsMock.set(requested.cid, Buffer.alloc(1024 * 1024 + 1));
+
+    await ctx.repo.post(`/api/v0/cat?arg=${requested.cid}`).expect(413, 'upstream artifact too large');
+
+    expect(await ctx.s3.objectExists(requested.cid)).toBe(false);
+  });
+
   it('should return a pinned file that is not registered but it is available on ipfs', async function () {
     const { cid, data, content } = await loadFixture('registry');
 

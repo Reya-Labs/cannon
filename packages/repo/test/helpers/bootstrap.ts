@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach } from 'vitest';
 import supertest from 'supertest';
 import { RedisClientType } from 'redis';
 import { getDb } from '../../src/db';
@@ -17,6 +17,7 @@ let bootstrapIndex = 0;
 export function bootstrap() {
   const workerId = parseInt(process.env.VITEST_WORKER_ID || '0');
   const bootstrapId = bootstrapIndex++;
+  let apiTokenSecret = '';
 
   const ctx = {} as {
     repo: supertest.Agent;
@@ -27,6 +28,7 @@ export function bootstrap() {
     s3Mock: Awaited<ReturnType<typeof s3ServerMock>>;
     server: Awaited<ReturnType<typeof repoServer>>;
     authToken: string;
+    config: Config;
   };
 
   beforeAll(async function () {
@@ -65,20 +67,25 @@ export function bootstrap() {
       API_TOKEN_SECRET: 'repo-test-secret',
     };
 
-    const s3 = getS3Client(config, config.MEMORY_CACHE);
+    const s3 = getS3Client(config, config.MEMORY_CACHE, false);
     const rdb = await getDb(config.REDIS_URL);
     const server = await repoServer({ config, s3, rdb });
+    apiTokenSecret = config.API_TOKEN_SECRET;
 
     // create a client to make requests to the Repo server
     ctx.repo = supertest.agent(server.app);
     ctx.rdb = rdb;
     ctx.s3 = s3;
-    ctx.authToken = generateToken(config.API_TOKEN_SECRET, 60);
+    ctx.config = config;
 
     ctx.server = server;
     ctx.ipfsMock = ipfsMock;
     ctx.redisMock = redisMock;
     ctx.s3Mock = s3Mock;
+  });
+
+  beforeEach(function () {
+    ctx.authToken = generateToken(apiTokenSecret, 60);
   });
 
   afterEach(async function () {

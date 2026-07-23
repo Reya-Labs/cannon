@@ -45,9 +45,18 @@ API_TOKEN_SECRET=someSecret npx tsx src/scripts/validateToken.ts "someToken"
  curl -X POST \
   "http://localhost:8081/api/v0/add" \
   -H "Authorization: Bearer JWT_TOKEN" \
-  -H "Content-Type: multipart/form-data" \
   -F "file=@./artifact.bin"
 ```
 
 Folder uploads use the same authentication requirement and add
 `?wrap-with-directory=true`.
+
+## Integrity failure recovery
+
+Artifact reads fail closed if the bytes stored at a CID key do not recompute to
+that CID. The immutable `putObject` path will not overwrite the corrupted
+object automatically. An operator must quarantine and remove the exact
+`${S3_FOLDER}/${CID}` object, verify the replacement bytes locally against the
+CID, and then retry the read while the configured IPFS fallback is available
+or re-publish the verified artifact. Keep this remediation restricted to the
+single affected key and record it in the operational audit trail.
