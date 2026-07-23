@@ -12,7 +12,7 @@ import { blueBright, bold, gray } from 'chalk';
 import prompts from 'prompts';
 import * as viem from 'viem';
 import { logSpinner, logSpinnerStart, logSpinnerEnd } from '../util/console';
-import { getMainLoader } from '../loader';
+import { getIpfsWriteHeaders, getMainLoader } from '../loader';
 import { LocalRegistry } from '../registry';
 import { CliSettings } from '../settings';
 
@@ -55,7 +55,10 @@ export async function publish({
   }
   // Generate CannonStorage to publish ipfs remotely and write to the registry
   const toStorage = new CannonStorage(onChainRegistry, {
-    ipfs: new IPFSLoader(cliSettings.publishIpfsUrl || getCannonRepoRegistryUrl()),
+    ipfs: new IPFSLoader(
+      cliSettings.publishIpfsUrl || getCannonRepoRegistryUrl(),
+      getIpfsWriteHeaders(cliSettings, cliSettings.publishIpfsUrl)
+    ),
   });
 
   // Generate CannonStorage to retrieve the local instance of the package

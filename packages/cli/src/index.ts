@@ -29,7 +29,7 @@ import {
   ensureFoundryCompatibility,
   getPackageReference,
 } from './helpers';
-import { getMainLoader } from './loader';
+import { getIpfsWriteHeaders, getMainLoader } from './loader';
 import { installPlugin, listInstalledPlugins, removePlugin } from './plugins';
 import { createDefaultReadRegistry } from './registry';
 import { CannonRpcNode, getProvider, runRpc } from './rpc';
@@ -416,7 +416,10 @@ applyCommandsConfig(program.command('pin'), commandsConfig.pin).action(async fun
     const fromStorage = new CannonStorage(await createDefaultReadRegistry(cliSettings), getMainLoader(cliSettings));
 
     const toStorage = new CannonStorage(new InMemoryRegistry(), {
-      ipfs: new IPFSLoader(cliSettings.publishIpfsUrl || getCannonRepoRegistryUrl()),
+      ipfs: new IPFSLoader(
+        cliSettings.publishIpfsUrl || getCannonRepoRegistryUrl(),
+        getIpfsWriteHeaders(cliSettings, cliSettings.publishIpfsUrl)
+      ),
     });
 
     logSpinner('Uploading package data for pinning...');

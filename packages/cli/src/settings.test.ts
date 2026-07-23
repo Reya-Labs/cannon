@@ -22,6 +22,7 @@ describe('settings.ts', () => {
       process.env.CANNON_DIRECTORY = '/custom/path';
       process.env.CANNON_RPC_URL = 'https://custom.rpc.url';
       process.env.CANNON_IPFS_TIMEOUT = '60000';
+      process.env.CANNON_IPFS_AUTH_TOKEN = 'write-token';
       process.env.CANNON_REGISTRY_PRIORITY = 'local';
       process.env.CANNON_QUIET = 'true';
 
@@ -29,6 +30,7 @@ describe('settings.ts', () => {
       expect(settings.cannonDirectory).toBe('/custom/path');
       expect(settings.rpcUrl).toBe('https://custom.rpc.url');
       expect(settings.ipfsTimeout).toBe(60000);
+      expect(settings.ipfsAuthToken).toBe('write-token');
       expect(settings.registryPriority).toBe('local');
       expect(settings.quiet).toBe(true);
     });

@@ -1,0 +1,51 @@
+name: Artifact repository
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+  push:
+    branches:
+      - dev
+      - main
+
+concurrency:
+  group: artifact-repository-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  artifact-repository:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      redis:
+        image: redis:7.4.2-alpine@sha256:02419de7eddf55aa5bcf49efb74e88fa8d931b4d77c07eff8a6b2144472b6952
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.11.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @usecannon/builder build
+      - run: pnpm exec eslint 'packages/{cli,repo}/**/*.{js,ts}'
+      - run: pnpm --filter @usecannon/cli build
+      - run: pnpm --filter @usecannon/cli exec jest src/settings.test.ts src/loader.test.ts src/helpers.test.ts --runInBand
+      - run: pnpm --filter @usecannon/repo build
+      - run: pnpm --filter @usecannon/repo test
+        env:
+          TEST_REDIS_URL: redis://127.0.0.1:6379

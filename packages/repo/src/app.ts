@@ -2,7 +2,6 @@ import { Server } from 'node:http';
 import cors from 'cors';
 import express, { Express } from 'express';
 import morgan from 'morgan';
-import connectBusboy from 'connect-busboy';
 import { rateLimit } from 'express-rate-limit';
 import helmet from 'helmet';
 import * as routes from './routes';
@@ -35,8 +34,6 @@ export function createApp(ctx: RepoContext): { app: Express; start: () => Promis
       validate: { trustProxy: !ctx.config.TRUST_PROXY },
     })
   );
-
-  app.use(connectBusboy({ immediate: true }));
 
   app.use(routes.add(ctx));
   app.use(routes.cat(ctx));

@@ -11,6 +11,7 @@ export interface IpfsMock {
   close: () => Promise<void>;
   add: (data: Buffer) => Promise<string>;
   get: (cid: string) => Buffer | undefined;
+  set: (cid: string, data: Buffer) => void;
   remove: (cid: string) => Promise<void>;
   reset: () => void;
 }
@@ -39,6 +40,10 @@ export async function ipfsServerMock() {
 
     get(cid: string) {
       return mockStorage.get(cid);
+    },
+
+    set(cid: string, data: Buffer) {
+      mockStorage.set(cid, data);
     },
 
     async remove(cid: string) {

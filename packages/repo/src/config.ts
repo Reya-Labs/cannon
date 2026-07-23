@@ -11,6 +11,10 @@ const configSpecs = {
   RATE_LIMIT_WINDOW: num({ default: 10 * 1000 }),
   RATE_LIMIT_MAX: num({ default: 50 }),
   MEMORY_CACHE: num({ default: 10_000 }),
+  MAX_ARTIFACT_BYTES: num({ default: 50 * 1024 * 1024 }),
+  MAX_ARCHIVE_FILES: num({ default: 1_000 }),
+  MAX_ARCHIVE_EXTRACTED_BYTES: num({ default: 50 * 1024 * 1024 }),
+  UPSTREAM_TIMEOUT_MS: num({ default: 30 * 1000 }),
   REDIS_URL: str({ devDefault: 'redis://localhost:6379' }),
   IPFS_URL: str({ devDefault: 'https://ipfs.io' }),
   S3_ENDPOINT: str({ devDefault: '' }),
@@ -21,7 +25,7 @@ const configSpecs = {
   S3_SECRET: str({ devDefault: '' }),
   PINATA_URL: str({ devDefault: 'https://api.pinata.cloud' }),
   PINATA_API_JWT: str({ devDefault: '' }),
-  API_TOKEN_SECRET: str({ devDefault: 'development-secret-key', default: '' }),
+  API_TOKEN_SECRET: str({ devDefault: 'development-secret-key' }),
 };
 
 export type Config = Omit<CleanedEnv<typeof configSpecs>, keyof CleanedEnvAccessors>;
