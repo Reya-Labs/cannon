@@ -1,8 +1,8 @@
 import { Response, NextFunction } from 'express';
-import { RepoContext, RepoRequest } from '../types';
+import { AuthenticationContext, RepoRequest } from '../types';
 import { verifyToken } from './tokenUtils';
 
-export function validateBearerToken(req: RepoRequest, res: Response, next: NextFunction, ctx: RepoContext) {
+export function validateBearerToken(req: RepoRequest, res: Response, next: NextFunction, ctx: AuthenticationContext) {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {

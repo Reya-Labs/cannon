@@ -22,7 +22,8 @@ export function bootstrap() {
   const ctx = {} as {
     repo: supertest.Agent;
     rdb: RedisClientType;
-    s3: S3Client;
+    s3Read: S3Client;
+    s3Write: S3Client;
     redisMock: Awaited<ReturnType<typeof redisServerMock>>;
     s3Mock: Awaited<ReturnType<typeof s3ServerMock>>;
     server: Awaited<ReturnType<typeof repoServer>>;
@@ -53,21 +54,39 @@ export function bootstrap() {
       S3_ENDPOINT: s3Mock.S3_ENDPOINT,
       S3_BUCKET: s3Mock.S3_BUCKET,
       S3_REGION: s3Mock.S3_REGION,
-      S3_KEY: s3Mock.S3_KEY,
-      S3_SECRET: s3Mock.S3_SECRET,
+      S3_READ_KEY: s3Mock.S3_KEY,
+      S3_READ_SECRET: s3Mock.S3_SECRET,
+      S3_WRITE_KEY: s3Mock.S3_KEY,
+      S3_WRITE_SECRET: s3Mock.S3_SECRET,
       S3_FOLDER: 'repo-v2',
       API_TOKEN_SECRET: 'repo-test-secret',
     };
 
-    const s3 = getS3Client(config, config.MEMORY_CACHE, false);
+    const s3Read = getS3Client(config, {
+      credentials: {
+        accessKeyId: config.S3_READ_KEY,
+        secretAccessKey: config.S3_READ_SECRET,
+      },
+      cache: config.MEMORY_CACHE,
+      enforceConditionalWrites: false,
+    });
+    const s3Write = getS3Client(config, {
+      credentials: {
+        accessKeyId: config.S3_WRITE_KEY,
+        secretAccessKey: config.S3_WRITE_SECRET,
+      },
+      cache: config.MEMORY_CACHE,
+      enforceConditionalWrites: false,
+    });
     const rdb = await getDb(config.REDIS_URL);
-    const server = await repoServer({ config, s3, rdb });
+    const server = await repoServer({ config, s3Read, s3Write, rdb });
     apiTokenSecret = config.API_TOKEN_SECRET;
 
     // create a client to make requests to the Repo server
     ctx.repo = supertest.agent(server.app);
     ctx.rdb = rdb;
-    ctx.s3 = s3;
+    ctx.s3Read = s3Read;
+    ctx.s3Write = s3Write;
     ctx.config = config;
 
     ctx.server = server;
@@ -80,7 +99,7 @@ export function bootstrap() {
   });
 
   afterEach(async function () {
-    await Promise.all([ctx.s3Mock.reset(), ctx.s3.clearCache()]);
+    await Promise.all([ctx.s3Mock.reset(), ctx.s3Read.clearCache(), ctx.s3Write.clearCache()]);
   });
 
   afterAll(async function () {

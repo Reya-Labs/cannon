@@ -6,12 +6,12 @@ import { InvalidUploadError, readRequestFile, UploadTooLargeError } from '../hel
 import { DeploymentInfo } from '@usecannon/builder';
 import { Response } from 'express';
 
-import type { RepoContext, RepoRequest } from '../types';
+import type { AddContext, RepoRequest } from '../types';
 import { validateBearerToken } from '../helpers/validateBearerToken';
 
 const RKEY_FRESH_GRACE_PERIOD = 5 * 60; // 5 minutes, or else we delete any uploaded artifacts from fresh
 
-async function readUpload(req: RepoRequest, res: Response, ctx: RepoContext) {
+async function readUpload(req: RepoRequest, res: Response, ctx: AddContext) {
   try {
     const file = await readRequestFile(req, ctx.config.MAX_ARTIFACT_BYTES);
 
@@ -39,16 +39,16 @@ async function readUpload(req: RepoRequest, res: Response, ctx: RepoContext) {
 }
 
 // Middleware for handling regular file uploads
-async function handleFileUpload(req: RepoRequest, res: Response, ctx: RepoContext) {
+async function handleFileUpload(req: RepoRequest, res: Response, ctx: AddContext) {
   const file = await readUpload(req, res, ctx);
   if (!file) return;
 
   const cid = await getContentCID(file);
 
-  const exists = await ctx.s3.objectExists(cid);
+  const exists = await ctx.s3Write.objectExists(cid);
 
   if (exists) {
-    const existing = Buffer.from(await ctx.s3.getObject(cid));
+    const existing = Buffer.from(await ctx.s3Write.getObject(cid));
     const existingCid = await getContentCID(existing);
 
     if (existingCid !== cid || !existing.equals(file)) {
@@ -88,7 +88,7 @@ async function handleFileUpload(req: RepoRequest, res: Response, ctx: RepoContex
   await ctx.rdb.zAdd(RKEY_FRESH_UPLOAD_HASHES, { score: now, value: cid }, { NX: true });
 
   try {
-    await ctx.s3.putObject(cid, file);
+    await ctx.s3Write.putObject(cid, file);
     return res.json({ Hash: cid }).end();
   } catch (err) {
     console.error('cannon package upload to S3 fail', err);
@@ -96,7 +96,7 @@ async function handleFileUpload(req: RepoRequest, res: Response, ctx: RepoContex
   }
 }
 
-export function add(ctx: RepoContext) {
+export function add(ctx: AddContext) {
   const app: Router = Router();
 
   app.post(

@@ -10,8 +10,17 @@ interface Params {
   S3_REGION: string;
   S3_BUCKET: string;
   S3_FOLDER: string;
-  S3_KEY: string;
-  S3_SECRET: string;
+}
+
+export interface S3Credentials {
+  accessKeyId: string;
+  secretAccessKey: string;
+}
+
+interface S3ClientOptions {
+  credentials: S3Credentials;
+  cache?: number;
+  enforceConditionalWrites?: boolean;
 }
 
 const retryOptions = {
@@ -50,15 +59,15 @@ function retryS3<T>(operation: () => Promise<T>, shouldRetry: (err: unknown) => 
   }, retryOptions);
 }
 
-export function getS3Client(config: Params, cache = 10_000, enforceConditionalWrites = true) {
+export function getS3Client(
+  config: Params,
+  { credentials, cache = 10_000, enforceConditionalWrites = true }: S3ClientOptions
+) {
   const client = new S3({
     forcePathStyle: false, // Configures to use subdomain/virtual calling format.
     endpoint: config.S3_ENDPOINT,
     region: config.S3_REGION,
-    credentials: {
-      accessKeyId: config.S3_KEY,
-      secretAccessKey: config.S3_SECRET,
-    },
+    credentials,
   });
 
   const cacheOptions = {
@@ -134,6 +143,33 @@ export function getS3Client(config: Params, cache = 10_000, enforceConditionalWr
     return conditionalWriteValidation;
   }
 
+  const cachedObjectExists = memoize(async function cachedObjectExists(key: string) {
+    console.log('[s3][objectExists]', key);
+
+    return retryS3(async () => {
+      try {
+        await client.headObject({ Bucket: config.S3_BUCKET, Key: `${config.S3_FOLDER}/${key}` });
+        return true;
+      } catch (err) {
+        if (err instanceof Error && err.name === 'NotFound') {
+          return false;
+        }
+
+        throw err;
+      }
+    });
+  }, cacheOptions);
+
+  async function objectExists(key: string) {
+    const exists = await cachedObjectExists(key);
+
+    if (!exists) {
+      await cachedObjectExists.delete(key);
+    }
+
+    return exists;
+  }
+
   const s3 = {
     client,
 
@@ -141,24 +177,7 @@ export function getS3Client(config: Params, cache = 10_000, enforceConditionalWr
       await Promise.all([client.headBucket({ Bucket: config.S3_BUCKET }), validateConditionalWrites()]);
     },
 
-    objectExists: memoize(async function objectExists(key: string) {
-      console.log('[s3][objectExists]', key);
-
-      const exists = await retryS3(async () => {
-        try {
-          await client.headObject({ Bucket: config.S3_BUCKET, Key: `${config.S3_FOLDER}/${key}` });
-          return true;
-        } catch (err) {
-          if (err instanceof Error && err.name === 'NotFound') {
-            return false;
-          }
-
-          throw err;
-        }
-      });
-
-      return exists;
-    }, cacheOptions),
+    objectExists,
 
     async putObject(key: string, data: Buffer) {
       console.log('[s3][putObject]', key);
@@ -199,7 +218,7 @@ export function getS3Client(config: Params, cache = 10_000, enforceConditionalWr
         }
       }
 
-      await s3.objectExists.delete(key);
+      await cachedObjectExists.delete(key);
       await s3.getObject.delete(key);
     },
 
@@ -221,7 +240,7 @@ export function getS3Client(config: Params, cache = 10_000, enforceConditionalWr
     }, cacheOptions),
 
     async clearCache() {
-      await s3.objectExists.clear();
+      await cachedObjectExists.clear();
       await s3.getObject.clear();
     },
   };

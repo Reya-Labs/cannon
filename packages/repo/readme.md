@@ -13,9 +13,31 @@ store rather than `CANNON_SETTINGS` or browser configuration.
 
 - `API_TOKEN_SECRET`: secret used to validate write tokens.
 - `REDIS_URL`: dedicated persistent Valkey/Redis endpoint.
-- `S3_ENDPOINT`, `S3_BUCKET`, `S3_FOLDER`, `S3_REGION`, `S3_KEY`, `S3_SECRET`:
-  private S3-compatible object storage.
+- `S3_ENDPOINT`, `S3_BUCKET`, `S3_FOLDER`, `S3_REGION`: private S3-compatible
+  object storage.
+- `S3_READ_KEY`, `S3_READ_SECRET`: read-only object-storage identity serving
+  the unauthenticated `cat` path and its health check. Grant bucket
+  head/list and object read/head permissions; do not grant writes.
+- `S3_WRITE_KEY`, `S3_WRITE_SECRET`: object-storage identity serving the
+  authenticated `add` path and its health check. Grant bucket head/list and
+  object read/head/write permissions. Reads are required to verify idempotent
+  uploads and reject conflicting bytes at an existing immutable CID key.
 - `MAX_ARTIFACT_BYTES`: maximum upload size; defaults to 50 MiB.
+
+All four credential fields are required. There is deliberately no fallback to
+a shared S3 identity: a partially migrated deployment fails configuration
+validation instead of silently restoring write access to the public read path.
+Production and staging also reject identical read/write access-key IDs. Create
+two bucket-scoped identities with distinct keys; do not copy one read/write
+token into both pairs.
+Neither identity is exposed to browsers; they remain server-side credentials.
+
+Before activation, use a known backfilled CID to prove that the reader can
+head/read objects, then require an `AccessDenied` result when that same identity
+attempts to write a disposable object under `${S3_FOLDER}/.cannon/preflight/`.
+Remove any disposable object using the writer identity after the check. This
+permission-denial smoke test complements `/health`, which verifies bucket
+access but cannot infer the provider-side policy attached to a credential.
 
 Reads are local-only. A missing CID returns 404; the service does not contact a
 public IPFS gateway or hosted Cannon repository at runtime. Backfill legacy

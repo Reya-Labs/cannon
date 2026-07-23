@@ -13,8 +13,21 @@ describe('GET /health', function () {
     });
   });
 
-  it('should return 503 when object storage is unavailable', async function () {
-    const healthCheck = vi.spyOn(ctx.s3, 'healthCheck').mockRejectedValueOnce(new Error('S3 unavailable'));
+  it('should return 503 when read-only object storage access is unavailable', async function () {
+    const healthCheck = vi.spyOn(ctx.s3Read, 'healthCheck').mockRejectedValueOnce(new Error('S3 read unavailable'));
+
+    try {
+      await ctx.repo.get('/health').expect(503, {
+        status: 'error',
+        message: 'Repository dependency check failed',
+      });
+    } finally {
+      healthCheck.mockRestore();
+    }
+  });
+
+  it('should return 503 when write-capable object storage access is unavailable', async function () {
+    const healthCheck = vi.spyOn(ctx.s3Write, 'healthCheck').mockRejectedValueOnce(new Error('S3 write unavailable'));
 
     try {
       await ctx.repo.get('/health').expect(503, {
@@ -27,7 +40,13 @@ describe('GET /health', function () {
   });
 
   it('should reject an object store that ignores conditional writes', async function () {
-    const strictS3 = getS3Client(ctx.config, ctx.config.MEMORY_CACHE);
+    const strictS3 = getS3Client(ctx.config, {
+      credentials: {
+        accessKeyId: ctx.config.S3_WRITE_KEY,
+        secretAccessKey: ctx.config.S3_WRITE_SECRET,
+      },
+      cache: ctx.config.MEMORY_CACHE,
+    });
     const putObject = vi.spyOn(strictS3.client, 'putObject');
     const transientError = new Error('transient S3 failure');
 

@@ -3,7 +3,12 @@ import { getS3Client } from '@usecannon/repo/dist/src/s3';
 import { config } from '../config';
 import { createJobs } from '../helpers/create-queue';
 
-const s3 = getS3Client(config);
+const s3 = getS3Client(config, {
+  credentials: {
+    accessKeyId: config.S3_KEY,
+    secretAccessKey: config.S3_SECRET,
+  },
+});
 
 /**
  * Actions that can be performed on the queue for pinning
