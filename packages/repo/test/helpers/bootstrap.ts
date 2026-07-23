@@ -4,7 +4,6 @@ import { RedisClientType } from 'redis';
 import { getDb } from '../../src/db';
 import { getS3Client, S3Client } from '../../src/s3';
 import { repoServer } from './repo-server';
-import { IpfsMock, ipfsServerMock } from './ipfs-server-mock';
 import { s3ServerMock } from './s3-server-mock';
 import { redisServerMock } from './redis-server-mock';
 import { getPort, setInitialRange } from './get-port';
@@ -24,7 +23,6 @@ export function bootstrap() {
     repo: supertest.Agent;
     rdb: RedisClientType;
     s3: S3Client;
-    ipfsMock: IpfsMock;
     redisMock: Awaited<ReturnType<typeof redisServerMock>>;
     s3Mock: Awaited<ReturnType<typeof s3ServerMock>>;
     server: Awaited<ReturnType<typeof repoServer>>;
@@ -37,9 +35,8 @@ export function bootstrap() {
     const startingPort = 3000 + workerId * 100 + bootstrapId * 10;
     setInitialRange(startingPort);
 
-    const [PORT, ipfsMock, redisMock, s3Mock] = await Promise.all([
+    const [PORT, redisMock, s3Mock] = await Promise.all([
       getPort().then((port) => port.toString()),
-      ipfsServerMock(),
       redisServerMock(normalizedWorkerId * 4 + bootstrapId),
       s3ServerMock('repo-v2'),
     ]);
@@ -52,19 +49,13 @@ export function bootstrap() {
       RATE_LIMIT_MAX: 100_000,
       RATE_LIMIT_WINDOW: 1,
       MAX_ARTIFACT_BYTES: 1024 * 1024,
-      MAX_ARCHIVE_FILES: 100,
-      MAX_ARCHIVE_EXTRACTED_BYTES: 2 * 1024 * 1024,
-      UPSTREAM_TIMEOUT_MS: 5_000,
       REDIS_URL: redisMock.REDIS_URL,
-      IPFS_URL: ipfsMock.IPFS_URL,
       S3_ENDPOINT: s3Mock.S3_ENDPOINT,
       S3_BUCKET: s3Mock.S3_BUCKET,
       S3_REGION: s3Mock.S3_REGION,
       S3_KEY: s3Mock.S3_KEY,
       S3_SECRET: s3Mock.S3_SECRET,
       S3_FOLDER: 'repo-v2',
-      PINATA_URL: 'https://api.pinata.cloud',
-      PINATA_API_JWT: '',
       API_TOKEN_SECRET: 'repo-test-secret',
     };
 
@@ -80,7 +71,6 @@ export function bootstrap() {
     ctx.config = config;
 
     ctx.server = server;
-    ctx.ipfsMock = ipfsMock;
     ctx.redisMock = redisMock;
     ctx.s3Mock = s3Mock;
   });
@@ -90,13 +80,12 @@ export function bootstrap() {
   });
 
   afterEach(async function () {
-    ctx.ipfsMock.reset();
     await Promise.all([ctx.s3Mock.reset(), ctx.s3.clearCache()]);
   });
 
   afterAll(async function () {
     await ctx.server.close();
-    await Promise.all([ctx.ipfsMock.close(), ctx.redisMock.close(), ctx.s3Mock.close()]);
+    await Promise.all([ctx.redisMock.close(), ctx.s3Mock.close()]);
   });
 
   return ctx;

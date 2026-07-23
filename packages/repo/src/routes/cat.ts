@@ -1,58 +1,6 @@
 import { Response as ExpressResponse, Router } from 'express';
-import _ from 'lodash';
-import { getContentCID, parseIpfsCid, uncompress } from '@usecannon/builder/dist/src/ipfs';
-import { RKEY_FRESH_UPLOAD_HASHES, RKEY_PKG_HASHES, RKEY_EXTRA_HASHES } from '../db';
+import { getContentCID, parseIpfsCid } from '@usecannon/builder/dist/src/ipfs';
 import { RepoContext } from '../types';
-
-class ArtifactTooLargeError extends Error {
-  constructor(maxBytes: number) {
-    super(`upstream artifact exceeds the ${maxBytes} byte limit`);
-    this.name = 'ArtifactTooLargeError';
-  }
-}
-
-async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string) {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-
-  try {
-    return await Promise.race([
-      operation,
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-}
-
-async function readBoundedResponse(response: Response, maxBytes: number) {
-  const contentLength = Number(response.headers.get('content-length'));
-
-  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-    throw new ArtifactTooLargeError(maxBytes);
-  }
-
-  if (!response.body) {
-    throw new Error('upstream response has no body');
-  }
-
-  const chunks: Buffer[] = [];
-  let totalBytes = 0;
-
-  for await (const chunk of response.body) {
-    const data = Buffer.from(chunk);
-    totalBytes += data.length;
-
-    if (totalBytes > maxBytes) {
-      throw new ArtifactTooLargeError(maxBytes);
-    }
-
-    chunks.push(data);
-  }
-
-  return Buffer.concat(chunks, totalBytes);
-}
 
 async function readStoredArtifact(ctx: RepoContext, cid: string) {
   if (!(await ctx.s3.objectExists(cid))) {
@@ -110,55 +58,7 @@ export function cat(ctx: RepoContext) {
       console.error('stored artifact integrity check failed', err);
       return res.status(502).end('stored artifact integrity check failed');
     }
-
-    const batch = ctx.rdb.multi();
-    batch.zScore(RKEY_FRESH_UPLOAD_HASHES, cid);
-    batch.zScore(RKEY_PKG_HASHES, cid);
-    batch.zScore(RKEY_EXTRA_HASHES, cid);
-
-    try {
-      const ipfsUrl = new URL(`/api/v0/cat?arg=${cid}`, ctx.config.IPFS_URL);
-      const [upstreamRes, existsResult] = await Promise.all([
-        fetch(ipfsUrl, {
-          method: 'POST',
-          signal: AbortSignal.timeout(ctx.config.UPSTREAM_TIMEOUT_MS),
-        }),
-        withTimeout(batch.exec(), ctx.config.UPSTREAM_TIMEOUT_MS, 'Redis artifact lookup timed out'),
-      ]);
-
-      if (!upstreamRes.ok) {
-        return res.status(upstreamRes.status === 404 ? 404 : 502).end('unregistered ipfs data');
-      }
-
-      const rawData = await readBoundedResponse(upstreamRes, ctx.config.MAX_ARTIFACT_BYTES);
-      const actualCid = await getContentCID(rawData);
-
-      if (actualCid !== cid) {
-        console.error(`upstream artifact CID mismatch: requested "${cid}", computed "${actualCid}"`);
-        return res.status(502).end('upstream artifact integrity check failed');
-      }
-
-      const hashIsRepod = _.some(existsResult, _.isNumber);
-
-      if (!hashIsRepod) {
-        try {
-          JSON.parse(uncompress(rawData));
-        } catch (err) {
-          console.error('unregistered upstream artifact is not a Cannon package', err);
-          return res.status(404).end('unregistered ipfs data');
-        }
-      }
-
-      await ctx.s3.putObject(cid, rawData);
-      return sendArtifact(res, rawData);
-    } catch (err) {
-      if (err instanceof ArtifactTooLargeError) {
-        return res.status(413).end('upstream artifact too large');
-      }
-
-      console.error('Cannon artifact fallback failed', err);
-      return res.status(502).end('cannon package download ipfs fail');
-    }
+    return res.status(404).end('unregistered ipfs data');
   });
 
   return app;
