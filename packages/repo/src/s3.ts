@@ -1,4 +1,5 @@
 import { S3 } from '@aws-sdk/client-s3';
+import { randomUUID } from 'node:crypto';
 import memoize from 'memoizee';
 import promiseRetry from 'promise-retry';
 
@@ -18,6 +19,13 @@ const retryOptions = {
   minTimeout: 500,
   maxTimeout: 3000,
 };
+
+class ConditionalWritesUnsupportedError extends Error {
+  constructor() {
+    super('S3 backend does not enforce atomic If-None-Match conditional writes');
+    this.name = 'ConditionalWritesUnsupportedError';
+  }
+}
 
 function isPreconditionFailure(err: unknown) {
   return (
@@ -60,7 +68,7 @@ export function getS3Client(config: Params, cache = 10_000, enforceConditionalWr
     max: cache,
   };
 
-  const capabilityKey = `${config.S3_FOLDER}/.cannon/conditional-put-v1`;
+  const capabilityKeyPrefix = `${config.S3_FOLDER}/.cannon/conditional-put-v1`;
   const capabilityMarker = Buffer.from('cannon-repo-conditional-put-v1');
   const conflictingMarker = Buffer.from('cannon-repo-conditional-put-conflict');
   let conditionalWriteValidation: Promise<void> | undefined;
@@ -69,6 +77,8 @@ export function getS3Client(config: Params, cache = 10_000, enforceConditionalWr
     if (!enforceConditionalWrites) return;
 
     conditionalWriteValidation ??= (async () => {
+      const capabilityKey = `${capabilityKeyPrefix}/${randomUUID()}`;
+
       try {
         await retryS3(
           () =>
@@ -111,10 +121,13 @@ export function getS3Client(config: Params, cache = 10_000, enforceConditionalWr
       const storedBytes = stored.Body ? Buffer.from(await stored.Body.transformToByteArray()) : null;
 
       if (!conflictRejected || !storedBytes?.equals(capabilityMarker)) {
-        throw new Error('S3 backend does not enforce atomic If-None-Match conditional writes');
+        throw new ConditionalWritesUnsupportedError();
       }
     })().catch((err) => {
-      conditionalWriteValidation = undefined;
+      if (!(err instanceof ConditionalWritesUnsupportedError)) {
+        conditionalWriteValidation = undefined;
+      }
+
       throw err;
     });
 

@@ -27,17 +27,32 @@ describe('GET /health', function () {
   it('should reject an object store that ignores conditional writes', async function () {
     const strictS3 = getS3Client(ctx.config, ctx.config.MEMORY_CACHE);
     const putObject = vi.spyOn(strictS3.client, 'putObject');
+    const transientError = new Error('transient S3 failure');
 
     try {
-      await expect(strictS3.healthCheck()).rejects.toThrow(
-        'S3 backend does not enforce atomic If-None-Match conditional writes'
-      );
-      const firstValidationCalls = putObject.mock.calls.length;
+      putObject
+        .mockRejectedValueOnce(transientError)
+        .mockRejectedValueOnce(transientError)
+        .mockRejectedValueOnce(transientError)
+        .mockRejectedValueOnce(transientError);
+
+      await expect(strictS3.healthCheck()).rejects.toThrow('transient S3 failure');
+      const transientProbeKey = putObject.mock.calls[0][0].Key;
+      const transientValidationCalls = putObject.mock.calls.length;
 
       await expect(strictS3.healthCheck()).rejects.toThrow(
         'S3 backend does not enforce atomic If-None-Match conditional writes'
       );
-      expect(putObject.mock.calls.length).toBeGreaterThan(firstValidationCalls);
+      const unsupportedValidationCalls = putObject.mock.calls.length;
+      const unsupportedProbeKey = putObject.mock.calls[transientValidationCalls][0].Key;
+
+      expect(unsupportedValidationCalls).toBeGreaterThan(transientValidationCalls);
+      expect(unsupportedProbeKey).not.toEqual(transientProbeKey);
+
+      await expect(strictS3.healthCheck()).rejects.toThrow(
+        'S3 backend does not enforce atomic If-None-Match conditional writes'
+      );
+      expect(putObject.mock.calls.length).toEqual(unsupportedValidationCalls);
     } finally {
       strictS3.client.destroy();
     }
