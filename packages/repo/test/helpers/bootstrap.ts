@@ -16,6 +16,7 @@ let bootstrapIndex = 0;
 
 export function bootstrap() {
   const workerId = parseInt(process.env.VITEST_WORKER_ID || '0');
+  const normalizedWorkerId = Math.max(workerId - 1, 0);
   const bootstrapId = bootstrapIndex++;
   let apiTokenSecret = '';
 
@@ -39,7 +40,7 @@ export function bootstrap() {
     const [PORT, ipfsMock, redisMock, s3Mock] = await Promise.all([
       getPort().then((port) => port.toString()),
       ipfsServerMock(),
-      redisServerMock(workerId * 4 + bootstrapId),
+      redisServerMock(normalizedWorkerId * 4 + bootstrapId),
       s3ServerMock('repo-v2'),
     ]);
 
