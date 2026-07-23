@@ -2,7 +2,20 @@ import { RedisMemoryServer } from 'redis-memory-server';
 
 const servers: RedisMemoryServer[] = [];
 
-export async function redisServerMock() {
+function withDatabase(redisUrl: string, database: number) {
+  const url = new URL(redisUrl);
+  url.pathname = `/${database}`;
+  return url.toString();
+}
+
+export async function redisServerMock(database = 0) {
+  if (process.env.TEST_REDIS_URL) {
+    return {
+      REDIS_URL: withDatabase(process.env.TEST_REDIS_URL, database),
+      close: async () => undefined,
+    };
+  }
+
   const server = new RedisMemoryServer();
 
   servers.push(server);
@@ -11,7 +24,7 @@ export async function redisServerMock() {
   const port = await server.getPort();
 
   return {
-    REDIS_URL: `redis://${host}:${port}`,
+    REDIS_URL: `redis://${host}:${port}/${database}`,
     close: server.stop.bind(server),
   };
 }

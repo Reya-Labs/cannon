@@ -10,6 +10,10 @@ import { CliSettings } from './settings';
 
 const debug = Debug('cannon:cli:loader');
 
+export function getIpfsWriteHeaders(cliSettings: CliSettings, writeUrl?: string): Record<string, string> {
+  return cliSettings.ipfsAuthToken && writeUrl ? { Authorization: `Bearer ${cliSettings.ipfsAuthToken}` } : {};
+}
+
 const isFile = (filepath: string) => {
   try {
     return fs.statSync(filepath).isFile();
@@ -227,7 +231,12 @@ export function getMainLoader(cliSettings: CliSettings) {
         ? new IPFSLoaderWithRetries(cliSettings.ipfsUrl, {}, cliSettings.ipfsTimeout, cliSettings.ipfsRetries)
         : undefined,
       writeIpfs: cliSettings.writeIpfsUrl
-        ? new IPFSLoaderWithRetries(cliSettings.writeIpfsUrl, {}, cliSettings.ipfsTimeout, cliSettings.ipfsRetries)
+        ? new IPFSLoaderWithRetries(
+            cliSettings.writeIpfsUrl,
+            getIpfsWriteHeaders(cliSettings, cliSettings.writeIpfsUrl),
+            cliSettings.ipfsTimeout,
+            cliSettings.ipfsRetries
+          )
         : undefined,
       repoLoader: new IPFSLoaderWithRetries(
         getCannonRepoRegistryUrl(),

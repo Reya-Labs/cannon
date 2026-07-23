@@ -13,6 +13,35 @@ interface Params {
   S3_SECRET: string;
 }
 
+const retryOptions = {
+  retries: 3,
+  minTimeout: 500,
+  maxTimeout: 3000,
+};
+
+function isPreconditionFailure(err: unknown) {
+  return (
+    err instanceof Error &&
+    (err.name === 'PreconditionFailed' ||
+      ('$metadata' in err &&
+        typeof err.$metadata === 'object' &&
+        err.$metadata !== null &&
+        'httpStatusCode' in err.$metadata &&
+        err.$metadata.httpStatusCode === 412))
+  );
+}
+
+function retryS3<T>(operation: () => Promise<T>, shouldRetry: (err: unknown) => boolean = () => true) {
+  return promiseRetry(async (retry) => {
+    try {
+      return await operation();
+    } catch (err) {
+      if (!shouldRetry(err)) throw err;
+      return retry(err);
+    }
+  }, retryOptions);
+}
+
 export function getS3Client(config: Params, cache = 10_000) {
   const client = new S3({
     forcePathStyle: false, // Configures to use subdomain/virtual calling format.
@@ -34,70 +63,79 @@ export function getS3Client(config: Params, cache = 10_000) {
   const s3 = {
     client,
 
+    async healthCheck() {
+      await client.headBucket({ Bucket: config.S3_BUCKET });
+    },
+
     objectExists: memoize(async function objectExists(key: string) {
       console.log('[s3][objectExists]', key);
 
-      const exists = await promiseRetry(
-        async () => {
-          try {
-            await client.headObject({ Bucket: config.S3_BUCKET, Key: `${config.S3_FOLDER}/${key}` });
-            return true;
-          } catch (err) {
-            if (err instanceof Error && err.name === 'NotFound') {
-              return false;
-            }
-
-            throw err;
+      const exists = await retryS3(async () => {
+        try {
+          await client.headObject({ Bucket: config.S3_BUCKET, Key: `${config.S3_FOLDER}/${key}` });
+          return true;
+        } catch (err) {
+          if (err instanceof Error && err.name === 'NotFound') {
+            return false;
           }
-        },
-        {
-          retries: 3,
-          minTimeout: 500,
-          maxTimeout: 3000,
+
+          throw err;
         }
-      );
+      });
 
       return exists;
     }, cacheOptions),
 
-    putObject: memoize(async function putObject(key: string, data: Buffer) {
+    async putObject(key: string, data: Buffer) {
       console.log('[s3][putObject]', key);
 
-      const res = await promiseRetry(
-        () =>
-          client.putObject({
-            Bucket: config.S3_BUCKET,
-            Key: `${config.S3_FOLDER}/${key}`,
-            Body: data,
-            ContentType: 'application/json',
-          }),
-        {
-          retries: 3,
-          minTimeout: 500,
-          maxTimeout: 3000,
+      if (await s3.objectExists(key)) {
+        const existing = Buffer.from(await s3.getObject(key));
+
+        if (!existing.equals(data)) {
+          throw new Error(`refusing to overwrite immutable object "${key}"`);
         }
-      );
+
+        return;
+      }
+
+      try {
+        await retryS3(
+          () =>
+            client.putObject({
+              Bucket: config.S3_BUCKET,
+              Key: `${config.S3_FOLDER}/${key}`,
+              Body: data,
+              ContentType: 'application/octet-stream',
+              CacheControl: 'private, max-age=31536000, immutable',
+              IfNoneMatch: '*',
+            }),
+          (err) => !isPreconditionFailure(err)
+        );
+      } catch (err) {
+        if (!isPreconditionFailure(err)) {
+          throw err;
+        }
+
+        const existing = Buffer.from(await s3.getObject(key));
+
+        if (!existing.equals(data)) {
+          throw new Error(`refusing to overwrite immutable object "${key}"`);
+        }
+      }
 
       await s3.objectExists.delete(key);
       await s3.getObject.delete(key);
-
-      return res;
-    }, cacheOptions),
+    },
 
     getObject: memoize(async function getObject(key: string) {
       console.log('[s3][getObject]', key);
 
-      const res = await promiseRetry(
-        () =>
-          client.getObject({
-            Bucket: config.S3_BUCKET,
-            Key: `${config.S3_FOLDER}/${key}`,
-          }),
-        {
-          retries: 3,
-          minTimeout: 500,
-          maxTimeout: 3000,
-        }
+      const res = await retryS3(() =>
+        client.getObject({
+          Bucket: config.S3_BUCKET,
+          Key: `${config.S3_FOLDER}/${key}`,
+        })
       );
 
       if (!res.Body) {
@@ -109,7 +147,6 @@ export function getS3Client(config: Params, cache = 10_000) {
 
     async clearCache() {
       await s3.objectExists.clear();
-      await s3.putObject.clear();
       await s3.getObject.clear();
     },
   };

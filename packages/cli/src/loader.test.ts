@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import fs from 'fs-extra';
 import path from 'path';
-import { CliLoader, getMainLoader, LocalLoader } from './loader'; // assuming the module's name is "module.ts"
+import { CliLoader, getIpfsWriteHeaders, getMainLoader, LocalLoader } from './loader'; // assuming the module's name is "module.ts"
 import { CliSettings } from './settings';
 
 jest.mock('fs-extra');
@@ -54,6 +54,8 @@ describe('getMainLoader', function getMainLoaderTestCases() {
       rpcUrl: '',
       registries: [],
       ipfsUrl: 'ipfs',
+      writeIpfsUrl: 'write-ipfs',
+      ipfsAuthToken: 'write-token',
       cannonDirectory: 'directory',
       registryPriority: 'onchain',
       etherscanApiUrl: 'etherscanApiUrl',
@@ -67,6 +69,9 @@ describe('getMainLoader', function getMainLoaderTestCases() {
     expect(loaders).toHaveProperty('file');
     expect(loaders.ipfs).toBeInstanceOf(CliLoader); // Changed this line
     expect(loaders.file).toBeInstanceOf(LocalLoader);
+    expect(loaders.ipfs.readIpfs?.customHeaders).toEqual({});
+    expect(loaders.ipfs.writeIpfs?.customHeaders).toEqual({ Authorization: 'Bearer write-token' });
+    expect(loaders.ipfs.repo.customHeaders).toEqual({});
   });
 
   it('should use default ipfs url if not provided in settings', () => {
@@ -83,5 +88,13 @@ describe('getMainLoader', function getMainLoaderTestCases() {
     };
     const loaders = getMainLoader(settings);
     expect(loaders.ipfs).toBeInstanceOf(CliLoader); // Changed this line
+  });
+
+  it('should omit the authorization header unless both token and explicit write URL are configured', () => {
+    expect(getIpfsWriteHeaders({ ipfsAuthToken: undefined } as CliSettings, 'https://write.example')).toEqual({});
+    expect(getIpfsWriteHeaders({ ipfsAuthToken: 'write-token' } as CliSettings)).toEqual({});
+    expect(getIpfsWriteHeaders({ ipfsAuthToken: 'write-token' } as CliSettings, 'https://write.example')).toEqual({
+      Authorization: 'Bearer write-token',
+    });
   });
 });

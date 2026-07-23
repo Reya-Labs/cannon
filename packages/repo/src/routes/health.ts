@@ -7,14 +7,14 @@ export function health(ctx: RepoContext) {
 
   app.get('/health', async (_, res) => {
     try {
-      // Check Redis connection
-      await ctx.rdb.ping();
+      await Promise.all([ctx.rdb.ping(), ctx.s3.healthCheck()]);
       res.json({
         status: 'ok',
         version: packageJson.version,
       });
     } catch (err) {
-      res.status(503).json({ status: 'error', message: 'Redis connection failed' });
+      console.error('repository dependency health check failed', err);
+      res.status(503).json({ status: 'error', message: 'Repository dependency check failed' });
     }
   });
 

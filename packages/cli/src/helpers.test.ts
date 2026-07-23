@@ -8,6 +8,7 @@ import {
   getContractsAndDetails,
   getSourceFromRegistry,
   isPrivateKey,
+  filterSettings,
 } from './helpers';
 import { LocalRegistry } from './registry';
 
@@ -17,6 +18,19 @@ describe('getChainDataFromId', getChainDataFromIdTestCases);
 describe('getContractsAndDetails', getContractsAndDetailsTestCases);
 describe('getSourceFromLocalRegistry', getSourceFromLocalRegistryTestCases);
 describe('checkAndNormalizePrivateKey', checkAndNormalizePrivateKeyTestCases);
+describe('filterSettings', filterSettingsTestCases);
+
+function filterSettingsTestCases() {
+  it('removes the IPFS write token from diagnostic output', async () => {
+    const filtered = await filterSettings({
+      rpcUrl: 'https://rpc.example',
+      registryRpcUrl: 'https://registry.example',
+      ipfsAuthToken: 'write-token',
+    });
+
+    expect(filtered).not.toHaveProperty('ipfsAuthToken');
+  });
+}
 
 function getChainIdTestCases() {
   it('should return the chainId for a valid chain name', () => {

@@ -8,6 +8,7 @@ import { IpfsMock, ipfsServerMock } from './ipfs-server-mock';
 import { s3ServerMock } from './s3-server-mock';
 import { redisServerMock } from './redis-server-mock';
 import { getPort, setInitialRange } from './get-port';
+import { generateToken } from '../../src/helpers/tokenUtils';
 
 import type { Config } from '../../src/config';
 
@@ -25,6 +26,7 @@ export function bootstrap() {
     redisMock: Awaited<ReturnType<typeof redisServerMock>>;
     s3Mock: Awaited<ReturnType<typeof s3ServerMock>>;
     server: Awaited<ReturnType<typeof repoServer>>;
+    authToken: string;
   };
 
   beforeAll(async function () {
@@ -35,7 +37,7 @@ export function bootstrap() {
     const [PORT, ipfsMock, redisMock, s3Mock] = await Promise.all([
       getPort().then((port) => port.toString()),
       ipfsServerMock(),
-      redisServerMock(),
+      redisServerMock(workerId * 4 + bootstrapId),
       s3ServerMock('repo-v2'),
     ]);
 
@@ -46,6 +48,10 @@ export function bootstrap() {
       MEMORY_CACHE: 10_000,
       RATE_LIMIT_MAX: 100_000,
       RATE_LIMIT_WINDOW: 1,
+      MAX_ARTIFACT_BYTES: 1024 * 1024,
+      MAX_ARCHIVE_FILES: 100,
+      MAX_ARCHIVE_EXTRACTED_BYTES: 2 * 1024 * 1024,
+      UPSTREAM_TIMEOUT_MS: 5_000,
       REDIS_URL: redisMock.REDIS_URL,
       IPFS_URL: ipfsMock.IPFS_URL,
       S3_ENDPOINT: s3Mock.S3_ENDPOINT,
@@ -54,6 +60,9 @@ export function bootstrap() {
       S3_KEY: s3Mock.S3_KEY,
       S3_SECRET: s3Mock.S3_SECRET,
       S3_FOLDER: 'repo-v2',
+      PINATA_URL: 'https://api.pinata.cloud',
+      PINATA_API_JWT: '',
+      API_TOKEN_SECRET: 'repo-test-secret',
     };
 
     const s3 = getS3Client(config, config.MEMORY_CACHE);
@@ -64,6 +73,7 @@ export function bootstrap() {
     ctx.repo = supertest.agent(server.app);
     ctx.rdb = rdb;
     ctx.s3 = s3;
+    ctx.authToken = generateToken(config.API_TOKEN_SECRET, 60);
 
     ctx.server = server;
     ctx.ipfsMock = ipfsMock;

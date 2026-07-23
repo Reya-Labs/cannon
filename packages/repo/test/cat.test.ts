@@ -53,6 +53,22 @@ describe('POST /api/v0/cat', function () {
     expect(result).toEqual(content);
   });
 
+  it('should reject a stored object whose bytes do not match its CID', async function () {
+    const { cid } = await loadFixture('registry');
+    await ctx.s3.putObject(cid, Buffer.from('corrupt'));
+    await ctx.repo.post(`/api/v0/cat?arg=${cid}`).expect(502, 'stored artifact integrity check failed');
+  });
+
+  it('should reject fallback bytes that do not match the requested CID', async function () {
+    const requested = await loadFixture('registry');
+    const wrong = await loadFixture('owned-greeter');
+    ctx.ipfsMock.set(requested.cid, wrong.data);
+
+    await ctx.repo.post(`/api/v0/cat?arg=${requested.cid}`).expect(502, 'upstream artifact integrity check failed');
+
+    expect(await ctx.s3.objectExists(requested.cid)).toBe(false);
+  });
+
   it('should return a pinned file that is not registered but it is available on ipfs', async function () {
     const { cid, data, content } = await loadFixture('registry');
 
@@ -70,5 +86,20 @@ describe('POST /api/v0/cat', function () {
 
     const result = JSON.parse(uncompress(res.body));
     expect(result).toEqual(content);
+
+    expect(Buffer.from(await ctx.s3.getObject(cid))).toEqual(data);
+    await ctx.ipfsMock.remove(cid);
+
+    const backfilled = await ctx.repo
+      .post(`/api/v0/cat?arg=${cid}`)
+      .set('Accept', 'application/octet-stream')
+      .parse((res, callback) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+        res.on('end', () => callback(null, Buffer.concat(chunks)));
+      })
+      .expect(200);
+
+    expect(backfilled.body).toEqual(data);
   });
 });

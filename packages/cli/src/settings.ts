@@ -38,6 +38,11 @@ export type CliSettings = {
   ipfsRetries?: number;
 
   /**
+   * Bearer token sent only to IPFS write endpoints.
+   */
+  ipfsAuthToken?: string;
+
+  /**
    * The interval in seconds that axios should wait before timing out requests
    */
   ipfsTimeout?: number;
@@ -162,6 +167,7 @@ function createCannonSettingsSchema(fileSettings: CliSettings) {
       .number()
       .optional()
       .default(fileSettings.ipfsRetries || 3),
+    CANNON_IPFS_AUTH_TOKEN: z.string().optional(),
     CANNON_IPFS_URL: z
       .string()
       .optional()
@@ -216,6 +222,7 @@ function computeCliSettings(overrides: Partial<CliSettings> = {}): CliSettings {
     CANNON_PRIVATE_KEY,
     CANNON_IPFS_TIMEOUT,
     CANNON_IPFS_RETRIES,
+    CANNON_IPFS_AUTH_TOKEN,
     CANNON_IPFS_URL,
     CANNON_WRITE_IPFS_URL,
     CANNON_PUBLISH_IPFS_URL,
@@ -238,6 +245,7 @@ function computeCliSettings(overrides: Partial<CliSettings> = {}): CliSettings {
       privateKey: CANNON_PRIVATE_KEY,
       ipfsTimeout: CANNON_IPFS_TIMEOUT,
       ipfsRetries: CANNON_IPFS_RETRIES,
+      ipfsAuthToken: CANNON_IPFS_AUTH_TOKEN,
       ipfsUrl: CANNON_IPFS_URL,
       writeIpfsUrl: CANNON_WRITE_IPFS_URL,
       publishIpfsUrl: CANNON_PUBLISH_IPFS_URL,

@@ -50,7 +50,7 @@ export function stripCredentialsFromURL(uri: string) {
 export async function filterSettings(settings: any) {
   // Filter out private key for logging
   /* eslint-disable @typescript-eslint/no-unused-vars */
-  const { cannonDirectory, privateKey, etherscanApiKey, ...filteredSettings } = settings;
+  const { cannonDirectory, privateKey, etherscanApiKey, ipfsAuthToken, ...filteredSettings } = settings;
 
   // Filters out API keys
   filteredSettings.rpcUrl = hideApiKey(filteredSettings.rpcUrl);
