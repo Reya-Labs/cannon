@@ -70,12 +70,16 @@ export function getS3Client(config: Params, cache = 10_000, enforceConditionalWr
 
     conditionalWriteValidation ??= (async () => {
       try {
-        await client.putObject({
-          Bucket: config.S3_BUCKET,
-          Key: capabilityKey,
-          Body: capabilityMarker,
-          IfNoneMatch: '*',
-        });
+        await retryS3(
+          () =>
+            client.putObject({
+              Bucket: config.S3_BUCKET,
+              Key: capabilityKey,
+              Body: capabilityMarker,
+              IfNoneMatch: '*',
+            }),
+          (err) => !isPreconditionFailure(err)
+        );
       } catch (err) {
         if (!isPreconditionFailure(err)) throw err;
       }
@@ -83,27 +87,36 @@ export function getS3Client(config: Params, cache = 10_000, enforceConditionalWr
       let conflictRejected = false;
 
       try {
-        await client.putObject({
-          Bucket: config.S3_BUCKET,
-          Key: capabilityKey,
-          Body: conflictingMarker,
-          IfNoneMatch: '*',
-        });
+        await retryS3(
+          () =>
+            client.putObject({
+              Bucket: config.S3_BUCKET,
+              Key: capabilityKey,
+              Body: conflictingMarker,
+              IfNoneMatch: '*',
+            }),
+          (err) => !isPreconditionFailure(err)
+        );
       } catch (err) {
         if (!isPreconditionFailure(err)) throw err;
         conflictRejected = true;
       }
 
-      const stored = await client.getObject({
-        Bucket: config.S3_BUCKET,
-        Key: capabilityKey,
-      });
+      const stored = await retryS3(() =>
+        client.getObject({
+          Bucket: config.S3_BUCKET,
+          Key: capabilityKey,
+        })
+      );
       const storedBytes = stored.Body ? Buffer.from(await stored.Body.transformToByteArray()) : null;
 
       if (!conflictRejected || !storedBytes?.equals(capabilityMarker)) {
         throw new Error('S3 backend does not enforce atomic If-None-Match conditional writes');
       }
-    })();
+    })().catch((err) => {
+      conditionalWriteValidation = undefined;
+      throw err;
+    });
 
     return conditionalWriteValidation;
   }

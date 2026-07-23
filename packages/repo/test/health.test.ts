@@ -26,11 +26,18 @@ describe('GET /health', function () {
 
   it('should reject an object store that ignores conditional writes', async function () {
     const strictS3 = getS3Client(ctx.config, ctx.config.MEMORY_CACHE);
+    const putObject = vi.spyOn(strictS3.client, 'putObject');
 
     try {
       await expect(strictS3.healthCheck()).rejects.toThrow(
         'S3 backend does not enforce atomic If-None-Match conditional writes'
       );
+      const firstValidationCalls = putObject.mock.calls.length;
+
+      await expect(strictS3.healthCheck()).rejects.toThrow(
+        'S3 backend does not enforce atomic If-None-Match conditional writes'
+      );
+      expect(putObject.mock.calls.length).toBeGreaterThan(firstValidationCalls);
     } finally {
       strictS3.client.destroy();
     }
