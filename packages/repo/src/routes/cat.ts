@@ -3,11 +3,11 @@ import { getContentCID, parseIpfsCid } from '@usecannon/builder/dist/src/ipfs';
 import { CatContext } from '../types';
 
 async function readStoredArtifact(ctx: CatContext, cid: string) {
-  if (!(await ctx.s3Read.objectExists(cid))) {
+  if (!(await ctx.objectStoreRead.objectExists(cid))) {
     return null;
   }
 
-  const data = Buffer.from(await ctx.s3Read.getObject(cid));
+  const data = Buffer.from(await ctx.objectStoreRead.getObject(cid));
   const actualCid = await getContentCID(data);
 
   if (actualCid !== cid) {
@@ -35,7 +35,7 @@ export function cat(ctx: CatContext) {
     }
 
     try {
-      if (!(await ctx.s3Read.objectExists(cid))) return res.status(404).end();
+      if (!(await ctx.objectStoreRead.objectExists(cid))) return res.status(404).end();
       return res.status(200).end();
     } catch (err) {
       console.error('stored artifact availability check failed', err);

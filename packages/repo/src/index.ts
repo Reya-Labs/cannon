@@ -3,31 +3,25 @@ import 'dotenv/config';
 import { version } from '../package.json';
 import { loadConfig } from './config';
 import { createApp } from './app';
-import { getS3Client } from './s3';
+import { getObjectStoreReadClient, getObjectStoreWriteClient } from './object-store';
 import { getDb } from './db';
 import { RepoContext } from './types';
 
 async function main() {
   const config = loadConfig(process.env);
+  const readerEnabled = config.REPO_ROLE === 'reader' || config.REPO_ROLE === 'combined';
+  const writerEnabled = config.REPO_ROLE === 'writer' || config.REPO_ROLE === 'combined';
 
-  const ctx = { config } as unknown as RepoContext;
+  const ctx: RepoContext = { config };
 
-  ctx.s3Read = getS3Client(config, {
-    credentials: {
-      accessKeyId: config.S3_READ_KEY,
-      secretAccessKey: config.S3_READ_SECRET,
-    },
-    cache: config.MEMORY_CACHE,
-    enforceConditionalWrites: false,
-  });
-  ctx.s3Write = getS3Client(config, {
-    credentials: {
-      accessKeyId: config.S3_WRITE_KEY,
-      secretAccessKey: config.S3_WRITE_SECRET,
-    },
-    cache: config.MEMORY_CACHE,
-  });
-  ctx.rdb = await getDb(config.REDIS_URL);
+  if (readerEnabled) {
+    ctx.objectStoreRead = getObjectStoreReadClient(config);
+  }
+
+  if (writerEnabled) {
+    ctx.objectStoreWrite = getObjectStoreWriteClient(config);
+    ctx.rdb = await getDb(config.REDIS_URL);
+  }
 
   const app = createApp(ctx);
 
@@ -36,7 +30,7 @@ async function main() {
   console.log(`\n · version: ${version} · endpoint: http://127.0.0.1:${config.PORT} ·`);
 
   server.on('close', async () => {
-    await ctx.rdb.quit();
+    await ctx.rdb?.quit();
   });
 }
 

@@ -22,8 +22,8 @@ export function bootstrap() {
   const ctx = {} as {
     repo: supertest.Agent;
     rdb: RedisClientType;
-    s3Read: S3Client;
-    s3Write: S3Client;
+    objectStoreRead: S3Client;
+    objectStoreWrite: S3Client;
     redisMock: Awaited<ReturnType<typeof redisServerMock>>;
     s3Mock: Awaited<ReturnType<typeof s3ServerMock>>;
     server: Awaited<ReturnType<typeof repoServer>>;
@@ -50,6 +50,8 @@ export function bootstrap() {
       RATE_LIMIT_MAX: 100_000,
       RATE_LIMIT_WINDOW: 1,
       MAX_ARTIFACT_BYTES: 1024 * 1024,
+      REPO_ROLE: 'combined',
+      OBJECT_STORE_PROVIDER: 's3',
       REDIS_URL: redisMock.REDIS_URL,
       S3_ENDPOINT: s3Mock.S3_ENDPOINT,
       S3_BUCKET: s3Mock.S3_BUCKET,
@@ -59,6 +61,9 @@ export function bootstrap() {
       S3_WRITE_KEY: s3Mock.S3_KEY,
       S3_WRITE_SECRET: s3Mock.S3_SECRET,
       S3_FOLDER: 'repo-v2',
+      GCS_PROJECT_ID: '',
+      GCS_BUCKET: '',
+      GCS_FOLDER: 'repo-v2',
       API_TOKEN_SECRET: 'repo-test-secret',
     };
 
@@ -79,14 +84,19 @@ export function bootstrap() {
       enforceConditionalWrites: false,
     });
     const rdb = await getDb(config.REDIS_URL);
-    const server = await repoServer({ config, s3Read, s3Write, rdb });
+    const server = await repoServer({
+      config,
+      objectStoreRead: s3Read,
+      objectStoreWrite: s3Write,
+      rdb,
+    });
     apiTokenSecret = config.API_TOKEN_SECRET;
 
     // create a client to make requests to the Repo server
     ctx.repo = supertest.agent(server.app);
     ctx.rdb = rdb;
-    ctx.s3Read = s3Read;
-    ctx.s3Write = s3Write;
+    ctx.objectStoreRead = s3Read;
+    ctx.objectStoreWrite = s3Write;
     ctx.config = config;
 
     ctx.server = server;
@@ -99,7 +109,7 @@ export function bootstrap() {
   });
 
   afterEach(async function () {
-    await Promise.all([ctx.s3Mock.reset(), ctx.s3Read.clearCache(), ctx.s3Write.clearCache()]);
+    await Promise.all([ctx.s3Mock.reset(), ctx.objectStoreRead.clearCache(), ctx.objectStoreWrite.clearCache()]);
   });
 
   afterAll(async function () {

@@ -59,7 +59,7 @@ describe('POST /api/v0/add', function () {
   it('should return ok for already existing object', async function () {
     const { cid, data } = await loadFixture('owned-greeter');
 
-    await ctx.s3Write.putObject(cid, data);
+    await ctx.objectStoreWrite.putObject(cid, data);
 
     await addRequest()
       .attach('file', data)
@@ -72,7 +72,7 @@ describe('POST /api/v0/add', function () {
   it('should successfully add valid package data', async function () {
     const pkg = await loadFixture('registry');
 
-    const prevExists = await ctx.s3Write.objectExists(pkg.cid);
+    const prevExists = await ctx.objectStoreWrite.objectExists(pkg.cid);
     expect(prevExists).toBe(false);
 
     await addRequest()
@@ -82,10 +82,10 @@ describe('POST /api/v0/add', function () {
         expect(JSON.parse(res.text)).toEqual({ Hash: pkg.cid });
       });
 
-    const afterExists = await ctx.s3Write.objectExists(pkg.cid);
+    const afterExists = await ctx.objectStoreWrite.objectExists(pkg.cid);
     expect(afterExists).toBe(true);
 
-    const saved = await ctx.s3Write.getObject(pkg.cid);
+    const saved = await ctx.objectStoreWrite.getObject(pkg.cid);
     const parsed = JSON.parse(uncompress(saved));
     expect(parsed).toEqual(pkg.content);
 
@@ -122,7 +122,7 @@ describe('POST /api/v0/add', function () {
         expect(JSON.parse(res.text)).toEqual({ Hash: cid });
       });
 
-    const saved = await ctx.s3Write.getObject(cid);
+    const saved = await ctx.objectStoreWrite.getObject(cid);
     const parsed = JSON.parse(uncompress(saved));
     expect(parsed).toEqual(content);
 
@@ -135,25 +135,31 @@ describe('POST /api/v0/add', function () {
         expect(JSON.parse(res.text)).toEqual({ Hash: cid });
       });
 
-    const saved2 = await ctx.s3Write.getObject(cid);
+    const saved2 = await ctx.objectStoreWrite.getObject(cid);
     const parsed2 = JSON.parse(uncompress(saved2));
     expect(parsed2).toEqual(content);
   });
 
   it('should refuse to overwrite an existing CID key with different bytes', async function () {
     const { cid, data } = await loadFixture('registry');
-    await ctx.s3Write.putObject(cid, Buffer.from('corrupt'));
+    await ctx.objectStoreWrite.putObject(cid, Buffer.from('corrupt'));
 
-    await expect(ctx.s3Write.putObject(cid, data)).rejects.toThrow(`refusing to overwrite immutable object "${cid}"`);
+    await expect(ctx.objectStoreWrite.putObject(cid, data)).rejects.toThrow(
+      `refusing to overwrite immutable object "${cid}"`
+    );
     await addRequest().attach('file', data).expect(409, 'stored artifact conflicts with upload');
 
-    expect(Buffer.from(await ctx.s3Write.getObject(cid))).toEqual(Buffer.from('corrupt'));
+    expect(Buffer.from(await ctx.objectStoreWrite.getObject(cid))).toEqual(Buffer.from('corrupt'));
   });
 
   it('should never use the read-only client for uploads', async function () {
     const pkg = await loadFixture('registry');
-    const readExists = vi.spyOn(ctx.s3Read, 'objectExists').mockRejectedValue(new Error('read-only client used by upload'));
-    const readObject = vi.spyOn(ctx.s3Read, 'getObject').mockRejectedValue(new Error('read-only client used by upload'));
+    const readExists = vi
+      .spyOn(ctx.objectStoreRead, 'objectExists')
+      .mockRejectedValue(new Error('read-only client used by upload'));
+    const readObject = vi
+      .spyOn(ctx.objectStoreRead, 'getObject')
+      .mockRejectedValue(new Error('read-only client used by upload'));
 
     try {
       await addRequest().attach('file', pkg.data).expect(200, { Hash: pkg.cid });

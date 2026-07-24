@@ -15,9 +15,9 @@ describe('HEAD /api/v0/cat', function () {
     await ctx.repo.head(`/api/v0/cat?arg=${cid}`).expect(404);
   });
 
-  it('should 200 when a file is available on S3', async function () {
+  it('should 200 when a file is available in object storage', async function () {
     const { cid, data } = await loadFixture('registry');
-    await ctx.s3Write.putObject(cid, data);
+    await ctx.objectStoreWrite.putObject(cid, data);
     await ctx.repo.head(`/api/v0/cat?arg=${cid}`).expect(200);
   });
 });
@@ -34,10 +34,10 @@ describe('POST /api/v0/cat', function () {
     await ctx.repo.post(`/api/v0/cat?arg=${cid}`).expect(404, 'unregistered ipfs data');
   });
 
-  it('should return a file that is available on S3', async function () {
+  it('should return a file that is available in object storage', async function () {
     const { cid, data, content } = await loadFixture('registry');
 
-    await ctx.s3Write.putObject(cid, data);
+    await ctx.objectStoreWrite.putObject(cid, data);
 
     const res = await ctx.repo
       .post(`/api/v0/cat?arg=${cid}`)
@@ -55,24 +55,26 @@ describe('POST /api/v0/cat', function () {
 
   it('should reject a stored object whose bytes do not match its CID', async function () {
     const { cid } = await loadFixture('registry');
-    await ctx.s3Write.putObject(cid, Buffer.from('corrupt'));
+    await ctx.objectStoreWrite.putObject(cid, Buffer.from('corrupt'));
     await ctx.repo.post(`/api/v0/cat?arg=${cid}`).expect(502, 'stored artifact integrity check failed');
   });
 
   it('should not fetch a missing artifact from an upstream IPFS service', async function () {
     const { cid } = await loadFixture('registry');
     await ctx.repo.post(`/api/v0/cat?arg=${cid}`).expect(404, 'unregistered ipfs data');
-    expect(await ctx.s3Read.objectExists(cid)).toBe(false);
+    expect(await ctx.objectStoreRead.objectExists(cid)).toBe(false);
   });
 
   it('should never use the write-capable client for reads', async function () {
     const { cid, data } = await loadFixture('registry');
-    await ctx.s3Write.putObject(cid, data);
+    await ctx.objectStoreWrite.putObject(cid, data);
 
     const writeExists = vi
-      .spyOn(ctx.s3Write, 'objectExists')
+      .spyOn(ctx.objectStoreWrite, 'objectExists')
       .mockRejectedValue(new Error('write-capable client used by read'));
-    const writeObject = vi.spyOn(ctx.s3Write, 'getObject').mockRejectedValue(new Error('write-capable client used by read'));
+    const writeObject = vi
+      .spyOn(ctx.objectStoreWrite, 'getObject')
+      .mockRejectedValue(new Error('write-capable client used by read'));
 
     try {
       await ctx.repo.post(`/api/v0/cat?arg=${cid}`).expect(200);
