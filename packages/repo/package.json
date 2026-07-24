@@ -5,7 +5,7 @@
   "description": "Management of Cannon Artifacts Uploaded to IPFS",
   "main": "dist/index.js",
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run --pool=forks --poolOptions.forks.singleFork=true",
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf ./dist",
     "start": "node dist/index.js",

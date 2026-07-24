@@ -109,12 +109,16 @@ export function bootstrap() {
   });
 
   afterEach(async function () {
+    if (!ctx.s3Mock) {
+      return;
+    }
+
     await Promise.all([ctx.s3Mock.reset(), ctx.objectStoreRead.clearCache(), ctx.objectStoreWrite.clearCache()]);
   });
 
   afterAll(async function () {
-    await ctx.server.close();
-    await Promise.all([ctx.redisMock.close(), ctx.s3Mock.close()]);
+    await ctx.server?.close();
+    await Promise.all([ctx.redisMock?.close(), ctx.s3Mock?.close()]);
   });
 
   return ctx;
