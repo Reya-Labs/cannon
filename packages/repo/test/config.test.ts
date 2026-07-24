@@ -15,6 +15,7 @@ const validS3Environment = {
   S3_WRITE_KEY: 'write-key',
   S3_WRITE_SECRET: 'write-secret',
   API_TOKEN_SECRET: 'token-secret',
+  CORS_ALLOWED_ORIGINS: '',
 };
 
 describe('repository configuration', function () {
@@ -96,6 +97,27 @@ describe('repository configuration', function () {
 
     expect(config.REPO_ROLE).toBe('writer');
   });
+
+  it('accepts an exact HTTPS CORS allowlist', function () {
+    const config = loadConfig({
+      ...validS3Environment,
+      CORS_ALLOWED_ORIGINS: 'https://cannon.example.com, https://staging-cannon.example.com',
+    });
+
+    expect(config.CORS_ALLOWED_ORIGINS).toContain('https://cannon.example.com');
+  });
+
+  it.each(['*', 'https://cannon.example.com/path', 'http://cannon.example.com'])(
+    'rejects unsafe production CORS origin %s',
+    function (origin) {
+      expect(() =>
+        loadConfig({
+          ...validS3Environment,
+          CORS_ALLOWED_ORIGINS: origin,
+        })
+      ).toThrow('CORS_ALLOWED_ORIGINS');
+    }
+  );
 
   it.each(['production', 'staging'])('requires separate GCS roles in %s', function (nodeEnvironment) {
     expect(() =>
