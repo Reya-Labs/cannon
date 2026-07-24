@@ -12,6 +12,9 @@ export function createApp(ctx: RepoContext): { app: Express; start: () => Promis
   const app = express();
   const readerEnabled = ctx.config.REPO_ROLE === 'reader' || ctx.config.REPO_ROLE === 'combined';
   const writerEnabled = ctx.config.REPO_ROLE === 'writer' || ctx.config.REPO_ROLE === 'combined';
+  const corsAllowedOrigins = ctx.config.CORS_ALLOWED_ORIGINS.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 
   if (ctx.config.NODE_ENV !== 'production') {
     app.set('json spaces', 2);
@@ -22,7 +25,14 @@ export function createApp(ctx: RepoContext): { app: Express; start: () => Promis
   }
 
   app.use(morgan('short'));
-  app.use(cors());
+  if (corsAllowedOrigins.length > 0) {
+    app.use(
+      cors({
+        origin: corsAllowedOrigins,
+        methods: ['GET', 'HEAD', 'POST', 'OPTIONS'],
+      })
+    );
+  }
   app.use(helmet());
 
   app.get('/favicon.ico', (req, res) => res.status(204));

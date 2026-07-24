@@ -12,6 +12,7 @@ const configSpecs = {
   RATE_LIMIT_MAX: num({ default: 50 }),
   MEMORY_CACHE: num({ default: 10_000 }),
   MAX_ARTIFACT_BYTES: num({ default: 50 * 1024 * 1024 }),
+  CORS_ALLOWED_ORIGINS: str({ devDefault: '', default: '' }),
   REPO_ROLE: str({ choices: ['reader', 'writer', 'combined'], devDefault: 'combined', default: 'combined' }),
   OBJECT_STORE_PROVIDER: str({ choices: ['s3', 'gcs'], devDefault: 's3', default: 's3' }),
   REDIS_URL: str({ devDefault: 'redis://localhost:6379', default: '' }),
@@ -36,6 +37,9 @@ export function loadConfig(environment: unknown) {
   const productionLike = config.NODE_ENV === 'production' || config.NODE_ENV === 'staging';
   const readerEnabled = config.REPO_ROLE === 'reader' || config.REPO_ROLE === 'combined';
   const writerEnabled = config.REPO_ROLE === 'writer' || config.REPO_ROLE === 'combined';
+  const corsAllowedOrigins = config.CORS_ALLOWED_ORIGINS.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 
   function requireValues(values: Array<[string, string]>) {
     for (const [name, value] of values) {
@@ -50,6 +54,27 @@ export function loadConfig(environment: unknown) {
       ['REDIS_URL', config.REDIS_URL],
       ['API_TOKEN_SECRET', config.API_TOKEN_SECRET],
     ]);
+  }
+
+  for (const origin of corsAllowedOrigins) {
+    if (origin === '*') {
+      throw new EnvError('CORS_ALLOWED_ORIGINS must not contain a wildcard');
+    }
+
+    let parsedOrigin: URL;
+    try {
+      parsedOrigin = new URL(origin);
+    } catch {
+      throw new EnvError(`CORS_ALLOWED_ORIGINS contains an invalid origin: ${origin}`);
+    }
+
+    if (
+      parsedOrigin.origin !== origin ||
+      !['http:', 'https:'].includes(parsedOrigin.protocol) ||
+      (productionLike && parsedOrigin.protocol !== 'https:')
+    ) {
+      throw new EnvError(`CORS_ALLOWED_ORIGINS must contain exact HTTPS origins in production: ${origin}`);
+    }
   }
 
   if (config.OBJECT_STORE_PROVIDER === 'gcs') {

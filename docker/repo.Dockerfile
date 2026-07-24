@@ -1,8 +1,8 @@
-FROM node:22.11.0-alpine AS build
+FROM node:22.11.0-alpine@sha256:b64ced2e7cd0a4816699fe308ce6e8a08ccba463c757c00c14cd372e3d2c763e AS build
 
 WORKDIR /usr/app
 
-RUN npm i -g pnpm @vercel/ncc
+RUN npm install --global pnpm@10.11.0 @vercel/ncc@0.44.1
 COPY ./pnpm-workspace.yaml ./package.json ./pnpm-lock.yaml ./
 COPY ./packages/builder/package.json ./packages/builder/tsconfig.json ./packages/builder/tsconfig.build.json ./packages/builder/
 COPY ./packages/repo/package.json ./packages/repo/tsconfig.json ./packages/repo/
@@ -16,7 +16,7 @@ RUN ncc build ./packages/repo/src/index.ts -o ./packages/repo/dist
 
 RUN echo $(node -p "require('./packages/repo/package.json').version") > /version.txt
 
-FROM node:22.11.0-alpine
+FROM node:22.11.0-alpine@sha256:b64ced2e7cd0a4816699fe308ce6e8a08ccba463c757c00c14cd372e3d2c763e
 
 WORKDIR /usr/app
 

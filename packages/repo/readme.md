@@ -21,11 +21,17 @@ store rather than `CANNON_SETTINGS` or browser configuration.
 - `API_TOKEN_SECRET`: writer-only secret used to validate upload tokens.
 - `REDIS_URL`: writer-only persistent Valkey/Redis endpoint.
 - `MAX_ARTIFACT_BYTES`: maximum upload size; defaults to 50 MiB.
+- `CORS_ALLOWED_ORIGINS`: optional comma-separated list of exact browser
+  origins. CORS is disabled when empty. Production and staging accept only
+  exact HTTPS origins and reject `*`, paths, and plaintext HTTP.
 
 Run separate reader and writer workloads. The reader mounts only
 `POST|HEAD /api/v0/cat` and `/health`; it does not initialize Redis, load the API
 token, or mount the upload route. The writer mounts only `POST /api/v0/add` and
 `/health`. Route separation is a second boundary in addition to cloud IAM.
+Leave writer CORS disabled unless an explicitly reviewed browser publisher is
+required. Browser-facing readers should allow only the exact deployment
+origins; CLI and server-to-server requests do not require CORS.
 
 ### Native GCS permissions
 

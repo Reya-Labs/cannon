@@ -50,6 +50,7 @@ export function bootstrap() {
       RATE_LIMIT_MAX: 100_000,
       RATE_LIMIT_WINDOW: 1,
       MAX_ARTIFACT_BYTES: 1024 * 1024,
+      CORS_ALLOWED_ORIGINS: '',
       REPO_ROLE: 'combined',
       OBJECT_STORE_PROVIDER: 's3',
       REDIS_URL: redisMock.REDIS_URL,
