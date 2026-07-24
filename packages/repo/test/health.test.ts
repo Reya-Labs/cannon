@@ -14,7 +14,9 @@ describe('GET /health', function () {
   });
 
   it('should return 503 when read-only object storage access is unavailable', async function () {
-    const healthCheck = vi.spyOn(ctx.s3Read, 'healthCheck').mockRejectedValueOnce(new Error('S3 read unavailable'));
+    const healthCheck = vi
+      .spyOn(ctx.objectStoreRead, 'healthCheck')
+      .mockRejectedValueOnce(new Error('object storage read unavailable'));
 
     try {
       await ctx.repo.get('/health').expect(503, {
@@ -27,7 +29,9 @@ describe('GET /health', function () {
   });
 
   it('should return 503 when write-capable object storage access is unavailable', async function () {
-    const healthCheck = vi.spyOn(ctx.s3Write, 'healthCheck').mockRejectedValueOnce(new Error('S3 write unavailable'));
+    const healthCheck = vi
+      .spyOn(ctx.objectStoreWrite, 'healthCheck')
+      .mockRejectedValueOnce(new Error('object storage write unavailable'));
 
     try {
       await ctx.repo.get('/health').expect(503, {

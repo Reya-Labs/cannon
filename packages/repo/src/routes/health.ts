@@ -7,7 +7,7 @@ export function health(ctx: HealthContext) {
 
   app.get('/health', async (_, res) => {
     try {
-      await Promise.all([ctx.rdb.ping(), ctx.s3Read.healthCheck(), ctx.s3Write.healthCheck()]);
+      await Promise.all([ctx.rdb?.ping(), ctx.objectStoreRead?.healthCheck(), ctx.objectStoreWrite?.healthCheck()]);
       res.json({
         status: 'ok',
         version: packageJson.version,

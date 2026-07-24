@@ -10,6 +10,8 @@ import type { RepoContext } from './types';
 
 export function createApp(ctx: RepoContext): { app: Express; start: () => Promise<Server> } {
   const app = express();
+  const readerEnabled = ctx.config.REPO_ROLE === 'reader' || ctx.config.REPO_ROLE === 'combined';
+  const writerEnabled = ctx.config.REPO_ROLE === 'writer' || ctx.config.REPO_ROLE === 'combined';
 
   if (ctx.config.NODE_ENV !== 'production') {
     app.set('json spaces', 2);
@@ -35,19 +37,33 @@ export function createApp(ctx: RepoContext): { app: Express; start: () => Promis
     })
   );
 
-  app.use(
-    routes.add({
-      config: ctx.config,
-      rdb: ctx.rdb,
-      s3Write: ctx.s3Write,
-    })
-  );
-  app.use(routes.cat({ s3Read: ctx.s3Read }));
+  if (writerEnabled) {
+    if (!ctx.rdb || !ctx.objectStoreWrite) {
+      throw new Error('writer repository role requires Redis and write-capable object storage');
+    }
+
+    app.use(
+      routes.add({
+        config: ctx.config,
+        rdb: ctx.rdb,
+        objectStoreWrite: ctx.objectStoreWrite,
+      })
+    );
+  }
+
+  if (readerEnabled) {
+    if (!ctx.objectStoreRead) {
+      throw new Error('reader repository role requires read-capable object storage');
+    }
+
+    app.use(routes.cat({ objectStoreRead: ctx.objectStoreRead }));
+  }
+
   app.use(
     routes.health({
       rdb: ctx.rdb,
-      s3Read: ctx.s3Read,
-      s3Write: ctx.s3Write,
+      objectStoreRead: ctx.objectStoreRead,
+      objectStoreWrite: ctx.objectStoreWrite,
     })
   );
 

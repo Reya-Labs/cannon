@@ -45,10 +45,10 @@ async function handleFileUpload(req: RepoRequest, res: Response, ctx: AddContext
 
   const cid = await getContentCID(file);
 
-  const exists = await ctx.s3Write.objectExists(cid);
+  const exists = await ctx.objectStoreWrite.objectExists(cid);
 
   if (exists) {
-    const existing = Buffer.from(await ctx.s3Write.getObject(cid));
+    const existing = Buffer.from(await ctx.objectStoreWrite.getObject(cid));
     const existingCid = await getContentCID(existing);
 
     if (existingCid !== cid || !existing.equals(file)) {
@@ -88,10 +88,10 @@ async function handleFileUpload(req: RepoRequest, res: Response, ctx: AddContext
   await ctx.rdb.zAdd(RKEY_FRESH_UPLOAD_HASHES, { score: now, value: cid }, { NX: true });
 
   try {
-    await ctx.s3Write.putObject(cid, file);
+    await ctx.objectStoreWrite.putObject(cid, file);
     return res.json({ Hash: cid }).end();
   } catch (err) {
-    console.error('cannon package upload to S3 fail', err);
+    console.error('cannon package upload to object storage failed', err);
     return res.status(500).end('file write error');
   }
 }

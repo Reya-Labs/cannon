@@ -5,7 +5,7 @@
   "description": "Management of Cannon Artifacts Uploaded to IPFS",
   "main": "dist/index.js",
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run --pool=forks --poolOptions.forks.singleFork=true",
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf ./dist",
     "start": "node dist/index.js",
@@ -27,6 +27,7 @@
   "homepage": "https://github.com/usecannon/cannon#readme",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.701.0",
+    "@google-cloud/storage": "^7.21.0",
     "@usecannon/builder": "workspace:*",
     "connect-busboy": "^1.0.0",
     "cors": "^2.8.5",
