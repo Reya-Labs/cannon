@@ -1,4 +1,4 @@
-import { recreateIndexes } from '../src/registry';
+import { recreateIndexes } from '../src/search-indexes';
 import { useRedis } from '../src/redis';
 import { config } from '../src/config';
 

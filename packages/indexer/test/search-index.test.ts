@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { RKEY_4BYTE_ABI_PREFIX, RKEY_4BYTE_ABI_SEARCHABLE, RKEY_ABI_SEARCHABLE, RKEY_PACKAGE_SEARCHABLE } from '../src/db';
-import { initializeIndexes, recreateIndexes } from '../src/registry';
+import { initializeIndexes, recreateIndexes } from '../src/search-indexes';
 
 describe('search index trust boundaries', () => {
   it('keeps untrusted 4byte records out of the canonical ABI index', async () => {
