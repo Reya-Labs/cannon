@@ -2,9 +2,10 @@ import { initializeIndexes } from '../src/registry';
 import { useRedis } from '../src/redis';
 import { redisIndexExists } from '../src/helpers/redis';
 import * as rkey from '../src/db';
+import { config } from '../src/config';
 
 async function main() {
-  const redis = await useRedis();
+  const redis = await useRedis(config.REDIS_URL);
 
   if (await redisIndexExists(redis, rkey.RKEY_PACKAGE_SEARCHABLE)) {
     await redis.ft.dropIndex(rkey.RKEY_PACKAGE_SEARCHABLE);

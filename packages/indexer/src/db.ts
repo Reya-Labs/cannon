@@ -26,3 +26,6 @@ export const RKEY_PACKAGE_SEARCHABLE = 'reg:packages';
 export const RKEY_ABI_SEARCHABLE = 'reg:abi';
 
 export const RKEY_PINNED = 'indexer:pinned';
+
+export const RKEY_4BYTE_ABI_PREFIX = 'enrichment:4byte:abi';
+export const RKEY_4BYTE_CURSOR_PREFIX = 'enrichment:4byte:cursor';

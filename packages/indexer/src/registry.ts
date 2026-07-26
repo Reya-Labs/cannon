@@ -339,7 +339,7 @@ export async function initializeIndexes(redis: RedisClientType) {
       chainId: { type: SchemaFieldTypes.TAG },
       timestamp: { type: SchemaFieldTypes.NUMERIC, SORTABLE: true },
     },
-    { PREFIX: rkey.RKEY_ABI_SEARCHABLE + ':' }
+    { PREFIX: [rkey.RKEY_ABI_SEARCHABLE + ':', rkey.RKEY_4BYTE_ABI_PREFIX + ':'] }
   );
 }
 
@@ -627,7 +627,7 @@ export async function scanChain(
 }
 
 export async function loop() {
-  const redis = await useRedis();
+  const redis = await useRedis(config.REDIS_URL);
   const mainnetClient = createRpcClient('mainnet', config.MAINNET_PROVIDER_URL);
   const optimismClient = createRpcClient('optimism', config.OPTIMISM_PROVIDER_URL);
   const queue = createQueue();

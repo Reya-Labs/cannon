@@ -1,11 +1,10 @@
 import { createClient } from 'redis';
-import { config } from './config';
 
 export type ActualRedisClientType = ReturnType<typeof createClient>;
 
-export async function useRedis(): Promise<ActualRedisClientType> {
+export async function useRedis(redisUrl: string): Promise<ActualRedisClientType> {
   const client: ActualRedisClientType = createClient({
-    url: config.REDIS_URL,
+    url: redisUrl,
     socket: {
       reconnectStrategy: (retries, err) => {
         // After 5 retries, halt the server
