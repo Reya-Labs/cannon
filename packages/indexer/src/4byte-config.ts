@@ -43,15 +43,30 @@ function validateBaseUrl(value: string): string {
     throw new EnvError('FOURBYTE_BASE_URL must be a valid URL');
   }
 
+  const hostname = baseUrl.hostname
+    .toLowerCase()
+    .replace(/^\[(.*)\]$/, '$1')
+    .replace(/\.$/, '');
+  const loopbackOrUnspecified =
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    hostname === '0.0.0.0' ||
+    hostname === '::' ||
+    hostname === '::1' ||
+    hostname === '::ffff:0:0' ||
+    hostname.startsWith('127.') ||
+    /^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/i.test(hostname);
+
   if (
     baseUrl.protocol !== 'https:' ||
     baseUrl.pathname !== '/' ||
     baseUrl.search ||
     baseUrl.hash ||
     baseUrl.username ||
-    baseUrl.password
+    baseUrl.password ||
+    loopbackOrUnspecified
   ) {
-    throw new EnvError('FOURBYTE_BASE_URL must be an HTTPS origin without credentials, path, query or fragment');
+    throw new EnvError('FOURBYTE_BASE_URL must be a non-loopback HTTPS origin without credentials, path, query or fragment');
   }
 
   return baseUrl.origin;

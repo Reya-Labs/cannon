@@ -2,6 +2,11 @@ import { createClient } from 'redis';
 
 export type ActualRedisClientType = ReturnType<typeof createClient>;
 
+/**
+ * Connects to the explicit Redis URL and returns the ready client.
+ *
+ * The caller owns the returned client and must close it when its workload ends.
+ */
 export async function useRedis(redisUrl: string): Promise<ActualRedisClientType> {
   const client: ActualRedisClientType = createClient({
     url: redisUrl,

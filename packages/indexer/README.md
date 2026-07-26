@@ -32,6 +32,8 @@ The following optional bounds have conservative defaults:
 - `FOURBYTE_RETRY_BASE_MS=250`;
 - `FOURBYTE_RETRY_MAX_MS=5000`.
 
-Each successful page and its next cursor are committed in one Redis transaction. Enrichment keys live under `enrichment:4byte:*`, separately from canonical `reg:*` keys. Pagination is restricted to the configured HTTPS origin, redirects are rejected, and response, page, run, timeout and retry bounds are enforced.
+Each successful page and its next cursor are committed in one Redis transaction. Enrichment keys live under `enrichment:4byte:*`, separately from canonical `reg:*` keys, and are marked `source=4byte.directory` and `trust=unverified`. Pagination is restricted to the configured non-loopback HTTPS origin, redirects are rejected, response bodies are always released, and response, page, run, timeout and retry bounds are enforced.
 
-The enrichment prefix is part of the `reg:abi` RediSearch definition created for a fresh query-plane Redis. Do not enable the worker against an existing index until an explicit drop/recreate migration has run and `FT.INFO reg:abi` proves that `enrichment:4byte:abi:` is included. The normal registry startup deliberately does not rewrite an existing search schema.
+Untrusted enrichment is deliberately excluded from the canonical `reg:abi` index. A fresh query plane creates the display-only `enrichment:4byte:abi-search` index over `enrichment:4byte:abi:`. The package-query API does not query that index; any future consumer must expose it through an explicitly unverified display path and must never use it for signer decisions or canonical ABI precedence.
+
+Do not enable the worker against an existing Redis Stack until an explicit migration creates the separate index and `FT.INFO` proves that `reg:abi` has only the `reg:abi:` prefix while `enrichment:4byte:abi-search` has only the `enrichment:4byte:abi:` prefix. The normal registry startup deliberately does not rewrite an existing search schema.

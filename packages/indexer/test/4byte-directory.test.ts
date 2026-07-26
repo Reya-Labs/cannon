@@ -1,9 +1,19 @@
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+/* eslint-disable @typescript-eslint/no-floating-promises -- node:test registration is intentionally synchronous. */
+import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { describe, it } from 'node:test';
+import ts from 'typescript';
 import * as viem from 'viem';
-import { describe, expect, it, vi } from 'vitest';
 import { FourByteConfig } from '../src/4byte-config';
-import { FourByteRedis, parseDirectoryPage, resolvePageUrl, runFourByteEnrichment, scanFeed } from '../src/4byte-directory';
+import {
+  FourByteRedis,
+  loop,
+  parseDirectoryPage,
+  resolvePageUrl,
+  runFourByteEnrichment,
+  scanFeed,
+} from '../src/4byte-directory';
 
 type Operation = () => void;
 
@@ -89,16 +99,56 @@ function jsonResponse(body: unknown, status = 200, headers: Record<string, strin
   });
 }
 
+type FetchCall = [input: string | URL, init?: Parameters<typeof fetch>[1]];
+
+function fetchSequence(...steps: Array<Response | Error>) {
+  const calls: FetchCall[] = [];
+  let index = 0;
+  const fetchPage = async (...args: FetchCall): Promise<Response> => {
+    calls.push(args);
+    const step = steps[index++];
+    if (!step) throw new Error('Unexpected fetch call');
+    if (step instanceof Error) throw step;
+    return step;
+  };
+  return { calls, fetchPage };
+}
+
+function localImportGraph(entrypoint: string): Set<string> {
+  const visited = new Set<string>();
+  const visit = (file: string) => {
+    if (visited.has(file)) return;
+    visited.add(file);
+    const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+
+    for (const statement of source.statements) {
+      const moduleSpecifier =
+        (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) && statement.moduleSpecifier;
+      if (!moduleSpecifier || !ts.isStringLiteral(moduleSpecifier) || !moduleSpecifier.text.startsWith('.')) continue;
+
+      const target = resolve(dirname(file), moduleSpecifier.text);
+      const resolved = [`${target}.ts`, resolve(target, 'index.ts')].find(existsSync);
+      if (resolved) visit(resolved);
+    }
+  };
+
+  visit(entrypoint);
+  return visited;
+}
+
 describe('4byte response validation', () => {
   it('accepts relative and absolute pagination only on the configured HTTPS origin', () => {
-    expect(resolvePageUrl('/api/v1/signatures/?page=2', config().baseUrl)).toBe(
+    assert.equal(
+      resolvePageUrl('/api/v1/signatures/?page=2', config().baseUrl),
       'https://www.4byte.directory/api/v1/signatures/?page=2'
     );
-    expect(resolvePageUrl('https://www.4byte.directory/api/v1/signatures/?page=2', config().baseUrl)).toBe(
+    assert.equal(
+      resolvePageUrl('https://www.4byte.directory/api/v1/signatures/?page=2', config().baseUrl),
       'https://www.4byte.directory/api/v1/signatures/?page=2'
     );
 
-    expect(resolvePageUrl('http://www.4byte.directory/api/v1/signatures/?page=2', config().baseUrl)).toBe(
+    assert.equal(
+      resolvePageUrl('http://www.4byte.directory/api/v1/signatures/?page=2', config().baseUrl),
       'https://www.4byte.directory/api/v1/signatures/?page=2'
     );
 
@@ -107,135 +157,206 @@ describe('4byte response validation', () => {
       'https://user:secret@www.4byte.directory/api/v1/signatures/?page=2',
       'https://www.4byte.directory/api/v1/signatures/#fragment',
     ]) {
-      expect(() => resolvePageUrl(url, config().baseUrl)).toThrow('configured HTTPS origin');
+      assert.throws(() => resolvePageUrl(url, config().baseUrl), /configured HTTPS origin/);
     }
   });
 
   it('rejects malformed schema, oversized pages and selector mismatches', () => {
-    expect(() =>
-      parseDirectoryPage({ ...page('function', 1), results: 'invalid' }, 'function', config().baseUrl, 10)
-    ).toThrow('results must be an array');
-    expect(() => parseDirectoryPage(page('function', 1), 'function', config().baseUrl, 0)).toThrow('result bound');
-    expect(() =>
-      parseDirectoryPage(
-        {
-          ...page('function', 1),
-          results: [{ ...entry('function', 1), hex_signature: '0x00000000' }],
-        },
-        'function',
-        config().baseUrl,
-        10
-      )
-    ).toThrow('does not match');
+    assert.throws(
+      () => parseDirectoryPage({ ...page('function', 1), results: 'invalid' }, 'function', config().baseUrl, 10),
+      /results must be an array/
+    );
+    assert.throws(() => parseDirectoryPage(page('function', 1), 'function', config().baseUrl, 0), /result bound/);
+    assert.throws(
+      () =>
+        parseDirectoryPage(
+          {
+            ...page('function', 1),
+            results: [{ ...entry('function', 1), hex_signature: '0x00000000' }],
+          },
+          'function',
+          config().baseUrl,
+          10
+        ),
+      /does not match/
+    );
   });
 
   it('rejects cross-origin pagination before the page is committed', () => {
-    expect(() =>
-      parseDirectoryPage(
-        page('event', 1, 'https://attacker.example/next'),
-        'event',
-        config().baseUrl,
-        config().maxResultsPerPage
-      )
-    ).toThrow('configured HTTPS origin');
+    assert.throws(
+      () =>
+        parseDirectoryPage(
+          page('event', 1, 'https://attacker.example/next'),
+          'event',
+          config().baseUrl,
+          config().maxResultsPerPage
+        ),
+      /configured HTTPS origin/
+    );
   });
 
   it('rejects cyclic pagination within a run', async () => {
     const repeatedUrl = 'https://www.4byte.directory/api/v1/signatures/?format=json';
-    await expect(
-      scanFeed(
-        new MemoryRedis(),
-        'function',
-        config(),
-        100,
-        vi.fn().mockResolvedValue(jsonResponse(page('function', 1, repeatedUrl)))
-      )
-    ).rejects.toThrow('pagination contains a cycle');
+    const { fetchPage } = fetchSequence(jsonResponse(page('function', 1, repeatedUrl)));
+    await assert.rejects(scanFeed(new MemoryRedis(), 'function', config(), 100, fetchPage), /pagination contains a cycle/);
   });
 });
 
 describe('one-shot enrichment worker', () => {
+  it('returns while disabled without opening Redis or making a request', async () => {
+    let redisCalls = 0;
+    let fetchCalls = 0;
+
+    await loop(
+      {},
+      {
+        fetchPage: async () => {
+          fetchCalls++;
+          throw new Error('network must not be reached');
+        },
+        log: () => undefined,
+        useRedis: async () => {
+          redisCalls++;
+          throw new Error('Redis must not be reached');
+        },
+      }
+    );
+
+    assert.equal(redisCalls, 0);
+    assert.equal(fetchCalls, 0);
+  });
+
   it('commits bounded pages and cursors under the enrichment namespace', async () => {
     const redis = new MemoryRedis();
-    const fetchPage = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse(page('function', 1, '/api/v1/signatures/?page=2')))
-      .mockResolvedValueOnce(jsonResponse(page('function', 2)));
+    const { calls, fetchPage } = fetchSequence(
+      jsonResponse(page('function', 1, '/api/v1/signatures/?page=2')),
+      jsonResponse(page('function', 2))
+    );
 
     const result = await scanFeed(redis, 'function', config(), 100, fetchPage);
 
-    expect(result).toEqual({ entries: 2, kind: 'function', pages: 2 });
-    expect(fetchPage).toHaveBeenCalledTimes(2);
-    expect(fetchPage.mock.calls[0][1]).toMatchObject({ redirect: 'manual' });
-    expect([...redis.hashes.keys()]).toEqual(['enrichment:4byte:abi:function:1', 'enrichment:4byte:abi:function:2']);
-    expect(redis.values.get('enrichment:4byte:cursor:function')).toBe('');
+    assert.deepEqual(result, { entries: 2, kind: 'function', pages: 2 });
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0][1]?.redirect, 'manual');
+    assert.deepEqual([...redis.hashes.keys()], ['enrichment:4byte:abi:function:1', 'enrichment:4byte:abi:function:2']);
+    assert.deepEqual(Object.fromEntries(redis.hashes.get('enrichment:4byte:abi:function:1') ?? []), {
+      name: 'transfer1(address,uint256)',
+      selector: entry('function', 1).hex_signature,
+      source: '4byte.directory',
+      timestamp: '1785067200',
+      trust: 'unverified',
+      type: 'function',
+    });
+    assert.equal(redis.values.get('enrichment:4byte:cursor:function'), '');
   });
 
   it('honors the page and aggregate entry bounds', async () => {
     const redis = new MemoryRedis();
-    const fetchPage = vi.fn().mockResolvedValueOnce(jsonResponse(page('function', 1, '/api/v1/signatures/?page=2')));
+    const { fetchPage } = fetchSequence(jsonResponse(page('function', 1, '/api/v1/signatures/?page=2')));
 
     const result = await scanFeed(redis, 'function', config({ maxPagesPerFeed: 1 }), 100, fetchPage);
-    expect(result.pages).toBe(1);
-    expect(redis.values.get('enrichment:4byte:cursor:function')).toContain('page=2');
+    assert.equal(result.pages, 1);
+    assert.match(redis.values.get('enrichment:4byte:cursor:function') ?? '', /page=2/);
 
-    await expect(
-      scanFeed(new MemoryRedis(), 'function', config(), 0, vi.fn().mockResolvedValue(jsonResponse(page('function', 1))))
-    ).rejects.toThrow('aggregate entry bound');
+    const boundedFetch = fetchSequence(jsonResponse(page('function', 1))).fetchPage;
+    await assert.rejects(scanFeed(new MemoryRedis(), 'function', config(), 0, boundedFetch), /aggregate entry bound/);
   });
 
   it('rejects redirects and oversized response bodies', async () => {
-    await expect(
-      scanFeed(
-        new MemoryRedis(),
-        'function',
-        config(),
-        100,
-        vi.fn().mockResolvedValue(
-          new Response(null, {
-            headers: { location: 'https://attacker.example' },
-            status: 302,
-          })
-        )
+    let redirectBodyCancelled = false;
+    const redirectFetch = fetchSequence(
+      new Response(
+        new ReadableStream({
+          cancel() {
+            redirectBodyCancelled = true;
+          },
+        }),
+        {
+          headers: { location: 'https://attacker.example' },
+          status: 302,
+        }
       )
-    ).rejects.toThrow('redirects are forbidden');
+    ).fetchPage;
+    await assert.rejects(scanFeed(new MemoryRedis(), 'function', config(), 100, redirectFetch), /redirects are forbidden/);
+    assert.equal(redirectBodyCancelled, true);
 
-    await expect(
-      scanFeed(
-        new MemoryRedis(),
-        'function',
-        config({ maxResponseBytes: 1_024 }),
-        100,
-        vi.fn().mockResolvedValue(
-          jsonResponse(page('function', 1), 200, {
-            'content-length': '2048',
-          })
-        )
-      )
-    ).rejects.toThrow('Content-Length');
+    const oversizedFetch = fetchSequence(
+      jsonResponse(page('function', 1), 200, {
+        'content-length': '2048',
+      })
+    ).fetchPage;
+    await assert.rejects(
+      scanFeed(new MemoryRedis(), 'function', config({ maxResponseBytes: 1_024 }), 100, oversizedFetch),
+      /Content-Length/
+    );
+  });
+
+  it('retries body-stream failures but not invalid JSON', async () => {
+    let pulls = 0;
+    const failingBody = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pulls++ === 0) {
+          controller.enqueue(new TextEncoder().encode('{"partial":'));
+          return;
+        }
+        throw new Error('socket reset');
+      },
+    });
+    const retrying = fetchSequence(
+      new Response(failingBody, { headers: { 'content-type': 'application/json' } }),
+      jsonResponse(page('function', 1))
+    );
+    const delays: number[] = [];
+
+    const result = await scanFeed(
+      new MemoryRedis(),
+      'function',
+      config({ retries: 1 }),
+      100,
+      retrying.fetchPage,
+      async (milliseconds) => {
+        delays.push(milliseconds);
+      }
+    );
+
+    assert.equal(result.entries, 1);
+    assert.equal(retrying.calls.length, 2);
+    assert.deepEqual(delays, [5]);
+
+    const invalidJson = fetchSequence(
+      new Response('{', { headers: { 'content-type': 'application/json' } }),
+      jsonResponse(page('function', 2))
+    );
+    await assert.rejects(
+      scanFeed(new MemoryRedis(), 'function', config({ retries: 1 }), 100, invalidJson.fetchPage),
+      /not valid JSON/
+    );
+    assert.equal(invalidJson.calls.length, 1);
   });
 
   it('retries transient failures with bounded exponential backoff', async () => {
-    const fetchPage = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse({}, 503))
-      .mockRejectedValueOnce(new Error('network unavailable'))
-      .mockResolvedValueOnce(jsonResponse(page('function', 1)));
-    const wait = vi.fn().mockResolvedValue(undefined);
+    const { calls, fetchPage } = fetchSequence(
+      jsonResponse({}, 503),
+      new Error('network unavailable'),
+      jsonResponse(page('function', 1))
+    );
+    const delays: number[] = [];
+    const wait = async (milliseconds: number) => {
+      delays.push(milliseconds);
+    };
 
     await scanFeed(new MemoryRedis(), 'function', config({ retries: 2, retryBaseMs: 7 }), 100, fetchPage, wait);
 
-    expect(fetchPage).toHaveBeenCalledTimes(3);
-    expect(wait.mock.calls).toEqual([[7], [14]]);
+    assert.equal(calls.length, 3);
+    assert.deepEqual(delays, [7, 14]);
   });
 
   it('caps retry delays', async () => {
-    const fetchPage = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse({}, 503))
-      .mockResolvedValueOnce(jsonResponse({}, 503))
-      .mockResolvedValueOnce(jsonResponse(page('function', 1)));
-    const wait = vi.fn().mockResolvedValue(undefined);
+    const { fetchPage } = fetchSequence(jsonResponse({}, 503), jsonResponse({}, 503), jsonResponse(page('function', 1)));
+    const delays: number[] = [];
+    const wait = async (milliseconds: number) => {
+      delays.push(milliseconds);
+    };
 
     await scanFeed(
       new MemoryRedis(),
@@ -246,20 +367,20 @@ describe('one-shot enrichment worker', () => {
       wait
     );
 
-    expect(wait.mock.calls).toEqual([[7], [10]]);
+    assert.deepEqual(delays, [7, 10]);
   });
 
   it('continues the other enrichment feed after one feed fails', async () => {
-    const fetchPage = vi.fn(async (url: string | URL) => {
+    const fetchPage = async (url: string | URL) => {
       if (url.toString().includes('/signatures/')) return jsonResponse({}, 503);
       return jsonResponse(page('event', 2));
-    });
+    };
 
     const summary = await runFourByteEnrichment(new MemoryRedis(), config(), fetchPage);
 
-    expect(summary.failures).toHaveLength(1);
-    expect(summary.failures[0].kind).toBe('function');
-    expect(summary.feeds).toEqual([{ entries: 1, kind: 'event', pages: 1 }]);
+    assert.equal(summary.failures.length, 1);
+    assert.equal(summary.failures[0].kind, 'function');
+    assert.deepEqual(summary.feeds, [{ entries: 1, kind: 'event', pages: 1 }]);
   });
 
   it('counts committed pages against the aggregate budget after a later page fails', async () => {
@@ -270,17 +391,20 @@ describe('one-shot enrichment worker', () => {
       count: 2,
       results: [entry('event', 2), entry('event', 3)],
     };
-    const fetchPage = vi.fn(async (url: string | URL) => {
+    const fetchPage = async (url: string | URL) => {
       const value = url.toString();
       if (value.includes('/event-signatures/')) return jsonResponse(eventPage);
       if (value.includes('page=2')) return jsonResponse({}, 400);
       return jsonResponse(page('function', 1, functionNext));
-    });
+    };
 
     const summary = await runFourByteEnrichment(redis, config({ maxEntriesPerRun: 2 }), fetchPage);
 
-    expect(summary.failures.map(({ kind }) => kind)).toEqual(['function', 'event']);
-    expect([...redis.hashes.keys()]).toEqual(['enrichment:4byte:abi:function:1']);
+    assert.deepEqual(
+      summary.failures.map(({ kind }) => kind),
+      ['function', 'event']
+    );
+    assert.deepEqual([...redis.hashes.keys()], ['enrichment:4byte:abi:function:1']);
   });
 
   it('reserves an ambiguously committed page before a lost Redis reply', async () => {
@@ -292,21 +416,24 @@ describe('one-shot enrichment worker', () => {
       count: 2,
       results: [entry('event', 2), entry('event', 3)],
     };
-    const fetchPage = vi.fn(async (url: string | URL) =>
-      url.toString().includes('/event-signatures/') ? jsonResponse(eventPage) : jsonResponse(page('function', 1))
-    );
+    const fetchPage = async (url: string | URL) =>
+      url.toString().includes('/event-signatures/') ? jsonResponse(eventPage) : jsonResponse(page('function', 1));
 
     const summary = await runFourByteEnrichment(redis, config({ maxEntriesPerRun: 2 }), fetchPage);
 
-    expect(summary.failures.map(({ kind }) => kind)).toEqual(['function', 'event']);
-    expect([...redis.hashes.keys()]).toEqual(['enrichment:4byte:abi:function:1']);
+    assert.deepEqual(
+      summary.failures.map(({ kind }) => kind),
+      ['function', 'event']
+    );
+    assert.deepEqual([...redis.hashes.keys()], ['enrichment:4byte:abi:function:1']);
   });
 
-  it('keeps the canonical registry entrypoint free of enrichment imports', async () => {
+  it('keeps the canonical registry import graph free of enrichment modules', () => {
     const indexPath = resolve(__dirname, '../src/index.ts');
-    const indexSource = await readFile(indexPath, 'utf8');
+    const imports = localImportGraph(indexPath);
 
-    expect(indexSource).toContain("from './registry'");
-    expect(indexSource).not.toContain('4byte-directory');
+    assert.ok(imports.has(resolve(__dirname, '../src/registry.ts')));
+    assert.ok(!imports.has(resolve(__dirname, '../src/4byte-directory.ts')));
+    assert.ok(!imports.has(resolve(__dirname, '../src/4byte-config.ts')));
   });
 });

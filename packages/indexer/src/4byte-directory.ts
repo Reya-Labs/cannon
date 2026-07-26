@@ -47,6 +47,16 @@ export type EnrichmentSummary = {
 type Fetch = (input: string | URL, init?: Parameters<typeof fetch>[1]) => Promise<Response>;
 type Sleep = (milliseconds: number) => Promise<void>;
 type ReserveEntries = (entries: number) => void;
+type EnrichmentLoopDependencies = {
+  fetchPage?: Fetch;
+  log?: (...values: unknown[]) => void;
+  useRedis?: typeof useRedis;
+};
+
+const SELECTOR_PATTERNS: Record<DirectoryKind, RegExp> = {
+  event: /^0x[0-9a-fA-F]{64}$/,
+  function: /^0x[0-9a-fA-F]{8}$/,
+};
 
 class RetryableRequestError extends Error {}
 
@@ -76,6 +86,9 @@ function safeInteger(value: unknown, context: string, minimum = 0): number {
   return value as number;
 }
 
+/**
+ * Resolves a feed cursor while pinning every request to the configured HTTPS origin.
+ */
 export function resolvePageUrl(value: string, baseUrl: string): string {
   let pageUrl: URL;
   const configuredOrigin = new URL(baseUrl);
@@ -106,8 +119,7 @@ export function resolvePageUrl(value: string, baseUrl: string): string {
 }
 
 function validateSelector(kind: DirectoryKind, textSignature: string, hexSignature: unknown): string {
-  const expectedLength = kind === 'function' ? 8 : 64;
-  if (typeof hexSignature !== 'string' || !new RegExp(`^0x[0-9a-fA-F]{${expectedLength}}$`).test(hexSignature)) {
+  if (typeof hexSignature !== 'string' || !SELECTOR_PATTERNS[kind].test(hexSignature)) {
     throw new Error(`4byte ${kind} selector has an invalid shape`);
   }
 
@@ -147,6 +159,9 @@ function parseEntry(value: unknown, kind: DirectoryKind): DirectoryEntry {
   };
 }
 
+/**
+ * Validates one bounded 4byte page and independently recomputes every selector.
+ */
 export function parseDirectoryPage(value: unknown, kind: DirectoryKind, baseUrl: string, maxResults: number): DirectoryPage {
   const page = asRecord(value, `4byte ${kind} page`);
   const count = safeInteger(page.count, `4byte ${kind} count`);
@@ -188,11 +203,20 @@ async function readBoundedJson(response: Response, maxResponseBytes: number): Pr
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let receivedBytes = 0;
+  let completed = false;
 
   try {
     let streamComplete = false;
     while (!streamComplete) {
-      const { done, value } = await reader.read();
+      let chunk: Awaited<ReturnType<typeof reader.read>>;
+      try {
+        chunk = await reader.read();
+      } catch (error) {
+        throw new RetryableRequestError(
+          `4byte response body read failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+      const { done, value } = chunk;
       if (done) {
         streamComplete = true;
         continue;
@@ -200,16 +224,17 @@ async function readBoundedJson(response: Response, maxResponseBytes: number): Pr
       if (!value) throw new Error('4byte response stream returned an invalid chunk');
       receivedBytes += value.byteLength;
       if (receivedBytes > maxResponseBytes) {
-        await reader.cancel();
         throw new Error('4byte response body exceeds the configured byte bound');
       }
       chunks.push(value);
     }
+    completed = true;
   } finally {
+    if (!completed) await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 
-  const body = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+  const body = Buffer.concat(chunks);
   let decoded: string;
   try {
     decoded = new TextDecoder('utf-8', { fatal: true }).decode(body);
@@ -256,6 +281,9 @@ async function requestPage(url: string, config: FourByteConfig, fetchPage: Fetch
     return await readBoundedJson(response, config.maxResponseBytes);
   } finally {
     clearTimeout(timeout);
+    if (response.body && !response.body.locked) {
+      await response.body.cancel().catch(() => undefined);
+    }
   }
 }
 
@@ -285,6 +313,12 @@ function entryKey(kind: DirectoryKind, id: number): string {
   return `${rkey.RKEY_4BYTE_ABI_PREFIX}:${kind}:${id}`;
 }
 
+/**
+ * Scans one feed within page and entry limits.
+ *
+ * The shared reservation callback runs before Redis EXEC and is never refunded,
+ * so an ambiguous commit cannot disappear from the aggregate run budget.
+ */
 export async function scanFeed(
   redis: FourByteRedis,
   kind: DirectoryKind,
@@ -323,6 +357,8 @@ export async function scanFeed(
       batch.hSetNX(key, 'name', item.textSignature);
       batch.hSetNX(key, 'selector', item.hexSignature);
       batch.hSetNX(key, 'type', kind);
+      batch.hSetNX(key, 'source', '4byte.directory');
+      batch.hSetNX(key, 'trust', 'unverified');
       batch.hSetNX(key, 'timestamp', Math.floor(Date.parse(item.createdAt) / 1_000).toString());
     }
     batch.set(cursorKey(kind), page.next ?? '');
@@ -336,6 +372,9 @@ export async function scanFeed(
   return { entries, kind, pages };
 }
 
+/**
+ * Runs both feeds independently and reports per-feed failures without throwing.
+ */
 export async function runFourByteEnrichment(
   redis: FourByteRedis,
   config: FourByteConfig,
@@ -371,17 +410,26 @@ export async function runFourByteEnrichment(
   return { failures, feeds };
 }
 
-export async function loop(environment: unknown = process.env): Promise<void> {
+/**
+ * Runs the disabled-by-default one-shot worker.
+ *
+ * Configuration is evaluated before Redis or fetch dependencies are accessed.
+ */
+export async function loop(
+  environment: unknown = process.env,
+  dependencies: EnrichmentLoopDependencies = {}
+): Promise<void> {
   const config = loadFourByteConfig(environment);
+  const log = dependencies.log ?? console.log;
   if (!config.enabled) {
-    console.log('4byte enrichment is disabled');
+    log('4byte enrichment is disabled');
     return;
   }
 
-  const redis = await useRedis(config.redisUrl);
+  const redis = await (dependencies.useRedis ?? useRedis)(config.redisUrl);
   try {
-    const summary = await runFourByteEnrichment(redis as FourByteRedis, config);
-    console.log(
+    const summary = await runFourByteEnrichment(redis as FourByteRedis, config, dependencies.fetchPage);
+    log(
       '4byte enrichment completed',
       summary.feeds.map(({ entries, kind, pages }) => ({ entries, kind, pages }))
     );

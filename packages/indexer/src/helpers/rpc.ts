@@ -11,7 +11,8 @@ export function createRpcClient(chainName: ChainName, rpcUrl: string): viem.Publ
     throw new Error(`Unknown chain: ${chainName}`);
   }
 
-  const transport = rpcUrl.startsWith('wss://') ? viem.webSocket(rpcUrl) : viem.http(rpcUrl);
+  const protocol = new URL(rpcUrl).protocol;
+  const transport = protocol === 'ws:' || protocol === 'wss:' ? viem.webSocket(rpcUrl) : viem.http(rpcUrl);
 
   const client = viem.createPublicClient({
     chain: viemChains[chainName],
@@ -21,6 +22,11 @@ export function createRpcClient(chainName: ChainName, rpcUrl: string): viem.Publ
   return client;
 }
 
+/**
+ * Verifies that a provider client is connected to the expected chain.
+ *
+ * @throws when the returned chain ID differs, before registry state is opened.
+ */
 export async function assertRpcChain(client: ChainIdClient, expectedChainId: number, label: string): Promise<void> {
   const actualChainId = await client.getChainId();
   if (actualChainId !== expectedChainId) {

@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "clean": "rm -rf ./dist",
-    "test": "vitest run",
+    "test": "NODE_ENV=test node --test --require ts-node/register test/*.test.ts",
     "start": "node dist/index.js",
     "start-4byte-directory": "node dist/4byte-directory.js",
     "dev": "ts-node src/index.ts"
@@ -34,7 +34,6 @@
     "@types/connect-busboy": "^1.0.3",
     "@types/lodash": "^4.17.16",
     "@types/morgan": "^1.9.9",
-    "ts-node": "^10.9.2",
-    "vitest": "2.1.9"
+    "ts-node": "^10.9.2"
   }
 }
