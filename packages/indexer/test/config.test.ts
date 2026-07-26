@@ -66,7 +66,7 @@ describe('registry configuration', () => {
               MAINNET_PROVIDER_URL: providerUrl,
               NODE_ENV: nodeEnvironment,
             }),
-          new RegExp(expectedError)
+          (error: unknown) => error instanceof Error && error.message.includes(expectedError)
         );
       });
     }
