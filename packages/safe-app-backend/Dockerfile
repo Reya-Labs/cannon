@@ -51,7 +51,7 @@ ENV BUILD_REVISION=${BUILD_REVISION}
 EXPOSE ${PORT}
 
 RUN rm -rf \
-      /opt/yarn-v1.22.22 \
+      /opt/yarn-v* \
       /usr/local/lib/node_modules/corepack \
       /usr/local/lib/node_modules/npm \
     && rm -f \
@@ -63,6 +63,8 @@ RUN rm -rf \
 
 COPY --from=production-dependencies /usr/app/node_modules ./node_modules
 COPY --from=build /usr/app/dist ./dist
+COPY ./scripts/verify-runtime.sh /usr/local/bin/verify-runtime
+RUN chmod 0555 /usr/local/bin/verify-runtime
 
 USER node
 
