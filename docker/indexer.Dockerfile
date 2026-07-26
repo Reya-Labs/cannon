@@ -18,15 +18,12 @@ RUN pnpm run -r --filter @usecannon/repo build
 RUN ncc build ./packages/indexer/src/index.ts -o ./packages/indexer/dist/registry
 RUN ncc build ./packages/indexer/src/4byte-directory.ts -o ./packages/indexer/dist/4byte-directory
 
-RUN echo $(node -p "require('./packages/indexer/package.json').version") > /version.txt
-
 FROM node:22.11.0-alpine@sha256:b64ced2e7cd0a4816699fe308ce6e8a08ccba463c757c00c14cd372e3d2c763e
 
 WORKDIR /usr/app
 
-COPY --from=build /version.txt /version.txt
-ARG VERSION=$(cat /version.txt)
-ARG BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+ARG VERSION=unknown
+ARG BUILD_DATE=1970-01-01T00:00:00Z
 ARG BUILD_REVISION=unknown
 
 LABEL org.opencontainers.image.source="https://github.com/usecannon/cannon" \

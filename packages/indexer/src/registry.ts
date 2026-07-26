@@ -19,7 +19,7 @@ import * as viemChains from 'viem/chains';
 import { config } from './config';
 import * as rkey from './db';
 import { ActualRedisClientType, useRedis } from './redis';
-import { createRpcClient } from './helpers/rpc';
+import { assertRpcChain, createRpcClient } from './helpers/rpc';
 import { createQueue, Queue } from './queue';
 
 const BLOCK_BATCH_SIZE = 5000;
@@ -627,9 +627,12 @@ export async function scanChain(
 }
 
 export async function loop() {
-  const redis = await useRedis(config.REDIS_URL);
   const mainnetClient = createRpcClient('mainnet', config.MAINNET_PROVIDER_URL);
   const optimismClient = createRpcClient('optimism', config.OPTIMISM_PROVIDER_URL);
+  await assertRpcChain(mainnetClient, viemChains.mainnet.id, 'mainnet');
+  await assertRpcChain(optimismClient, viemChains.optimism.id, 'optimism');
+
+  const redis = await useRedis(config.REDIS_URL);
   const queue = createQueue();
 
   // Initialize worker for pinning images

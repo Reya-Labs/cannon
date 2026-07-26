@@ -46,6 +46,7 @@ export type EnrichmentSummary = {
 
 type Fetch = (input: string | URL, init?: Parameters<typeof fetch>[1]) => Promise<Response>;
 type Sleep = (milliseconds: number) => Promise<void>;
+type ReserveEntries = (entries: number) => void;
 
 class RetryableRequestError extends Error {}
 
@@ -290,7 +291,8 @@ export async function scanFeed(
   config: FourByteConfig,
   entryBudget: number,
   fetchPage: Fetch = fetch,
-  wait: Sleep = sleep
+  wait: Sleep = sleep,
+  reserveEntries: ReserveEntries = () => undefined
 ): Promise<FeedSummary> {
   const storedCursor = await redis.get(cursorKey(kind));
   let nextUrl = storedCursor ? resolvePageUrl(storedCursor, config.baseUrl) : initialPageUrl(kind, config.baseUrl);
@@ -310,6 +312,10 @@ export async function scanFeed(
     if (entries + page.results.length > entryBudget) {
       throw new Error('4byte run exceeds the configured aggregate entry bound');
     }
+    // Reserve before EXEC so a lost transaction reply cannot make a committed page
+    // disappear from the shared run budget. Reservations are intentionally not
+    // refunded on failure; conservative under-utilization is safer than overrun.
+    reserveEntries(page.results.length);
 
     const batch = redis.multi();
     for (const item of page.results) {
@@ -338,12 +344,24 @@ export async function runFourByteEnrichment(
 ): Promise<EnrichmentSummary> {
   const failures: EnrichmentSummary['failures'] = [];
   const feeds: FeedSummary[] = [];
-  let entries = 0;
+  let reservedEntries = 0;
 
   for (const kind of ['function', 'event'] as const) {
     try {
-      const result = await scanFeed(redis, kind, config, config.maxEntriesPerRun - entries, fetchPage, wait);
-      entries += result.entries;
+      const result = await scanFeed(
+        redis,
+        kind,
+        config,
+        config.maxEntriesPerRun - reservedEntries,
+        fetchPage,
+        wait,
+        (entries) => {
+          if (reservedEntries + entries > config.maxEntriesPerRun) {
+            throw new Error('4byte run exceeds the configured aggregate entry bound');
+          }
+          reservedEntries += entries;
+        }
+      );
       feeds.push(result);
     } catch (error) {
       failures.push({ error: error instanceof Error ? error : new Error(String(error)), kind });

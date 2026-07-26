@@ -4,6 +4,7 @@ import { batches } from './batches';
 
 type Chains = typeof viemChains;
 type ChainName = keyof Chains;
+type ChainIdClient = Pick<viem.PublicClient, 'getChainId'>;
 
 export function createRpcClient(chainName: ChainName, rpcUrl: string): viem.PublicClient {
   if (!viemChains[chainName]) {
@@ -18,6 +19,13 @@ export function createRpcClient(chainName: ChainName, rpcUrl: string): viem.Publ
   }) as viem.PublicClient;
 
   return client;
+}
+
+export async function assertRpcChain(client: ChainIdClient, expectedChainId: number, label: string): Promise<void> {
+  const actualChainId = await client.getChainId();
+  if (actualChainId !== expectedChainId) {
+    throw new Error(`${label} RPC chain mismatch: expected ${expectedChainId}, received ${actualChainId}`);
+  }
 }
 
 export async function* getLogsInBatches({

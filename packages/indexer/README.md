@@ -9,7 +9,7 @@ The registry entrypoint never imports or starts the enrichment worker. A deploym
 
 ## Registry configuration
 
-Production and staging require explicit `MAINNET_PROVIDER_URL` and `OPTIMISM_PROVIDER_URL` values using non-loopback HTTPS or WSS endpoints. The image has no production RPC fallback.
+Production and staging require explicit `MAINNET_PROVIDER_URL` and `OPTIMISM_PROVIDER_URL` values using non-loopback HTTPS or WSS endpoints. Startup verifies chain IDs 1 and 10 before connecting to Redis or starting the queue worker. The image has no production RPC fallback.
 
 ## Optional 4byte enrichment
 
@@ -33,3 +33,5 @@ The following optional bounds have conservative defaults:
 - `FOURBYTE_RETRY_MAX_MS=5000`.
 
 Each successful page and its next cursor are committed in one Redis transaction. Enrichment keys live under `enrichment:4byte:*`, separately from canonical `reg:*` keys. Pagination is restricted to the configured HTTPS origin, redirects are rejected, and response, page, run, timeout and retry bounds are enforced.
+
+The enrichment prefix is part of the `reg:abi` RediSearch definition created for a fresh query-plane Redis. Do not enable the worker against an existing index until an explicit drop/recreate migration has run and `FT.INFO reg:abi` proves that `enrichment:4byte:abi:` is included. The normal registry startup deliberately does not rewrite an existing search schema.

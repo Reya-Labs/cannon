@@ -42,7 +42,14 @@ function validateProviderUrl(name: string, value: string, productionLike: boolea
     .replace(/^\[(.*)\]$/, '$1')
     .replace(/\.$/, '');
   const loopback =
-    hostname === 'localhost' || hostname.endsWith('.localhost') || hostname === '::1' || hostname.startsWith('127.');
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    hostname === '0.0.0.0' ||
+    hostname === '::' ||
+    hostname === '::1' ||
+    hostname === '::ffff:0:0' ||
+    hostname.startsWith('127.') ||
+    /^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/i.test(hostname);
   const permittedProtocol = productionLike
     ? providerUrl.protocol === 'https:' || providerUrl.protocol === 'wss:'
     : ['http:', 'https:', 'ws:', 'wss:'].includes(providerUrl.protocol);
@@ -73,7 +80,11 @@ export function loadRegistryConfig(environment: unknown = process.env): Registry
     throw new EnvError('MAINNET_PROVIDER_URL and OPTIMISM_PROVIDER_URL must be distinct endpoints');
   }
 
-  return config;
+  return Object.freeze({
+    ...config,
+    MAINNET_PROVIDER_URL: mainnetProviderUrl,
+    OPTIMISM_PROVIDER_URL: optimismProviderUrl,
+  }) as RegistryConfig;
 }
 
 export const config = loadRegistryConfig(process.env);

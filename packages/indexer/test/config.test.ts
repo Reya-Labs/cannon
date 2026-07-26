@@ -33,12 +33,26 @@ describe('registry configuration', () => {
     expect(config.OPTIMISM_PROVIDER_URL).toBe('wss://optimism.example.com/rpc');
   });
 
+  it('returns canonical provider URLs for transport selection', () => {
+    const config = loadRegistryConfig({
+      ...validRegistryEnvironment(),
+      MAINNET_PROVIDER_URL: 'HTTPS://mainnet.example.com/rpc',
+      OPTIMISM_PROVIDER_URL: 'WSS://optimism.example.com/rpc',
+    });
+
+    expect(config.MAINNET_PROVIDER_URL).toBe('https://mainnet.example.com/rpc');
+    expect(config.OPTIMISM_PROVIDER_URL).toBe('wss://optimism.example.com/rpc');
+  });
+
   it.each([
     ['http://mainnet.example.com', 'non-loopback HTTPS or WSS'],
     ['https://user:secret@mainnet.example.com', 'non-loopback HTTPS or WSS'],
     ['https://mainnet.example.com/rpc#fragment', 'non-loopback HTTPS or WSS'],
     ['https://127.0.0.1:8545', 'non-loopback HTTPS or WSS'],
     ['https://127.0.0.2:8545', 'non-loopback HTTPS or WSS'],
+    ['https://0.0.0.0:8545', 'non-loopback HTTPS or WSS'],
+    ['https://[::]:8545', 'non-loopback HTTPS or WSS'],
+    ['https://[::ffff:127.0.0.1]:8545', 'non-loopback HTTPS or WSS'],
     ['https://service.localhost:8545', 'non-loopback HTTPS or WSS'],
   ])('rejects an unsafe production RPC URL %s', (providerUrl, expectedError) => {
     expect(() =>
@@ -57,7 +71,7 @@ describe('registry configuration', () => {
       OPTIMISM_PROVIDER_URL: 'ws://127.0.0.1:9545',
     });
 
-    expect(config.MAINNET_PROVIDER_URL).toBe('http://127.0.0.1:8545');
+    expect(config.MAINNET_PROVIDER_URL).toBe('http://127.0.0.1:8545/');
   });
 
   it('rejects equivalent production endpoints after URL normalization', () => {

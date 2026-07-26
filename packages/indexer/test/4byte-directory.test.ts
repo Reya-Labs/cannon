@@ -10,6 +10,9 @@ type Operation = () => void;
 class MemoryRedis implements FourByteRedis {
   readonly hashes = new Map<string, Map<string, string>>();
   readonly values = new Map<string, string>();
+  private executions = 0;
+
+  constructor(private readonly afterExec: (execution: number) => void = () => undefined) {}
 
   async get(key: string): Promise<string | null> {
     return this.values.get(key) ?? null;
@@ -20,6 +23,8 @@ class MemoryRedis implements FourByteRedis {
     const batch = {
       exec: async () => {
         operations.forEach((operation) => operation());
+        this.executions++;
+        this.afterExec(this.executions);
         return [];
       },
       hSetNX: (key: string, field: string, value: string) => {
@@ -255,6 +260,46 @@ describe('one-shot enrichment worker', () => {
     expect(summary.failures).toHaveLength(1);
     expect(summary.failures[0].kind).toBe('function');
     expect(summary.feeds).toEqual([{ entries: 1, kind: 'event', pages: 1 }]);
+  });
+
+  it('counts committed pages against the aggregate budget after a later page fails', async () => {
+    const redis = new MemoryRedis();
+    const functionNext = '/api/v1/signatures/?page=2';
+    const eventPage = {
+      ...page('event', 2),
+      count: 2,
+      results: [entry('event', 2), entry('event', 3)],
+    };
+    const fetchPage = vi.fn(async (url: string | URL) => {
+      const value = url.toString();
+      if (value.includes('/event-signatures/')) return jsonResponse(eventPage);
+      if (value.includes('page=2')) return jsonResponse({}, 400);
+      return jsonResponse(page('function', 1, functionNext));
+    });
+
+    const summary = await runFourByteEnrichment(redis, config({ maxEntriesPerRun: 2 }), fetchPage);
+
+    expect(summary.failures.map(({ kind }) => kind)).toEqual(['function', 'event']);
+    expect([...redis.hashes.keys()]).toEqual(['enrichment:4byte:abi:function:1']);
+  });
+
+  it('reserves an ambiguously committed page before a lost Redis reply', async () => {
+    const redis = new MemoryRedis((execution) => {
+      if (execution === 1) throw new Error('connection lost after commit');
+    });
+    const eventPage = {
+      ...page('event', 2),
+      count: 2,
+      results: [entry('event', 2), entry('event', 3)],
+    };
+    const fetchPage = vi.fn(async (url: string | URL) =>
+      url.toString().includes('/event-signatures/') ? jsonResponse(eventPage) : jsonResponse(page('function', 1))
+    );
+
+    const summary = await runFourByteEnrichment(redis, config({ maxEntriesPerRun: 2 }), fetchPage);
+
+    expect(summary.failures.map(({ kind }) => kind)).toEqual(['function', 'event']);
+    expect([...redis.hashes.keys()]).toEqual(['enrichment:4byte:abi:function:1']);
   });
 
   it('keeps the canonical registry entrypoint free of enrichment imports', async () => {
