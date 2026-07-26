@@ -23,6 +23,13 @@ export class BadRequestError extends ServerError {
   }
 }
 
+export class ForbiddenError extends ServerError {
+  constructor(message = 'Forbidden', status = 403) {
+    super(message);
+    this.status = status;
+  }
+}
+
 export class NotFoundError extends ServerError {
   constructor(message = 'Not Found', status = 404) {
     super(message);
@@ -33,13 +40,21 @@ export class NotFoundError extends ServerError {
 export const apiErrorHandler: ErrorRequestHandler = (err, req, res, next) => {
   if (res.headersSent) return next(err);
 
-  if (!(err instanceof ServerError) || err.status >= 500) {
-    // eslint-disable-next-line no-console
-    console.error(err);
-  }
-
   const error = err instanceof ServerError ? err : new ServerError();
 
+  if (!(error instanceof ServiceUnavailableError) && error.status >= 500) {
+    // eslint-disable-next-line no-console
+    console.error('query API request failed', {
+      code:
+        typeof err === 'object' && err !== null && 'code' in err && typeof err.code === 'string' ? err.code : 'unexpected',
+      name: err instanceof Error ? err.name : 'unknown',
+      status: error.status,
+    });
+  }
+
   res.status(error.status);
-  res.json({ status: error.status, error: error.message });
+  res.json({
+    status: error.status,
+    error: error.status >= 500 ? (error.status === 503 ? 'Service Unavailable' : 'Internal Server Error') : error.message,
+  });
 };

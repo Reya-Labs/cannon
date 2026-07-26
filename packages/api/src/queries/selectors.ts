@@ -9,6 +9,8 @@ async function _querySelectors(params: { query: string; limit?: number }) {
 
   const results = (await redis.ft.search(keys.RKEY_ABI_SEARCHABLE, params.query, {
     SORTBY: { BY: 'timestamp', DIRECTION: 'ASC' },
+    LIMIT: { from: 0, size: params.limit ?? 20 },
+    TIMEOUT: 1_000,
   })) as unknown as {
     total: number;
     documents: { value: RedisFunction }[];

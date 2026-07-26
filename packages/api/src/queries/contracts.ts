@@ -17,7 +17,7 @@ function _parseAggregateResult(doc: ContractQueryResult) {
   return doc;
 }
 
-async function _aggregateContracts(query: string): Promise<ContractQueryResult[]> {
+async function _aggregateContracts(query: string, limit: number): Promise<ContractQueryResult[]> {
   const redis = await useRedis();
 
   const data: ContractQueryResult[] = [];
@@ -33,7 +33,13 @@ async function _aggregateContracts(query: string): Promise<ContractQueryResult[]
           property: '@contractName',
         },
       },
+      {
+        type: AggregateSteps.LIMIT,
+        from: 0,
+        size: limit,
+      },
     ],
+    TIMEOUT: 1_000,
   })) as {
     total: number;
     results: ContractQueryResult[];
@@ -59,7 +65,7 @@ async function _aggregateContracts(query: string): Promise<ContractQueryResult[]
 }
 
 async function _queryContracts(params: { query: string; limit?: number }) {
-  const results = await _aggregateContracts(params.query);
+  const results = await _aggregateContracts(params.query, params.limit ?? 20);
 
   const data = results.map((doc) => {
     const ref = new PackageReference(doc.package);

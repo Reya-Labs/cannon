@@ -16,6 +16,7 @@ import { findPackagesByPartialRef, searchPackages } from '../queries/packages';
 import { ApiDocument } from '../types';
 
 const search: Router = Router();
+const MAX_TYPED_RESULTS = 100;
 
 export interface SearchResponse {
   status: number;
@@ -114,7 +115,7 @@ search.get('/search', async (req, res) => {
     const packagesResult = await searchPackages({
       query,
       chainIds,
-      limit: types.length ? 500 : 20,
+      limit: types.length ? MAX_TYPED_RESULTS : 20,
       includeNamespaces: !types.length || types.includes('namespace'),
     });
 

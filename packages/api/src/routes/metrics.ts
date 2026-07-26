@@ -1,25 +1,31 @@
 import { Router } from 'express';
 import basicAuth from 'express-basic-auth';
 import prometheus from 'express-prom-bundle';
-import { config } from '../config';
+import { Registry } from 'prom-client';
+import type { ApiConfig } from '../config';
 
-const metrics: Router = Router();
+export function createMetricsRouter(config: ApiConfig): Router {
+  const metrics = Router();
+  const registry = new Registry();
 
-metrics.get(
-  '/metrics',
-  basicAuth({
-    users: { [config.METRICS_USER]: config.METRICS_PASSWORD },
-  })
-);
+  metrics.use(
+    '/metrics',
+    basicAuth({
+      challenge: true,
+      users: { [config.METRICS_USER]: config.METRICS_PASSWORD },
+    })
+  );
 
-const metricsMiddleware = prometheus({
-  customLabels: { serviceName: 'cannon-api' },
-  includeMethod: true,
-  includePath: true,
-  metricsPath: '/metrics',
-  normalizePath: [['^/packages/.*', '/customer/#packageName']],
-});
+  metrics.use(
+    prometheus({
+      customLabels: { serviceName: 'cannon-api' },
+      includeMethod: true,
+      includePath: true,
+      metricsPath: '/metrics',
+      normalizePath: [['^/packages/.*', '/packages/#packageName']],
+      promRegistry: registry,
+    })
+  );
 
-metrics.use(metricsMiddleware);
-
-export { metrics };
+  return metrics;
+}

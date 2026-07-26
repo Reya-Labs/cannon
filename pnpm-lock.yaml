@@ -180,15 +180,9 @@ importers:
       '@usecannon/cli':
         specifier: workspace:*
         version: link:../cli
-      cors:
-        specifier: ^2.8.5
-        version: 2.8.5
       dotenv:
         specifier: ^16.4.5
         version: 16.4.7
-      envalid:
-        specifier: ^8.0.0
-        version: 8.0.0
       express:
         specifier: 5.0.0-beta.3
         version: 5.0.0-beta.3
@@ -220,15 +214,15 @@ importers:
         specifier: ^2.25.1
         version: 2.30.1(bufferutil@4.0.9)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.2)
     devDependencies:
-      '@types/cors':
-        specifier: ^2.8.17
-        version: 2.8.17
       '@types/express':
         specifier: ^4.17.21
         version: 4.17.21
       '@types/node':
         specifier: ^22.14.0
         version: 22.14.0
+      ts-node:
+        specifier: ^10.9.2
+        version: 10.9.2(@types/node@22.14.0)(typescript@5.8.3)
       ts-node-dev:
         specifier: ^2.0.0
         version: 2.0.0(@types/node@22.14.0)(typescript@5.8.3)

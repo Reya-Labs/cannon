@@ -3,7 +3,7 @@ import { BadRequestError, ServerError } from './errors';
 import { ApiDocumentType, RedisPackage, RedisTag } from './types';
 
 const packageNameRegex = /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]$/;
-export function isPackageName(packageName: any) {
+export function isPackageName(packageName: unknown) {
   return typeof packageName === 'string' && packageNameRegex.test(packageName);
 }
 
@@ -15,47 +15,60 @@ export function parsePackageName(packageName: string) {
   return packageName.replace(/-/g, '\\-');
 }
 
+const MAX_PACKAGE_REF_LENGTH = 256;
 const partialPackageRefRegex = /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]:[^@]+(?:@[^\s]+)?$/;
-export function isPartialPackageRef(packageName: any) {
-  return typeof packageName === 'string' && partialPackageRefRegex.test(packageName);
+export function isPartialPackageRef(packageName: unknown) {
+  return (
+    typeof packageName === 'string' &&
+    packageName.length <= MAX_PACKAGE_REF_LENGTH &&
+    partialPackageRefRegex.test(packageName)
+  );
 }
 
 const fullPackageRefRegex = /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]:[^@]+@[^\s]+$/;
-export function isFullPackageRef(fullPackageRef: any) {
-  return typeof fullPackageRef === 'string' && fullPackageRefRegex.test(fullPackageRef);
+export function isFullPackageRef(fullPackageRef: unknown) {
+  return (
+    typeof fullPackageRef === 'string' &&
+    fullPackageRef.length <= MAX_PACKAGE_REF_LENGTH &&
+    fullPackageRefRegex.test(fullPackageRef)
+  );
 }
 
 const contractNameRegex = /^[A-Z][A-Za-z0-9_]*$/;
-export function isContractName(contractName: any) {
+export function isContractName(contractName: unknown) {
   return typeof contractName === 'string' && contractNameRegex.test(contractName);
 }
 
 const functionSelectorRegex = /^0x[0-9a-fA-F]{8}$/;
-export function isFunctionSelector(selector: any) {
+export function isFunctionSelector(selector: unknown) {
   return typeof selector === 'string' && functionSelectorRegex.test(selector);
 }
 
-const chainIdRegex = /^[0-9]+$/;
-export function isChainId(chainId: any) {
-  return typeof chainId === 'string' && chainIdRegex.test(chainId);
+const chainIdRegex = /^[1-9][0-9]*$/;
+export function isChainId(chainId: unknown) {
+  if (typeof chainId !== 'string' || !chainIdRegex.test(chainId)) return false;
+  const parsed = Number.parseInt(chainId, 10);
+  return Number.isSafeInteger(parsed) && parsed > 0;
 }
 
-const chainIdListRegex = /^[0-9][0-9,]*(?<!,)$/;
-export function parseChainIds(chainIds: any): number[] {
-  if (!chainIds) return [];
+const MAX_CHAIN_IDS = 20;
+export function parseChainIds(chainIds: unknown): number[] {
+  if (chainIds === undefined || chainIds === null || chainIds === '') return [];
+  if (typeof chainIds !== 'string') throw new BadRequestError('Invalid chainIds parameter');
 
-  if (typeof chainIds !== 'string' || !chainIdListRegex.test(chainIds)) {
-    throw new BadRequestError('Invalid chainId number');
+  const values = chainIds.split(',');
+  if (chainIds.length > 512 || values.length > MAX_CHAIN_IDS || values.some((chainId) => !isChainId(chainId))) {
+    throw new BadRequestError(`chainIds must contain at most ${MAX_CHAIN_IDS} positive, safe integers`);
   }
-
-  return chainIds.split(',').map((chainId) => Number.parseInt(chainId, 10));
+  return [...new Set(values.map((chainId) => Number.parseInt(chainId, 10)))];
 }
 
-export function parseTextQuery(query: any): string {
-  if (!query) return '';
+const MAX_TEXT_QUERY_LENGTH = 256;
+export function parseTextQuery(query: unknown): string {
+  if (query === undefined || query === null || query === '') return '';
 
-  if (typeof query !== 'string' || query.length > 2048) {
-    throw new BadRequestError('Invalid query parameter');
+  if (typeof query !== 'string' || query.length > MAX_TEXT_QUERY_LENGTH) {
+    throw new BadRequestError(`query must be a string of at most ${MAX_TEXT_QUERY_LENGTH} characters`);
   }
 
   return (
@@ -68,18 +81,37 @@ export function parseTextQuery(query: any): string {
   );
 }
 
-export function parseQueryTypes(type: any): ApiDocumentType[] {
-  if (!type) return [];
+const QUERY_TYPES = new Set<ApiDocumentType>(['namespace', 'package', 'contract', 'function', 'event', 'error']);
+export function parseQueryTypes(type: unknown): ApiDocumentType[] {
+  if (type === undefined || type === null || type === '') return [];
+  if (typeof type !== 'string' || type.length > 128) throw new BadRequestError('Invalid types parameter');
 
-  if (typeof type !== 'string' || type.length > 512) {
-    throw new BadRequestError('Invalid type parameter');
+  const values = type.split(',').map((value) => value.trim().toLowerCase());
+  if (!values.length || values.some((value) => !QUERY_TYPES.has(value as ApiDocumentType))) {
+    throw new BadRequestError('types contains an unsupported document type');
   }
+  return [...new Set(values)] as ApiDocumentType[];
+}
 
-  return type
-    .trim()
-    .toLowerCase()
-    .replace(/^[^a-z]+|[^a-z,]+|[^a-z]+$/g, '')
-    .split(',') as ApiDocumentType[];
+const selectorRegex = /^0x(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{64})$/;
+const MAX_SELECTORS = 20;
+export function parseSelectors(value: unknown): viem.Hex[] {
+  if (typeof value !== 'string' || !value) throw new BadRequestError('Query selector not specified');
+  const selectors = value.split(',');
+  if (
+    value.length > MAX_SELECTORS * 67 ||
+    selectors.length > MAX_SELECTORS ||
+    selectors.some((selector) => !selectorRegex.test(selector))
+  ) {
+    throw new BadRequestError(`q must contain at most ${MAX_SELECTORS} valid 4-byte or 32-byte selectors`);
+  }
+  return [...new Set(selectors.map((selector) => selector.toLowerCase()))] as viem.Hex[];
+}
+
+export function parseSelectorType(value: unknown): 'function' | 'event' | 'error' | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'function' || value === 'event' || value === 'error') return value;
+  throw new BadRequestError('type must be function, event or error');
 }
 
 export function parseAddresses(addresses: any) {
