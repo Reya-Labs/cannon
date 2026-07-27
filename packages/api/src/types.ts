@@ -26,14 +26,14 @@ export interface RedisTag {
 }
 
 export interface RedisFunction {
-  type: 'function';
+  type: 'function' | 'error';
   name: string;
   selector: string;
   timestamp: string;
-  package: string;
-  chainId: string;
-  address: Address;
-  contractName: string;
+  package?: string;
+  chainId?: string;
+  address?: Address;
+  contractName?: string;
 }
 
 export type RedisDocument = RedisPackage | RedisTag;

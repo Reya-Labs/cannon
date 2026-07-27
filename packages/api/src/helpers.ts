@@ -1,4 +1,5 @@
 import * as viem from 'viem';
+import { PackageReference } from '@usecannon/builder';
 import { BadRequestError, ServerError } from './errors';
 import { ApiDocumentType, RedisPackage, RedisTag } from './types';
 
@@ -30,7 +31,8 @@ export function isFullPackageRef(fullPackageRef: unknown): fullPackageRef is str
   return (
     typeof fullPackageRef === 'string' &&
     fullPackageRef.length <= MAX_PACKAGE_REF_LENGTH &&
-    fullPackageRefRegex.test(fullPackageRef)
+    fullPackageRefRegex.test(fullPackageRef) &&
+    PackageReference.isValid(fullPackageRef)
   );
 }
 

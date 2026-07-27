@@ -208,6 +208,17 @@ describe('query API probes and browser boundary', () => {
     assert.equal(denied.headers.get('access-control-allow-origin'), null);
   });
 
+  it('returns 400 for package references outside canonical field bounds', async () => {
+    const oversizedVersion = `valid-package:${'v'.repeat(33)}@main`;
+    const response = await request(`/packages/${oversizedVersion}/1729`);
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      status: 400,
+      error: `Invalid package ref "${oversizedVersion}"`,
+    });
+  });
+
   it('protects the metrics endpoint and serves metrics with valid credentials', async () => {
     const baseUrl = await serve();
 
@@ -233,5 +244,35 @@ describe('query API probes and browser boundary', () => {
     assert.equal(authorized.status, 200);
     assert.match(authorized.headers.get('content-type') ?? '', /text\/plain/);
     assert.match(await authorized.text(), /http_request_duration_seconds/);
+  });
+
+  it('uses finite route templates and collapses attacker-controlled 404 paths in metrics', async () => {
+    const baseUrl = await serve();
+    for (const path of ['/randomalpha', '/randombeta', '/randomgamma']) {
+      assert.equal((await fetch(`${baseUrl}${path}`)).status, 404);
+    }
+    for (const [path, method] of [
+      ['/randomdelta', 'POST'],
+      ['/randomepsilon', 'PUT'],
+      ['/randomzeta', 'DELETE'],
+    ]) {
+      assert.equal((await fetch(`${baseUrl}${path}`, { method })).status, 404);
+    }
+    for (const path of ['/packages/valid-package', '/packages/other-package']) {
+      assert.equal((await fetch(`${baseUrl}${path}`)).status, 503);
+    }
+
+    const metrics = await (
+      await fetch(`${baseUrl}/metrics`, {
+        headers: {
+          authorization: `Basic ${Buffer.from('metrics:a-strong-metrics-password').toString('base64')}`,
+        },
+      })
+    ).text();
+
+    assert.doesNotMatch(metrics, /random(?:alpha|beta|gamma)/);
+    assert.match(metrics, /http_request_duration_seconds_count\{[^}]*method="GET"[^}]*path="\/unmatched"[^}]*\} 3/);
+    assert.match(metrics, /http_request_duration_seconds_count\{[^}]*method="OTHER"[^}]*path="\/unmatched"[^}]*\} 3/);
+    assert.match(metrics, /http_request_duration_seconds_count\{[^}]*path="\/packages\/:packageName"[^}]*\} 2/);
   });
 });

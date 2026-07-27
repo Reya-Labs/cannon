@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import { AggregateSteps, type RedisClientType } from 'redis';
 import { createChainQueries, MAX_CHAIN_RESULTS } from '../src/queries/chains';
 import { createPackageQueryExecutor, createPartialPackageRefQuery, MAX_NAMESPACE_RESULTS } from '../src/queries/packages';
+import { createSelectorQueryExecutor } from '../src/queries/selectors';
 
 const DEPLOY_URL = 'ipfs://QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn';
 const META_URL = 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
@@ -350,6 +351,57 @@ describe('bounded aggregate query factories', () => {
         ['query API skipped malformed Redis document', { kind: 'package' }],
         ['query API skipped malformed Redis document', { kind: 'package' }],
         ['query API skipped malformed Redis document', { kind: 'package' }],
+      ]);
+    } finally {
+      console.warn = originalConsoleWarn;
+    }
+  });
+
+  it('preserves selector types and skips malformed package-backed records without throwing', async () => {
+    const canonical = {
+      address: '0x0000000000000000000000000000000000000001',
+      chainId: '1729',
+      contractName: 'CoreProxy',
+      name: 'Unauthorized()',
+      package: 'valid-package:1.2.3@main',
+      selector: '0x82b42900',
+      timestamp: '123',
+    };
+    const redis = {
+      ft: {
+        search: async () => ({
+          documents: [
+            { value: { ...canonical, type: 'error' } },
+            { value: { ...canonical, name: 'owner()', selector: '0x8da5cb5b', type: 'function' } },
+            { value: { ...canonical, address: '', type: 'error' } },
+            { value: { ...canonical, chainId: '', type: 'error' } },
+            { value: { ...canonical, contractName: '', type: 'error' } },
+          ],
+          total: 5,
+        }),
+      },
+    };
+    const warnings: unknown[][] = [];
+    const originalConsoleWarn = console.warn;
+    console.warn = (...values: unknown[]) => warnings.push(values);
+
+    try {
+      const querySelectors = createSelectorQueryExecutor(async () => redis);
+      const result = await querySelectors({ limit: 20, query: '@selector:{0x82b42900}' });
+
+      assert.equal(result.total, 2);
+      assert.deepEqual(
+        result.data.map(({ type }) => type),
+        ['error', 'function']
+      );
+      assert.equal(
+        result.data.some(({ chainId }) => Number.isNaN(chainId)),
+        false
+      );
+      assert.deepEqual(warnings, [
+        ['query API skipped malformed Redis document', { kind: 'selector' }],
+        ['query API skipped malformed Redis document', { kind: 'selector' }],
+        ['query API skipped malformed Redis document', { kind: 'selector' }],
       ]);
     } finally {
       console.warn = originalConsoleWarn;

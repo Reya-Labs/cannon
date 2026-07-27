@@ -120,19 +120,20 @@ export function transformPackageWithTag(pkg: RedisPackage, tag: RedisTag): ApiPa
 }
 
 export function transformFunction(value: RedisFunction) {
-  if (!value) return;
+  if (!value || (value.type !== 'function' && value.type !== 'error')) return;
   if (typeof value.name !== 'string' || !value.name) return;
   if (!isFunctionSelector(value.selector)) return;
-  if (typeof value.timestamp !== 'string' || !value.timestamp) return;
-  if (value.package && !PackageReference.isValid(value.package)) return;
-  if (value.chainId && !isChainId(value.chainId)) return;
-  if (value.address && !viem.isAddress(value.address)) return;
-  if (value.contractName && !isContractName(value.contractName)) return;
+  if (parseTimestamp(value.timestamp) === undefined) return;
 
   if (value.package) {
+    if (!PackageReference.isValid(value.package)) return;
+    if (!isChainId(value.chainId)) return;
+    if (typeof value.address !== 'string' || !viem.isAddress(value.address)) return;
+    if (!isContractName(value.contractName)) return;
+
     const ref = new PackageReference(value.package);
     return {
-      type: 'function',
+      type: value.type,
       name: value.name,
       selector: value.selector,
       contractName: value.contractName,
@@ -143,8 +144,13 @@ export function transformFunction(value: RedisFunction) {
       version: ref.version,
     } satisfies ApiSelectorResult;
   } else {
+    if (value.package !== undefined) return;
+    if (value.chainId !== undefined && !isChainId(value.chainId)) return;
+    if (value.address !== undefined && !viem.isAddress(value.address)) return;
+    if (value.contractName !== undefined && !isContractName(value.contractName)) return;
+
     return {
-      type: 'function',
+      type: value.type,
       name: value.name,
       selector: value.selector,
       contractName: value.contractName,

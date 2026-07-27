@@ -1,7 +1,14 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- node:test registration is intentionally synchronous. */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { parseChainIds, parseQueryTypes, parseSelectors, parseSelectorType, parseTextQuery } from '../src/helpers';
+import {
+  isFullPackageRef,
+  parseChainIds,
+  parseQueryTypes,
+  parseSelectors,
+  parseSelectorType,
+  parseTextQuery,
+} from '../src/helpers';
 
 describe('query validation', () => {
   it('normalizes bounded, positive chain IDs', () => {
@@ -31,5 +38,11 @@ describe('query validation', () => {
     assert.throws(() => parseSelectors('0x1234'), /valid 4-byte or 32-byte selectors/);
     assert.throws(() => parseSelectors(Array.from({ length: 21 }, () => '0x12345678').join(',')), /at most 20/);
     assert.throws(() => parseSelectorType('all'), /type must be/);
+  });
+
+  it('requires full package references to satisfy the canonical field bounds', () => {
+    assert.equal(isFullPackageRef('valid-package:1.2.3@main'), true);
+    assert.equal(isFullPackageRef(`valid-package:${'v'.repeat(33)}@main`), false);
+    assert.equal(isFullPackageRef(`valid-package:1.2.3@${'p'.repeat(25)}`), false);
   });
 });

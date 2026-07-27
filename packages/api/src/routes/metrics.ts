@@ -1,8 +1,18 @@
-import { Router } from 'express';
+import { type Request, Router } from 'express';
 import basicAuth from 'express-basic-auth';
 import prometheus from 'express-prom-bundle';
 import { Registry } from 'prom-client';
 import type { ApiConfig } from '../config';
+
+function normalizeMetricPath(req: Request): string {
+  return typeof req.route?.path === 'string' ? req.route.path : '/unmatched';
+}
+
+function normalizeMetricLabels(labels: Record<string, number | string>): void {
+  if (typeof labels.method === 'string' && !['GET', 'HEAD', 'OPTIONS'].includes(labels.method)) {
+    labels.method = 'OTHER';
+  }
+}
 
 export function createMetricsRouter(config: ApiConfig): Router {
   const metrics = Router();
@@ -22,8 +32,9 @@ export function createMetricsRouter(config: ApiConfig): Router {
       includeMethod: true,
       includePath: true,
       metricsPath: '/metrics',
-      normalizePath: [['^/packages/.*', '/packages/#packageName']],
+      normalizePath: normalizeMetricPath,
       promRegistry: registry,
+      transformLabels: normalizeMetricLabels,
     })
   );
 
