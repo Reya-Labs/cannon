@@ -60,8 +60,10 @@ async function _aggregateContracts(query: string, limit: number): Promise<Contra
   return data;
 }
 
-async function _queryContracts(params: { query: string; limit?: number }) {
-  const results = await _aggregateContracts(params.query, params.limit ?? 20);
+async function _queryContracts(params: { query: string; limit?: number; chainIds?: number[] }) {
+  const queries = [params.query];
+  if (params.chainIds?.length) queries.push(`@chainId:{${params.chainIds.join('|')}}`);
+  const results = await _aggregateContracts(queries.join(','), params.limit ?? 20);
 
   const data = results.map((doc) => {
     const ref = new PackageReference(doc.package);
@@ -85,14 +87,19 @@ async function _queryContracts(params: { query: string; limit?: number }) {
   };
 }
 
-export async function findContractsByAddress(params: { address: viem.Address; limit: number }) {
+export async function findContractsByAddress(params: { address: viem.Address; limit: number; chainIds?: number[] }) {
   const contractAddress = viem.getAddress(params.address);
-  return _queryContracts({ query: `@address:{${contractAddress}}`, limit: params.limit });
+  return _queryContracts({
+    query: `@address:{${contractAddress}}`,
+    limit: params.limit,
+    chainIds: params.chainIds,
+  });
 }
 
-export async function searchContracts(params: { query: string; limit: number }) {
+export async function searchContracts(params: { query: string; limit: number; chainIds?: number[] }) {
   return _queryContracts({
     query: `@contractName:'${params.query}' | @contractName:${params.query}* | @contractName:*${params.query}*`,
     limit: params.limit,
+    chainIds: params.chainIds,
   });
 }

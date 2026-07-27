@@ -63,6 +63,7 @@ search.get('/search', async (req, res) => {
     const result = await findContractsByAddress({
       address: query as viem.Address,
       limit: 20,
+      chainIds,
     });
 
     _pushResults(response, result);
@@ -71,6 +72,7 @@ search.get('/search', async (req, res) => {
   } else if (response.isPackageRef) {
     const result = await findPackagesByPartialRef({
       packageRef: query,
+      chainIds,
     });
 
     _pushResults(response, result);
@@ -80,6 +82,7 @@ search.get('/search', async (req, res) => {
       const result = await findSelector({
         selector: selector as viem.Hex,
         limit: 20,
+        chainIds,
       });
 
       _pushResults(response, result);
@@ -88,6 +91,7 @@ search.get('/search', async (req, res) => {
     const result = await findSelector({
       selector: query as viem.Hex,
       limit: 20,
+      chainIds,
     });
 
     _pushResults(response, result);
@@ -97,6 +101,7 @@ search.get('/search', async (req, res) => {
       const contractsResults = await searchContracts({
         query,
         limit: 20,
+        chainIds,
       });
 
       _pushResults(response, contractsResults);
@@ -107,6 +112,7 @@ search.get('/search', async (req, res) => {
       const contractsResults = await searchFunctions({
         query,
         limit: 20,
+        chainIds,
       });
 
       _pushResults(response, contractsResults);

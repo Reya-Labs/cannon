@@ -122,9 +122,11 @@ export function createPackageQueryExecutor(getRedis: () => Promise<RedisClientTy
 
 const queryPackages = createPackageQueryExecutor();
 
-export async function findPackagesByName(params: { packageName: string }) {
+export async function findPackagesByName(params: { packageName: string; chainIds?: number[] }) {
   const packageName = parsePackageName(params.packageName);
-  const results = await queryPackages({ query: `@exactName:{${packageName}}` });
+  const queries = [`@exactName:{${packageName}}`];
+  if (params.chainIds?.length) queries.push(`@chainId:{${params.chainIds.join('|')}}`);
+  const results = await queryPackages({ query: queries.join(',') });
 
   if (!results.total) {
     throw new NotFoundError(`Package "${packageName}" not found`);
@@ -175,9 +177,13 @@ export function createPartialPackageRefQuery(
   getRedis: () => Promise<RedisClientType> = useRedis,
   getIndexedChainIds: () => Promise<number[]> = getChainIds
 ) {
-  return async function queryPartialPackageRef(params: { packageRef: string }) {
+  return async function queryPartialPackageRef(params: { packageRef: string; chainIds?: number[] }) {
     const redis = await getRedis();
-    const chainIds = (await getIndexedChainIds()).slice(0, MAX_CHAIN_RESULTS);
+    const indexedChainIds = (await getIndexedChainIds()).slice(0, MAX_CHAIN_RESULTS);
+    const requestedChainIds = params.chainIds?.length ? new Set(params.chainIds) : undefined;
+    const chainIds = requestedChainIds
+      ? indexedChainIds.filter((chainId) => requestedChainIds.has(chainId))
+      : indexedChainIds;
 
     const ref = new PackageReference(params.packageRef);
 
@@ -243,7 +249,7 @@ export function createPartialPackageRefQuery(
 
 const queryPartialPackageRef = createPartialPackageRefQuery();
 
-export async function findPackagesByPartialRef(params: { packageRef: string }) {
+export async function findPackagesByPartialRef(params: { packageRef: string; chainIds?: number[] }) {
   return queryPartialPackageRef(params);
 }
 

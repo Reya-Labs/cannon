@@ -182,6 +182,29 @@ describe('bounded aggregate query factories', () => {
     assert.deepEqual(fanouts, [MAX_CHAIN_RESULTS, MAX_CHAIN_RESULTS]);
   });
 
+  it('restricts partial package lookup fanout to requested indexed chains', async () => {
+    const requestedKeys: string[] = [];
+    const redis = {
+      multi: () => ({
+        exec: async () => [],
+        hGetAll: (key: string) => requestedKeys.push(key),
+      }),
+    } as unknown as RedisClientType;
+    const queryPartialPackageRef = createPartialPackageRefQuery(
+      async () => redis,
+      async () => [1, 10, 1729, 8453]
+    );
+
+    const result = await queryPartialPackageRef({
+      packageRef: 'valid-package:1.2.3',
+      chainIds: [1729, 999999],
+    });
+
+    assert.deepEqual(result, { data: [], total: 0 });
+    assert.equal(requestedKeys.length, 1);
+    assert.match(requestedKeys[0]!, /#1729$/);
+  });
+
   it('skips malformed tags without discarding valid tag resolutions', async () => {
     let batchNumber = 0;
     const fanouts: number[] = [];
@@ -416,11 +439,20 @@ describe('bounded aggregate query factories', () => {
           documents: [
             { value: { ...canonical, type: 'error' } },
             { value: { ...canonical, name: 'owner()', selector: '0x8da5cb5b', type: 'function' } },
+            { value: { ...canonical, chainId: '1', type: 'error' } },
+            {
+              value: {
+                name: 'Unauthorized()',
+                selector: '0x82b42900',
+                timestamp: '123',
+                type: 'error',
+              },
+            },
             { value: { ...canonical, address: '', type: 'error' } },
             { value: { ...canonical, chainId: '', type: 'error' } },
             { value: { ...canonical, contractName: '', type: 'error' } },
           ],
-          total: 5,
+          total: 7,
         }),
       },
     };
@@ -430,12 +462,20 @@ describe('bounded aggregate query factories', () => {
 
     try {
       const querySelectors = createSelectorQueryExecutor(async () => redis);
-      const result = await querySelectors({ limit: 20, query: '@selector:{0x82b42900}' });
+      const result = await querySelectors({
+        limit: 20,
+        query: '@selector:{0x82b42900}',
+        chainIds: [1729],
+      });
 
-      assert.equal(result.total, 2);
+      assert.equal(result.total, 3);
       assert.deepEqual(
-        result.data.map(({ type }) => type),
-        ['error', 'function']
+        result.data.map(({ type, chainId }) => [type, chainId]),
+        [
+          ['error', 1729],
+          ['function', 1729],
+          ['error', undefined],
+        ]
       );
       assert.equal(
         result.data.some(({ chainId }) => Number.isNaN(chainId)),

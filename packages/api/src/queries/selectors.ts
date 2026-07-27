@@ -14,7 +14,7 @@ type SelectorRedis = {
 export function createSelectorQueryExecutor(
   getRedis: () => Promise<SelectorRedis> = async () => (await useRedis()) as unknown as SelectorRedis
 ) {
-  return async function querySelectors(params: { query: string; limit?: number }) {
+  return async function querySelectors(params: { query: string; limit?: number; chainIds?: number[] }) {
     const redis = await getRedis();
 
     const results = (await redis.ft.search(keys.RKEY_ABI_SEARCHABLE, params.query, {
@@ -35,6 +35,9 @@ export function createSelectorQueryExecutor(
         warnMalformedDocument('selector');
         continue;
       }
+      if (params.chainIds?.length && parsed.chainId !== undefined && !params.chainIds.includes(parsed.chainId)) {
+        continue;
+      }
 
       data.push(parsed);
     }
@@ -51,17 +54,23 @@ export function createSelectorQueryExecutor(
 
 const querySelectors = createSelectorQueryExecutor();
 
-export async function findSelector(params: { selector: viem.Hex; type?: 'function' | 'event' | 'error'; limit: number }) {
+export async function findSelector(params: {
+  selector: viem.Hex;
+  type?: 'function' | 'event' | 'error';
+  limit: number;
+  chainIds?: number[];
+}) {
   let query = `@selector:{${params.selector}}`;
   if (params.type) {
     query += `,@type:{${params.type}}`;
   }
-  return querySelectors({ query, limit: params.limit });
+  return querySelectors({ query, limit: params.limit, chainIds: params.chainIds });
 }
 
-export async function searchFunctions(params: { query: string; limit: number }) {
+export async function searchFunctions(params: { query: string; limit: number; chainIds?: number[] }) {
   return querySelectors({
     query: `@name:'${params.query}' | @name:${params.query}* | @name:*${params.query}*`,
     limit: params.limit,
+    chainIds: params.chainIds,
   });
 }
