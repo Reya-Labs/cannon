@@ -803,6 +803,30 @@ const auditRuntimeImageEvidenceContract = (repositoryRoot, errors) => {
         `${dockerfile}: bundle-input evidence must be generated once at ${generatorOutput} and copied once to the identical final-image path`
       );
     }
+    if (
+      dockerfile === 'docker/repo.Dockerfile' &&
+      (source.split('org.opencontainers.image.licenses=').length - 1 !== 1 ||
+        !source.includes(
+          'org.opencontainers.image.licenses="GPL-3.0-or-later"'
+        ))
+    ) {
+      errors.push(
+        'docker/repo.Dockerfile: OCI license must match the bundled GPL-3.0-or-later repository service'
+      );
+    }
+  }
+
+  const codeownersPath = join(repositoryRoot, '.github/CODEOWNERS');
+  const codecOwnership = '/packages/artifact-codec/ @arturbeg @bogdan-reya';
+  if (
+    !existsSync(codeownersPath) ||
+    readFileSync(codeownersPath, 'utf8')
+      .split(/\r?\n/u)
+      .filter((line) => line.trim() === codecOwnership).length !== 1
+  ) {
+    errors.push(
+      '.github/CODEOWNERS: persisted CID authority must be protected by the reviewed artifact-codec owners'
+    );
   }
 
   const scannerPath = join(

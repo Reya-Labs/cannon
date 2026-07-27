@@ -5,11 +5,11 @@
   "description": "Management of Cannon Artifacts Uploaded to IPFS",
   "main": "dist/index.js",
   "scripts": {
-    "test": "vitest run --pool=forks --poolOptions.forks.singleFork=true",
-    "build": "tsc -p tsconfig.json",
+    "test": "pnpm --filter @usecannon/artifact-codec run build && vitest run --pool=forks --poolOptions.forks.singleFork=true",
+    "build": "pnpm --filter @usecannon/artifact-codec run build && tsc -p tsconfig.json",
     "clean": "rm -rf ./dist",
     "start": "node dist/index.js",
-    "dev": "NODE_ENV=development ts-node-dev src/index.ts"
+    "dev": "pnpm --filter @usecannon/artifact-codec run build && NODE_ENV=development ts-node-dev src/index.ts"
   },
   "repository": {
     "type": "git",

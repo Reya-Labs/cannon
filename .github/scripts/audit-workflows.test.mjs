@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   cpSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -12,7 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseDocument } from 'yaml';
@@ -21,11 +22,26 @@ import { auditRepository } from './audit-workflows.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const repositoryRoot = resolve(dirname(scriptPath), '../..');
+const policyNodeModules = join(repositoryRoot, '.github/scripts/node_modules');
 
 const copyPolicyFixture = (temporaryRoot) => {
+  const yamlSource = join(policyNodeModules, 'yaml');
+  assert.ok(
+    existsSync(join(yamlSource, 'package.json')),
+    'run npm ci --ignore-scripts --prefix .github/scripts before the policy tests'
+  );
   cpSync(join(repositoryRoot, '.github'), join(temporaryRoot, '.github'), {
     recursive: true,
+    filter: (source) =>
+      source !== policyNodeModules &&
+      !source.startsWith(`${policyNodeModules}${sep}`),
   });
+  const fixtureNodeModules = join(
+    temporaryRoot,
+    '.github/scripts/node_modules'
+  );
+  mkdirSync(fixtureNodeModules, { recursive: true });
+  cpSync(yamlSource, join(fixtureNodeModules, 'yaml'), { recursive: true });
   cpSync(join(repositoryRoot, 'docker'), join(temporaryRoot, 'docker'), {
     recursive: true,
   });
@@ -123,6 +139,11 @@ assert.deepEqual(
       result.status,
       0,
       'invalid real inventory must fail even after its policy digest is refreshed'
+    );
+    assert.doesNotMatch(
+      result.stderr,
+      /ERR_MODULE_NOT_FOUND|Cannot find package 'yaml'/u,
+      'the spawned temporary auditor must resolve its copied policy dependency'
     );
     assert.match(
       result.stderr,
@@ -994,6 +1015,28 @@ assertRejected(
       ''
     ),
   'bundle-input evidence must be generated once'
+);
+
+assertRejected(
+  'repository OCI license substitution',
+  (root) =>
+    replace(
+      join(root, 'docker/repo.Dockerfile'),
+      'org.opencontainers.image.licenses="GPL-3.0-or-later"',
+      'org.opencontainers.image.licenses="MIT"'
+    ),
+  'OCI license must match the bundled GPL-3.0-or-later repository service'
+);
+
+assertRejected(
+  'artifact codec ownership narrowed to its manifest',
+  (root) =>
+    replace(
+      join(root, '.github/CODEOWNERS'),
+      '/packages/artifact-codec/ @arturbeg @bogdan-reya',
+      '/packages/artifact-codec/package.json @arturbeg @bogdan-reya'
+    ),
+  'persisted CID authority must be protected by the reviewed artifact-codec owners'
 );
 
 assertRejected(

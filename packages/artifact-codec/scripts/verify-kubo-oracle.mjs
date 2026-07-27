@@ -101,6 +101,11 @@ const vectors = [
     bytes: deterministicBytes(1024 * 1024, 0x74300005),
     cid: 'QmPtqKXT8BGjrchrReXZ4gpD8dCAZTM82UD2EYG4TbpVuE',
   },
+  {
+    name: 'repository maximum (multi-level UnixFS DAG)',
+    bytes: deterministicBytes(50 * 1024 * 1024, 0x74300007),
+    cid: 'QmTTZQXcktT3YTRj7DzRYTE1iQU4rD8rionM8fUvpXwaMU',
+  },
 ];
 
 const kuboRoot = mkdtempSync(join(tmpdir(), 'cannon-kubo-oracle-'));

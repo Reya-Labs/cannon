@@ -62,7 +62,7 @@ ARG BUILD_REVISION=unknown
 
 LABEL org.opencontainers.image.source="https://github.com/Reya-Labs/cannon" \
       org.opencontainers.image.description="Cannon IPFS Repo Service with Kubo interface for fetching and pinning cannon packages" \
-      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later" \
       org.opencontainers.image.title="Cannon IPFS Repo Service" \
       org.opencontainers.image.vendor="Reya Labs" \
       org.opencontainers.image.version="${VERSION}" \

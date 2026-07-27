@@ -9,13 +9,13 @@
     "src"
   ],
   "scripts": {
-    "test": "jest",
-    "build:node": "tsc -p tsconfig.build.json",
-    "build:browser": "rollup -c",
-    "build": "npm run build:node && npm run build:browser",
-    "watch": "tsc -p tsconfig.build.json -w",
+    "test": "pnpm --filter @usecannon/artifact-codec run build && jest",
+    "build:node": "pnpm --filter @usecannon/artifact-codec run build && tsc -p tsconfig.build.json",
+    "build:browser": "pnpm run build:node && rollup -c",
+    "build": "pnpm run build:browser",
+    "watch": "pnpm run build:node && node scripts/watch.mjs",
     "clean": "rm -rf ./dist",
-    "prepublishOnly": "npm run build",
+    "prepack": "pnpm run build",
     "docgen": "typedoc"
   },
   "keywords": [

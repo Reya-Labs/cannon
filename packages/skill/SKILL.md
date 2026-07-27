@@ -54,7 +54,7 @@ Cannon is a package manager and deployment system for Ethereum smart contracts. 
 
 Before using this skill, ensure these tools are installed:
 
-- **Node.js 18+** and **pnpm** - `npm install -g pnpm`
+- **Node.js 20+** and **pnpm** - `npm install -g pnpm`
 - **Foundry** (forge, anvil, cast) - `curl -L https://foundry.paradigm.xyz | bash && foundryup`
 - **Cannon CLI** - `pnpm add -g @usecannon/cli`
 

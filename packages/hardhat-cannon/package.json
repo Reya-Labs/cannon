@@ -4,6 +4,10 @@
   "description": "Agnostic chain construction. Select the protocols and configuration you need to quickly and easily verify your project",
   "author": "Synthetix",
   "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "engineStrict": true,
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "keywords": [

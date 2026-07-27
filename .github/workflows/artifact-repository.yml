@@ -42,7 +42,9 @@ jobs:
       - run: pnpm --filter @usecannon/artifact-codec test
       - run: pnpm --filter @usecannon/artifact-codec test:browser-bundle
       - run: pnpm --filter @usecannon/builder build
-      - run: pnpm exec eslint 'packages/{artifact-codec,cli,repo}/**/*.{js,mjs,ts}'
+      - run: pnpm exec eslint 'packages/{artifact-codec,builder,cli,repo}/**/*.{js,mjs,ts}'
+      - run: pnpm exec eslint --no-ignore .github/scripts/verify-artifact-codec-release.mjs
+      - run: pnpm exec prettier --check .changeset/config.json .github/scripts/verify-artifact-codec-release.mjs packages/artifact-codec/scripts/watch.mjs packages/builder/scripts/watch.mjs
       - run: pnpm --filter @usecannon/cli build
       - run: pnpm --filter @usecannon/cli exec jest src/settings.test.ts src/loader.test.ts src/helpers.test.ts --runInBand
       - run: pnpm --filter @usecannon/repo build
@@ -50,3 +52,8 @@ jobs:
       - run: pnpm --filter @usecannon/repo test
         env:
           TEST_REDIS_URL: redis://127.0.0.1:6379
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20.19.5
+          cache: pnpm
+      - run: pnpm run verify:artifact-release

@@ -13,6 +13,7 @@
     "test:browser-bundle": "node scripts/verify-browser-bundle.mjs",
     "test:kubo-oracle": "pnpm run build && node scripts/verify-kubo-oracle.mjs",
     "build": "pnpm run clean && tsc -p tsconfig.json && rollup -c && rm -rf ./.build",
+    "watch": "tsc -p tsconfig.json && rollup -c && node scripts/watch.mjs",
     "clean": "rm -rf ./dist ./.build",
     "prepack": "pnpm run build"
   },
@@ -27,6 +28,9 @@
     "type": "git",
     "url": "https://github.com/usecannon/cannon.git",
     "directory": "packages/artifact-codec"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "ipfs-unixfs-importer": "17.0.1",
