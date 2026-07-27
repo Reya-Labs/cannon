@@ -373,6 +373,16 @@ export async function getNewEvents(
   return { scanToBlock: Number(scanToBlock), currentBlock, scanToTimestamp: lastBlockTimestamp, events };
 }
 
+/**
+ * Scans both registry chains until shutdown or the consecutive-failure budget
+ * is exhausted.
+ *
+ * Aborting `signal` wakes supervised sleeps and prevents another scan
+ * iteration. Already-dispatched RPC, Redis, or queue calls finish before the
+ * current iteration observes cancellation. Normal return therefore means
+ * either cancellation or retry-budget exhaustion; {@link loop} distinguishes
+ * the two and turns exhaustion into a terminal process error.
+ */
 export async function scanChain(
   mainnetClient: viem.PublicClient,
   optimismClient: viem.PublicClient,

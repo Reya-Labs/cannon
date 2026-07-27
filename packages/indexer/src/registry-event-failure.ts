@@ -1,5 +1,11 @@
 import * as rkey from './db';
 
+/**
+ * Marks an unrecognized registry event kind as terminal for event processing.
+ *
+ * The failure disposition propagates this error to the scan supervisor instead
+ * of serializing an event that the current binary cannot safely replay.
+ */
 export class UnsupportedRegistryEventError extends Error {
   override readonly name = 'UnsupportedRegistryEventError';
 }
@@ -28,6 +34,7 @@ function serializeDeadLetterEvent(event: unknown): string {
  * can contain credential-bearing URLs or attacker-controlled payloads.
  */
 export function reportRegistryFailure(scope: keyof typeof REGISTRY_FAILURE_MESSAGES, _error: unknown): void {
+  void _error;
   // eslint-disable-next-line no-console
   console.error(REGISTRY_FAILURE_MESSAGES[scope]);
 }

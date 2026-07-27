@@ -25,8 +25,13 @@ export interface ValidatedPinningJobData {
 const MAX_METADATA_CIDS = 32;
 
 /**
- * Matches the existing builder `extractValidCid` wire behavior without making
- * the producer contract depend on generated builder output.
+ * Normalizes an untrusted queue CID into the legacy Cannon wire form.
+ *
+ * Accepts a string containing exactly 46 ASCII alphanumeric characters, with
+ * surrounding whitespace and an optional `ipfs://` prefix. Returns the bare
+ * CID string and throws `Error("Invalid CID")` for every other input. This
+ * intentionally matches the existing builder `extractValidCid` behavior
+ * without making the producer contract depend on generated builder output.
  */
 export function normalizePinningCid(value: unknown): string {
   if (typeof value !== 'string') throw new Error('Invalid CID');
@@ -61,6 +66,16 @@ export function optionalPinningMetadataCids(value: unknown): string[] | undefine
   return cid ? [cid] : undefined;
 }
 
+/**
+ * Validates and canonicalizes the versioned registry-to-worker queue payload.
+ *
+ * Missing `contractVersion` is treated as V1 so jobs produced before explicit
+ * versioning remain consumable; every other version is rejected. Deployment
+ * and metadata CIDs use {@link normalizePinningCid}; metadata is capped,
+ * de-duplicated, sorted for stable job identity, and omitted when empty. Any
+ * incompatible shape, version, CID, or metadata bound throws before a worker
+ * can dispatch artifact I/O.
+ */
 export function validatePinningJobData(data: PinningJobData): ValidatedPinningJobData {
   if (!data || typeof data !== 'object') throw new Error('Invalid pinning job data');
 
