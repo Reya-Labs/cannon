@@ -1,4 +1,5 @@
 import { getIpfsUrl, PackageReference } from '@usecannon/builder';
+import { CID } from 'multiformats/cid';
 import * as viem from 'viem';
 import { isChainId, isContractName, isFunctionSelector, isRedisTagOfPackage } from '../helpers';
 import { ApiSelectorResult, ApiPackage, IpfsUrl, RedisDocument, RedisFunction, RedisPackage, RedisTag } from '../types';
@@ -32,10 +33,27 @@ function parsePackageReference(name: unknown, version: unknown, preset: unknown)
   return PackageReference.isValid(fullPackageRef) ? new PackageReference(fullPackageRef) : undefined;
 }
 
-const CANNON_CID_V0 = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
 function parseIpfsUrl(value: unknown): IpfsUrl | undefined {
   const url = getIpfsUrl(value);
-  return url && CANNON_CID_V0.test(url.slice('ipfs://'.length)) ? (url as IpfsUrl) : undefined;
+  if (!url) return;
+
+  const valueCid = url.slice('ipfs://'.length);
+  try {
+    const cid = CID.parse(valueCid);
+    if (
+      cid.version !== 0 ||
+      cid.code !== 0x70 ||
+      cid.multihash.code !== 0x12 ||
+      cid.multihash.size !== 32 ||
+      cid.toString() !== valueCid
+    ) {
+      return;
+    }
+  } catch {
+    return;
+  }
+
+  return url as IpfsUrl;
 }
 
 export function transformPackage(value: RedisPackage): ApiPackage | undefined {

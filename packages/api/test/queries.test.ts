@@ -7,6 +7,7 @@ import { createPackageQueryExecutor, createPartialPackageRefQuery, MAX_NAMESPACE
 
 const DEPLOY_URL = 'ipfs://QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn';
 const META_URL = 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+const DEPLOY_URL_V1 = 'ipfs://bafybeiczsscdsbs7ffqz55asqdf3smv6klcw3gofszvwlyarci47bgf354';
 
 describe('bounded aggregate query factories', () => {
   it('limits and validates chain aggregates while reusing the cached query promise', async () => {
@@ -283,7 +284,7 @@ describe('bounded aggregate query factories', () => {
             },
             {
               chainId: '2',
-              deployUrl: `ipfs://${'a'.repeat(46)}`,
+              deployUrl: `ipfs://Qm${'1'.repeat(44)}`,
               metaUrl: META_URL,
               name: 'valid-package',
               owner: '0x0000000000000000000000000000000000000002',
@@ -294,10 +295,32 @@ describe('bounded aggregate query factories', () => {
             },
             {
               chainId: '3',
-              deployUrl: DEPLOY_URL,
+              deployUrl: `ipfs://Qm${'z'.repeat(44)}`,
               metaUrl: META_URL,
               name: 'valid-package',
               owner: '0x0000000000000000000000000000000000000003',
+              preset: 'main',
+              timestamp: '123',
+              type: 'package',
+              version: '1.2.3',
+            },
+            {
+              chainId: '4',
+              deployUrl: DEPLOY_URL_V1,
+              metaUrl: META_URL,
+              name: 'valid-package',
+              owner: '0x0000000000000000000000000000000000000004',
+              preset: 'main',
+              timestamp: '123',
+              type: 'package',
+              version: '1.2.3',
+            },
+            {
+              chainId: '5',
+              deployUrl: DEPLOY_URL,
+              metaUrl: META_URL,
+              name: 'valid-package',
+              owner: '0x0000000000000000000000000000000000000005',
               preset: 'main',
               timestamp: '123',
               type: 'package',
@@ -315,14 +338,16 @@ describe('bounded aggregate query factories', () => {
     try {
       const queryPartialPackageRef = createPartialPackageRefQuery(
         async () => redis,
-        async () => [1, 2, 3]
+        async () => [1, 2, 3, 4, 5]
       );
 
       const result = await queryPartialPackageRef({ packageRef: 'valid-package:1.2.3' });
 
       assert.equal(result.total, 1);
-      assert.equal(result.data[0]?.chainId, 3);
+      assert.equal(result.data[0]?.chainId, 5);
       assert.deepEqual(warnings, [
+        ['query API skipped malformed Redis document', { kind: 'package' }],
+        ['query API skipped malformed Redis document', { kind: 'package' }],
         ['query API skipped malformed Redis document', { kind: 'package' }],
         ['query API skipped malformed Redis document', { kind: 'package' }],
       ]);

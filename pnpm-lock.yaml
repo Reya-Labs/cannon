@@ -205,6 +205,9 @@ importers:
       helmet:
         specifier: ^7.1.0
         version: 7.1.0
+      multiformats:
+        specifier: 9.9.0
+        version: 9.9.0
       prom-client:
         specifier: ^15.1.2
         version: 15.1.3
