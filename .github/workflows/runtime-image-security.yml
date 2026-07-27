@@ -6,9 +6,12 @@ on:
       - '.github/dependabot.yml'
       - '.github/scripts/generate-bundle-input-sbom.mjs'
       - '.github/scripts/generate-bundle-input-sbom.test.mjs'
+      - '.github/scripts/generate-expected-runtime-sbom.sh'
       - '.github/scripts/scan-runtime-image.sh'
       - '.github/scripts/validate-runtime-image-inventory.mjs'
       - '.github/scripts/validate-runtime-image-inventory.test.mjs'
+      - '.github/scripts/verify-runtime-bundle-input.mjs'
+      - '.github/scripts/verify-runtime-bundle-input.test.mjs'
       - '.github/scripts/verify-runtime-image.sh'
       - '.github/runtime-image-inventory.json'
       - '.github/workflows/runtime-image-security.yml'
@@ -32,9 +35,12 @@ on:
       - '.github/dependabot.yml'
       - '.github/scripts/generate-bundle-input-sbom.mjs'
       - '.github/scripts/generate-bundle-input-sbom.test.mjs'
+      - '.github/scripts/generate-expected-runtime-sbom.sh'
       - '.github/scripts/scan-runtime-image.sh'
       - '.github/scripts/validate-runtime-image-inventory.mjs'
       - '.github/scripts/validate-runtime-image-inventory.test.mjs'
+      - '.github/scripts/verify-runtime-bundle-input.mjs'
+      - '.github/scripts/verify-runtime-bundle-input.test.mjs'
       - '.github/scripts/verify-runtime-image.sh'
       - '.github/runtime-image-inventory.json'
       - '.github/workflows/runtime-image-security.yml'
@@ -54,8 +60,17 @@ on:
     - cron: '23 6 * * 1'
   workflow_dispatch:
     inputs:
+      mode:
+        description: Select a current-source build, one candidate digest, or the protected active/rollback inventory
+        required: true
+        default: build-current
+        type: choice
+        options:
+          - build-current
+          - candidate
+          - inventory
       runtime:
-        description: Image whose already-pushed digest should be scanned
+        description: Candidate mode only - image whose already-pushed digest should be scanned
         required: false
         default: safe-app-backend
         type: choice
@@ -65,24 +80,26 @@ on:
           - api
           - safe-app-backend
       image_ref:
-        description: Optional ghcr.io/reya-labs IMAGE@sha256 digest to scan instead of rebuilding
+        description: Candidate mode only - required ghcr.io/reya-labs IMAGE@sha256 digest
         required: false
         type: string
       expected_revision:
-        description: Required 40-character Cannon source revision when image_ref is set
+        description: Candidate mode only - required 40-character Cannon source revision
         required: false
         type: string
 
 concurrency:
-  group: runtime-image-security-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: runtime-image-security-${{ github.event_name }}-${{ inputs.mode || 'automatic' }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 permissions:
   contents: read
 
 jobs:
   build-and-scan:
-    if: github.event_name != 'workflow_dispatch' || inputs.image_ref == ''
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.mode == 'build-current'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -113,6 +130,15 @@ jobs:
       SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
       IMAGE_REF: cannon-runtime-${{ matrix.runtime }}:${{ github.event.pull_request.head.sha || github.sha }}
     steps:
+      - name: Validate current-source build request
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CANDIDATE_EXPECTED_REVISION: ${{ inputs.expected_revision }}
+          CANDIDATE_IMAGE_REF: ${{ inputs.image_ref }}
+        run: |
+          test -z "$CANDIDATE_IMAGE_REF"
+          test -z "$CANDIDATE_EXPECTED_REVISION"
+
       - name: Checkout exact image source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -176,18 +202,36 @@ jobs:
             "$EXPECTED_COMMAND" \
             "$EXPECTED_CREATED"
 
+      - name: Generate independent expected bundle-input closure
+        if: matrix.runtime != 'safe-app-backend'
+        env:
+          RUNTIME_KIND: ${{ matrix.runtime }}
+        run: |
+          mkdir -p runtime-expected
+          .github/scripts/generate-expected-runtime-sbom.sh \
+            "$PWD" \
+            "$SOURCE_REVISION" \
+            "$RUNTIME_KIND" \
+            "$PWD/runtime-expected/${RUNTIME_KIND}.cdx.json"
+
       - name: Generate and scan complete runtime evidence
         env:
           COMPONENT_NAME: ${{ steps.metadata.outputs.name }}
           COMPONENT_VERSION: ${{ steps.metadata.outputs.version }}
           RUNTIME_KIND: ${{ matrix.runtime }}
         run: |
+          if [[ "$RUNTIME_KIND" == "safe-app-backend" ]]; then
+            expected_bundle_input=absent
+          else
+            expected_bundle_input="$PWD/runtime-expected/${RUNTIME_KIND}.cdx.json"
+          fi
           .github/scripts/scan-runtime-image.sh \
             "$IMAGE_REF" \
             "$RUNTIME_KIND" \
             "$COMPONENT_NAME" \
             "$COMPONENT_VERSION" \
-            "runtime-security-${RUNTIME_KIND}"
+            "runtime-security-${RUNTIME_KIND}" \
+            "$expected_bundle_input"
 
       - name: Record scan summary
         if: always()
@@ -238,7 +282,8 @@ jobs:
   prepare-exact-digest-scans:
     if: >-
       github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' && inputs.image_ref != '')
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.mode == 'candidate' || inputs.mode == 'inventory'))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -267,13 +312,16 @@ jobs:
         id: request
         env:
           EVENT_NAME: ${{ github.event_name }}
+          REQUEST_MODE: ${{ inputs.mode }}
         run: |
-          if [[ "$EVENT_NAME" == "schedule" ]]; then
+          if [[ "$EVENT_NAME" == "schedule" || "$REQUEST_MODE" == "inventory" ]]; then
+            test -z "$IMAGE_REF"
+            test -z "$EXPECTED_REVISION"
             matrix="$(
               node .github/scripts/validate-runtime-image-inventory.mjs \
                 .github/runtime-image-inventory.json
             )"
-          else
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" && "$REQUEST_MODE" == "candidate" ]]; then
             matrix="$(
               node .github/scripts/validate-runtime-image-inventory.mjs \
                 --manual \
@@ -281,6 +329,9 @@ jobs:
                 "$IMAGE_REF" \
                 "$EXPECTED_REVISION"
             )"
+          else
+            echo "unsupported exact-digest scan mode" >&2
+            exit 2
           fi
           jq -e '
             type == "object" and
@@ -288,6 +339,7 @@ jobs:
             (.include | type) == "array"
           ' <<<"$matrix" >/dev/null
           has_scans="$(jq -r '(.include | length) > 0' <<<"$matrix")"
+          echo "Resolved $(jq -r '.include | length' <<<"$matrix") exact digest scan(s)."
           {
             echo "has_scans=$has_scans"
             echo "matrix=$matrix"
@@ -297,7 +349,7 @@ jobs:
     needs: prepare-exact-digest-scans
     if: needs.prepare-exact-digest-scans.outputs.has_scans == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare-exact-digest-scans.outputs.matrix) }}
@@ -437,6 +489,16 @@ jobs:
             "$expected_command" \
             "$created"
 
+      - name: Generate independent expected bundle-input closure
+        if: matrix.runtime != 'safe-app-backend'
+        run: |
+          mkdir -p runtime-expected
+          policy/.github/scripts/generate-expected-runtime-sbom.sh \
+            "$PWD/source" \
+            "$EXPECTED_REVISION" \
+            "$RUNTIME_KIND" \
+            "$PWD/runtime-expected/${RUNTIME_KIND}.cdx.json"
+
       - name: Generate and scan complete pushed-digest evidence
         run: |
           case "$RUNTIME_KIND" in
@@ -455,12 +517,18 @@ jobs:
           esac
           component_name="$(jq -er '.name' "$package_json")"
           version="$(jq -er '.version' "$package_json")"
+          if [[ "$RUNTIME_KIND" == "safe-app-backend" ]]; then
+            expected_bundle_input=absent
+          else
+            expected_bundle_input="$PWD/runtime-expected/${RUNTIME_KIND}.cdx.json"
+          fi
           policy/.github/scripts/scan-runtime-image.sh \
             "$IMAGE_REF" \
             "$RUNTIME_KIND" \
             "$component_name" \
             "$version" \
-            "runtime-security-${RUNTIME_KIND}-${RUNTIME_SLOT}"
+            "runtime-security-${RUNTIME_KIND}-${RUNTIME_SLOT}" \
+            "$expected_bundle_input"
 
       - name: Seal digest evidence manifest
         if: always()

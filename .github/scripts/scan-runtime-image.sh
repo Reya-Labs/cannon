@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-if [[ $# -ne 5 ]]; then
-  echo "usage: $0 IMAGE RUNTIME COMPONENT_NAME COMPONENT_VERSION OUTPUT_DIRECTORY" >&2
+if [[ $# -ne 6 ]]; then
+  echo "usage: $0 IMAGE RUNTIME COMPONENT_NAME COMPONENT_VERSION OUTPUT_DIRECTORY EXPECTED_BUNDLE_INPUT" >&2
   exit 2
 fi
 
@@ -12,8 +12,14 @@ readonly runtime_kind=$2
 readonly component_name=$3
 readonly component_version=$4
 readonly requested_output_directory=$5
+readonly requested_expected_bundle_input=$6
 readonly syft_image='docker.io/anchore/syft@sha256:b4f1df79f97b817682d8b5ff941eb6bfe74f6172553a5e312c75bbc2eabc405c'
 readonly grype_image='docker.io/anchore/grype@sha256:fd4ab4d1042b522c896e73bdf09ab8bf384fa417df99d6dd0d6e1008c7e7c821'
+policy_directory=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+readonly policy_directory
+readonly bundle_input_verifier="${policy_directory}/verify-runtime-bundle-input.mjs"
+test -f "$bundle_input_verifier"
+test -r "$bundle_input_verifier"
 scanner_uid=$(id -u)
 scanner_gid=$(id -g)
 readonly scanner_uid
@@ -48,6 +54,7 @@ trap cleanup EXIT
 
 readonly image_sbom="${output_directory}/sbom-${runtime_kind}.spdx.json"
 readonly bundle_sbom="${output_directory}/bundle-input-${runtime_kind}.cdx.json"
+readonly expected_bundle_sbom="${output_directory}/expected-bundle-input-${runtime_kind}.cdx.json"
 readonly image_report="${output_directory}/grype-image-${runtime_kind}.json"
 readonly bundle_report="${output_directory}/grype-bundle-input-${runtime_kind}.json"
 readonly summary="${output_directory}/scan-summary-${runtime_kind}.json"
@@ -121,19 +128,45 @@ image_npm_count=$(
 
 bundle_component_count=0
 bundle_status=present
+bundle_sha256=absent
 if [[ "$runtime_kind" == 'safe-app-backend' ]]; then
+  if [[ "$requested_expected_bundle_input" != 'absent' ]]; then
+    echo "Safe backend must declare the independent NCC bundle input absent" >&2
+    exit 2
+  fi
   bundle_status=absent
   if ((image_npm_count == 0)); then
     echo "Safe backend image SBOM contains no installed npm packages" >&2
     exit 1
   fi
 else
+  if [[ "$requested_expected_bundle_input" == 'absent' ]]; then
+    echo "NCC runtimes require an independently generated bundle-input SBOM" >&2
+    exit 2
+  fi
+  if [[ ! -f "$requested_expected_bundle_input" || ! -r "$requested_expected_bundle_input" || ! -s "$requested_expected_bundle_input" ]]; then
+    echo "expected bundle-input SBOM must be a readable, non-empty regular file" >&2
+    exit 2
+  fi
+  expected_bundle_input_parent=$(
+    cd "$(dirname "$requested_expected_bundle_input")" && pwd -P
+  )
+  readonly expected_bundle_input_parent
+  expected_bundle_input_path="${expected_bundle_input_parent}/$(basename "$requested_expected_bundle_input")"
+  readonly expected_bundle_input_path
+  cp "$expected_bundle_input_path" "$expected_bundle_sbom"
+
   container_id=$(docker create "$image_ref")
   docker cp \
     "${container_id}:/usr/app/bundle-input-dependencies.cdx.json" \
     "$bundle_sbom"
   docker rm "$container_id" >/dev/null
   container_id=
+
+  bundle_sha256=$(
+    node "$bundle_input_verifier" "$expected_bundle_sbom" "$bundle_sbom"
+  )
+  readonly bundle_sha256
 
   jq -e \
     --arg component_name "$component_name" \
@@ -256,6 +289,7 @@ fi
 
 jq -n \
   --arg bundle_input_sbom "$bundle_status" \
+  --arg bundle_input_sha256 "$bundle_sha256" \
   --arg component_name "$component_name" \
   --arg component_version "$component_version" \
   --arg database_built "$database_built" \
@@ -296,6 +330,7 @@ jq -n \
     },
     bundle_input_sbom: {
       status: $bundle_input_sbom,
+      source_closure_sha256: $bundle_input_sha256,
       components: $bundle_component_count,
       critical: $bundle_critical,
       high: $bundle_high,

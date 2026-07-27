@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 
 import {
+  parseRuntimeImageInventory,
   validateManualRuntimeImageRequest,
   validateRuntimeImageInventory,
 } from './validate-runtime-image-inventory.mjs';
@@ -29,6 +30,33 @@ const baseline = () => ({
 });
 
 assert.deepEqual(validateRuntimeImageInventory(baseline()), { include: [] });
+
+{
+  const canonicalSource = `${JSON.stringify(baseline(), null, 2)}\n`;
+  assert.deepEqual(parseRuntimeImageInventory(canonicalSource), baseline());
+
+  for (const [label, before, after] of [
+    [
+      'status',
+      '"status": "inactive",',
+      '"status": "inactive",\n      "status": "inactive",',
+    ],
+    ['active', '"active": null,', '"active": null,\n      "active": null,'],
+    ['rollback', '"rollback": []', '"rollback": [],\n      "rollback": []'],
+  ]) {
+    assert.throws(
+      () => parseRuntimeImageInventory(canonicalSource.replace(before, after)),
+      /canonical JSON with unique keys/u,
+      `duplicate ${label} key must be rejected before validation`
+    );
+  }
+
+  assert.throws(
+    () => parseRuntimeImageInventory(canonicalSource.trim()),
+    /canonical JSON with unique keys/u,
+    'non-canonical inventory text must be rejected'
+  );
+}
 
 {
   const inventory = baseline();

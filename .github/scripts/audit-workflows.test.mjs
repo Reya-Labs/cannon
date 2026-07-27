@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   cpSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseDocument } from 'yaml';
 
@@ -73,11 +76,113 @@ assert.deepEqual(
 );
 
 {
+  const temporaryRoot = mkdtempSync(join(tmpdir(), 'cannon-inventory-policy-'));
+  try {
+    copyPolicyFixture(temporaryRoot);
+    const inventoryPath = join(
+      temporaryRoot,
+      '.github/runtime-image-inventory.json'
+    );
+    const originalInventory = readFileSync(inventoryPath, 'utf8');
+    const invalidInventory = originalInventory.replace(
+      '"status": "inactive"',
+      '"status": "active"'
+    );
+    assert.notEqual(
+      invalidInventory,
+      originalInventory,
+      'real inventory mutation anchor must exist'
+    );
+    writeFileSync(inventoryPath, invalidInventory);
+
+    const originalDigest = createHash('sha256')
+      .update(originalInventory)
+      .digest('hex');
+    const invalidDigest = createHash('sha256')
+      .update(invalidInventory)
+      .digest('hex');
+    replace(
+      join(temporaryRoot, '.github/scripts/audit-workflows.mjs'),
+      originalDigest,
+      invalidDigest
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        realpathSync(
+          join(temporaryRoot, '.github/scripts/audit-workflows.mjs')
+        ),
+      ],
+      {
+        cwd: temporaryRoot,
+        encoding: 'utf8',
+      }
+    );
+    assert.notEqual(
+      result.status,
+      0,
+      'invalid real inventory must fail even after its policy digest is refreshed'
+    );
+    assert.match(
+      result.stderr,
+      /runtime image inventory is invalid/u,
+      'semantic inventory validation must be the fail-closed boundary'
+    );
+    assert.doesNotMatch(
+      result.stderr,
+      /runtime-image-inventory\.json: source must exactly match/u,
+      'the fixture must prove rejection independently of the refreshed digest'
+    );
+  } finally {
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+}
+
+{
   const runtimeWorkflowSource = readFileSync(
     join(repositoryRoot, '.github/workflows/runtime-image-security.yml'),
     'utf8'
   );
   const runtimeWorkflow = parseDocument(runtimeWorkflowSource).toJS();
+  const runtimePaths = [
+    '.github/scripts/generate-expected-runtime-sbom.sh',
+    '.github/scripts/verify-runtime-bundle-input.mjs',
+    '.github/scripts/verify-runtime-bundle-input.test.mjs',
+  ];
+  for (const eventName of ['pull_request', 'push']) {
+    for (const path of runtimePaths) {
+      assert.ok(
+        runtimeWorkflow.on[eventName].paths.includes(path),
+        `${eventName} must run when ${path} changes`
+      );
+    }
+  }
+  assert.deepEqual(
+    runtimeWorkflow.on.workflow_dispatch.inputs.mode.options,
+    ['build-current', 'candidate', 'inventory'],
+    'manual current-source, single-candidate, and protected-inventory modes must remain distinct'
+  );
+  assert.equal(
+    runtimeWorkflow.concurrency.group,
+    "runtime-image-security-${{ github.event_name }}-${{ inputs.mode || 'automatic' }}-${{ github.ref }}",
+    'concurrency domains must include event and manual mode before the ref'
+  );
+  const cancellationExpression =
+    runtimeWorkflow.concurrency['cancel-in-progress'];
+  assert.equal(
+    cancellationExpression,
+    "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}",
+    'only replaceable pull-request and push runs may be cancelled'
+  );
+  const cancellableEvents = [
+    ...cancellationExpression.matchAll(/github\.event_name == '([^']+)'/gu),
+  ].map((match) => match[1]);
+  assert.deepEqual(
+    cancellableEvents,
+    ['pull_request', 'push'],
+    'the parsed cancellation expression must exclude schedule and workflow_dispatch'
+  );
   assert.equal(
     runtimeWorkflow.jobs['prepare-exact-digest-scans'].outputs.has_scans,
     '${{ steps.request.outputs.has_scans }}',
@@ -92,6 +197,18 @@ assert.deepEqual(
     runtimeWorkflow.jobs['scan-pushed-digest'].strategy.matrix,
     '${{ fromJSON(needs.prepare-exact-digest-scans.outputs.matrix) }}',
     'exact-digest scans must expand only the validated protected inventory'
+  );
+  assert.equal(
+    runtimeWorkflow.jobs['scan-pushed-digest']['timeout-minutes'],
+    45,
+    'exact-digest scans must budget for frozen source installation and expected-SBOM generation'
+  );
+  assert.match(
+    runtimeWorkflow.jobs['prepare-exact-digest-scans'].steps.find(
+      (step) => step.id === 'request'
+    ).run,
+    /\$EVENT_NAME" == "schedule" \|\| "\$REQUEST_MODE" == "inventory/u,
+    'on-demand inventory mode must resolve the same checked-in inventory as the schedule'
   );
   assert.equal(
     [
@@ -434,6 +551,122 @@ assertRejected(
       "    - cron: '23 6 * * 2'"
     ),
   'schedule must exactly match the reviewed configuration'
+);
+
+assertRejected(
+  'runtime concurrency collapses schedule and push domains',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-image-security.yml'),
+      "  group: runtime-image-security-${{ github.event_name }}-${{ inputs.mode || 'automatic' }}-${{ github.ref }}",
+      '  group: runtime-image-security-${{ github.ref }}'
+    ),
+  'concurrency must isolate event and manual-mode domains'
+);
+
+assertRejected(
+  'runtime schedule and manual scans become cancellable',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-image-security.yml'),
+      "  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}",
+      '  cancel-in-progress: true'
+    ),
+  'cancel only replaceable pull-request or push runs'
+);
+
+assertRejected(
+  'runtime on-demand inventory mode bypass',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-image-security.yml'),
+      'if [[ "$EVENT_NAME" == "schedule" || "$REQUEST_MODE" == "inventory" ]]',
+      'if [[ "$EVENT_NAME" == "schedule" ]]'
+    ),
+  'on-demand inventory modes must resolve the same protected inventory'
+);
+
+assertRejected(
+  'runtime expected-SBOM generator missing from pull-request paths',
+  (root) => {
+    const workflowPath = join(
+      root,
+      '.github/workflows/runtime-image-security.yml'
+    );
+    replace(
+      workflowPath,
+      "      - '.github/scripts/generate-expected-runtime-sbom.sh'\n",
+      ''
+    );
+  },
+  'pull_request must exactly match the reviewed configuration'
+);
+
+assertRejected(
+  'runtime expected closure uses mutable archive head',
+  (root) =>
+    replace(
+      join(root, '.github/scripts/generate-expected-runtime-sbom.sh'),
+      'git -C "$source_directory" archive --format=tar "$expected_revision"',
+      'git -C "$source_directory" archive --format=tar HEAD'
+    ),
+  'expected closure must be generated from the exact declared checked-out source revision'
+);
+
+assertRejected(
+  'current-source expected closure generation removed',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-image-security.yml'),
+      '.github/scripts/generate-expected-runtime-sbom.sh \\\n',
+      'true # generate-expected-runtime-sbom.sh \\\n'
+    ),
+  'current-source expected closure must use the exact build revision'
+);
+
+assertRejected(
+  'pushed-digest expected closure trusts candidate policy',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-image-security.yml'),
+      'policy/.github/scripts/generate-expected-runtime-sbom.sh \\\n',
+      'source/.github/scripts/generate-expected-runtime-sbom.sh \\\n'
+    ),
+  'pushed-digest expected closure must use trusted policy and the exact image source revision'
+);
+
+assertRejected(
+  'current-source scan omits independent expected closure',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-image-security.yml'),
+      '"runtime-security-${RUNTIME_KIND}" \\\n' +
+        '            "$expected_bundle_input"',
+      '"runtime-security-${RUNTIME_KIND}" \\\n' + '            absent'
+    ),
+  'current-source scan must receive the independent expected closure'
+);
+
+assertRejected(
+  'runtime bundle-input equality verifier removed',
+  (root) =>
+    replace(
+      join(root, '.github/scripts/scan-runtime-image.sh'),
+      '    node "$bundle_input_verifier" "$expected_bundle_sbom" "$bundle_sbom"\n',
+      '    node -e "process.stdout.write(\\"unchecked\\\\n\\")"\n'
+    ),
+  'NCC evidence must exactly match an independently generated retained source closure'
+);
+
+assertRejected(
+  'runtime bundle-input verifier policy substitution',
+  (root) =>
+    replace(
+      join(root, '.github/scripts/verify-runtime-bundle-input.mjs'),
+      'if (!expected.equals(embedded)) {',
+      'if (false) {'
+    ),
+  'source must exactly match the reviewed policy digest'
 );
 
 assertRejected(

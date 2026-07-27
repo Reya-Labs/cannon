@@ -28,6 +28,28 @@ const assertExactKeys = (value, expectedKeys, location) => {
   }
 };
 
+export const parseRuntimeImageInventory = (source) => {
+  if (typeof source !== 'string') {
+    throw new Error('runtime image inventory source must be text');
+  }
+
+  let inventory;
+  try {
+    inventory = JSON.parse(source);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'invalid JSON';
+    throw new Error(`runtime image inventory is not valid JSON: ${message}`);
+  }
+
+  const canonicalSource = `${JSON.stringify(inventory, null, 2)}\n`;
+  if (source !== canonicalSource) {
+    throw new Error(
+      'runtime image inventory must use canonical JSON with unique keys'
+    );
+  }
+  return inventory;
+};
+
 const validateArtifact = (value, runtime, location) => {
   assertExactKeys(value, ['imageRef', 'sourceRevision'], location);
 
@@ -168,7 +190,7 @@ const main = () => {
       );
     }
     matrix = validateRuntimeImageInventory(
-      JSON.parse(readFileSync(args[0], 'utf8'))
+      parseRuntimeImageInventory(readFileSync(args[0], 'utf8'))
     );
   }
   process.stdout.write(`${JSON.stringify(matrix)}\n`);

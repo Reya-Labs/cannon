@@ -6,6 +6,10 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { parseDocument } from 'yaml';
+import {
+  parseRuntimeImageInventory,
+  validateRuntimeImageInventory,
+} from './validate-runtime-image-inventory.mjs';
 import { verifySafeAppBackendWorkflows } from './verify-safe-app-backend-workflows.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -15,9 +19,12 @@ const runtimeImagePaths = [
   '.github/dependabot.yml',
   '.github/scripts/generate-bundle-input-sbom.mjs',
   '.github/scripts/generate-bundle-input-sbom.test.mjs',
+  '.github/scripts/generate-expected-runtime-sbom.sh',
   '.github/scripts/scan-runtime-image.sh',
   '.github/scripts/validate-runtime-image-inventory.mjs',
   '.github/scripts/validate-runtime-image-inventory.test.mjs',
+  '.github/scripts/verify-runtime-bundle-input.mjs',
+  '.github/scripts/verify-runtime-bundle-input.test.mjs',
   '.github/scripts/verify-runtime-image.sh',
   '.github/runtime-image-inventory.json',
   '.github/workflows/runtime-image-security.yml',
@@ -80,8 +87,17 @@ const workflowPolicies = new Map([
       schedule: [{ cron: '23 6 * * 1' }],
       workflow_dispatch: {
         inputs: {
+          mode: {
+            description:
+              'Select a current-source build, one candidate digest, or the protected active/rollback inventory',
+            required: true,
+            default: 'build-current',
+            type: 'choice',
+            options: ['build-current', 'candidate', 'inventory'],
+          },
           runtime: {
-            description: 'Image whose already-pushed digest should be scanned',
+            description:
+              'Candidate mode only - image whose already-pushed digest should be scanned',
             required: false,
             default: 'safe-app-backend',
             type: 'choice',
@@ -89,13 +105,13 @@ const workflowPolicies = new Map([
           },
           image_ref: {
             description:
-              'Optional ghcr.io/reya-labs IMAGE@sha256 digest to scan instead of rebuilding',
+              'Candidate mode only - required ghcr.io/reya-labs IMAGE@sha256 digest',
             required: false,
             type: 'string',
           },
           expected_revision: {
             description:
-              'Required 40-character Cannon source revision when image_ref is set',
+              'Candidate mode only - required 40-character Cannon source revision',
             required: false,
             type: 'string',
           },
@@ -132,7 +148,7 @@ const workflowPolicies = new Map([
 const exactWorkflowDigests = new Map([
   [
     'runtime-image-security.yml',
-    '2b647d2d73de6c7880c62ece5ca4761caa04a9e6fc96ea1962689dd29696bbaf',
+    '32fcee6c72db52ebdc28b26d4ac3911aa97e23a33cadeaa616ee1f0e935c33c4',
   ],
 ]);
 
@@ -146,12 +162,20 @@ const exactPolicyFileDigests = new Map([
     'ee941346cf3fc93d1acdd9a17310898ab23ef16f9a3da87065dad45ed386230e',
   ],
   [
+    '.github/scripts/generate-expected-runtime-sbom.sh',
+    '41acb0dea6c2f6e742d2c410e23a9110c440a8532ae4f4b73a907dedc7781b5e',
+  ],
+  [
     '.github/scripts/scan-runtime-image.sh',
-    'f2123f4d975f3136450ef4539a184afe0e34ee5bcd30384ce6f21231898118a7',
+    '8c035461bbef6eadcafc593e87f2406d525bff2974ce32e3909040d8ef163cae',
   ],
   [
     '.github/scripts/validate-runtime-image-inventory.mjs',
-    '2856a2ecef20e4f9a2826a732fe778f55ad77caae38ef2e6b927dd337532f700',
+    'a8320940e84be81ca5d8aae64944d8eb65cb30ff9abce0c5217334e56de52508',
+  ],
+  [
+    '.github/scripts/verify-runtime-bundle-input.mjs',
+    '91b8c64c3c9041da49036f25204b9051f24fad29b05ed7a8ec89b2635fc981c4',
   ],
   [
     '.github/scripts/verify-runtime-image.sh',
@@ -785,6 +809,125 @@ const auditRuntimeImageEvidenceContract = (repositoryRoot, errors) => {
         '.github/scripts/scan-runtime-image.sh: scanner must read the single stable root bundle-input evidence path without fallback lookup'
       );
     }
+    if (
+      !scannerSource.includes(
+        'node "$bundle_input_verifier" "$expected_bundle_sbom" "$bundle_sbom"'
+      ) ||
+      !scannerSource.includes(
+        'cp "$expected_bundle_input_path" "$expected_bundle_sbom"'
+      )
+    ) {
+      errors.push(
+        '.github/scripts/scan-runtime-image.sh: NCC evidence must exactly match an independently generated retained source closure before scanning'
+      );
+    }
+  }
+
+  const generatorPath = join(
+    repositoryRoot,
+    '.github/scripts/generate-expected-runtime-sbom.sh'
+  );
+  if (existsSync(generatorPath)) {
+    const generatorSource = readFileSync(generatorPath, 'utf8');
+    if (
+      !generatorSource.includes(
+        'git -C "$source_directory" archive --format=tar "$expected_revision"'
+      ) ||
+      !generatorSource.includes(
+        'if [[ "$(git -C "$source_directory" rev-parse HEAD)" != "$expected_revision" ]]'
+      )
+    ) {
+      errors.push(
+        '.github/scripts/generate-expected-runtime-sbom.sh: expected closure must be generated from the exact declared checked-out source revision'
+      );
+    }
+  }
+
+  const workflowPath = join(
+    repositoryRoot,
+    '.github/workflows/runtime-image-security.yml'
+  );
+  if (existsSync(workflowPath)) {
+    const workflowSource = readFileSync(workflowPath, 'utf8');
+    const document = parseDocument(workflowSource, {
+      prettyErrors: true,
+      uniqueKeys: true,
+    });
+    if (document.errors.length === 0) {
+      const workflow = document.toJS({ maxAliasCount: 0 });
+      const expectedConcurrencyGroup =
+        "runtime-image-security-${{ github.event_name }}-${{ inputs.mode || 'automatic' }}-${{ github.ref }}";
+      const expectedCancellation =
+        "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}";
+      if (
+        workflow?.concurrency?.group !== expectedConcurrencyGroup ||
+        workflow?.concurrency?.['cancel-in-progress'] !== expectedCancellation
+      ) {
+        errors.push(
+          '.github/workflows/runtime-image-security.yml: concurrency must isolate event and manual-mode domains and cancel only replaceable pull-request or push runs'
+        );
+      }
+    }
+
+    for (const requiredSnippet of [
+      [
+        '.github/scripts/generate-expected-runtime-sbom.sh \\\n' +
+          '            "$PWD" \\\n' +
+          '            "$SOURCE_REVISION" \\\n' +
+          '            "$RUNTIME_KIND" \\',
+        'current-source expected closure must use the exact build revision',
+      ],
+      [
+        'policy/.github/scripts/generate-expected-runtime-sbom.sh \\\n' +
+          '            "$PWD/source" \\\n' +
+          '            "$EXPECTED_REVISION" \\\n' +
+          '            "$RUNTIME_KIND" \\',
+        'pushed-digest expected closure must use trusted policy and the exact image source revision',
+      ],
+      [
+        '"runtime-security-${RUNTIME_KIND}" \\\n' +
+          '            "$expected_bundle_input"',
+        'current-source scan must receive the independent expected closure',
+      ],
+      [
+        '"runtime-security-${RUNTIME_KIND}-${RUNTIME_SLOT}" \\\n' +
+          '            "$expected_bundle_input"',
+        'pushed-digest scan must receive the independent expected closure',
+      ],
+      [
+        'if [[ "$EVENT_NAME" == "schedule" || "$REQUEST_MODE" == "inventory" ]]',
+        'schedule and on-demand inventory modes must resolve the same protected inventory',
+      ],
+    ]) {
+      if (!workflowSource.includes(requiredSnippet[0])) {
+        errors.push(
+          `.github/workflows/runtime-image-security.yml: ${requiredSnippet[1]}`
+        );
+      }
+    }
+  }
+};
+
+const auditRuntimeImageInventory = (repositoryRoot, errors) => {
+  const inventoryPath = join(
+    repositoryRoot,
+    '.github/runtime-image-inventory.json'
+  );
+  if (!existsSync(inventoryPath)) {
+    return;
+  }
+
+  try {
+    const inventory = parseRuntimeImageInventory(
+      readFileSync(inventoryPath, 'utf8')
+    );
+    validateRuntimeImageInventory(inventory);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'inventory validation failed';
+    errors.push(
+      `.github/runtime-image-inventory.json: runtime image inventory is invalid (${message})`
+    );
   }
 };
 
@@ -846,6 +989,7 @@ export const auditRepository = (repositoryRoot = defaultRepositoryRoot) => {
   }
 
   auditRuntimeImageEvidenceContract(root, errors);
+  auditRuntimeImageInventory(root, errors);
 
   return errors.sort();
 };

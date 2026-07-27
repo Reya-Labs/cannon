@@ -30,7 +30,9 @@ jobs:
       - run: node .github/scripts/audit-workflows.test.mjs
       - run: node .github/scripts/generate-bundle-input-sbom.test.mjs
       - run: node .github/scripts/validate-runtime-image-inventory.test.mjs
-      - run: bash -n .github/scripts/scan-runtime-image.sh .github/scripts/verify-runtime-image.sh
+      - run: node .github/scripts/validate-runtime-image-inventory.mjs .github/runtime-image-inventory.json
+      - run: node .github/scripts/verify-runtime-bundle-input.test.mjs
+      - run: bash -n .github/scripts/generate-expected-runtime-sbom.sh .github/scripts/scan-runtime-image.sh .github/scripts/verify-runtime-image.sh
 
   dependency-review:
     if: github.event_name == 'pull_request'

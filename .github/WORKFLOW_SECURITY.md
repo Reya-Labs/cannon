@@ -59,6 +59,16 @@ The protected runtime inventory starts with every service explicitly inactive. O
 active and rollback entry must name an immutable Reya GHCR digest and its protected-dev source revision. The weekly
 workflow rescans those exact digests and binds each attestation to the runtime's reviewed publisher workflow and the
 same signer/source revision; another same-repository workflow cannot satisfy that gate.
+The inventory is accepted only as canonical unique-key JSON, and its semantic schema is checked directly in the
+workflow-policy job. The same protected inventory can be scanned immediately through the explicit `inventory`
+dispatch mode; it is distinct from the single-candidate mode. Runtime-image concurrency is partitioned by event,
+manual mode and ref, and schedule/manual runs are never cancelled by pushes.
+
+For repo, indexer and API, both current-source and pushed-digest scans independently recreate the frozen,
+non-optional production closure from the exact declared source revision with the digest-locked policy generator.
+The extracted final-image CycloneDX evidence must be byte-identical to that retained expected closure before Grype
+runs. Safe remains the explicit exception: it must have no NCC closure file and its installed packages are scanned
+directly.
 
 The in-repository `workflow-policy` job is advisory: a pull request can replace a required job with a no-op while
 preserving its check name. After merge, PRO-731 must install an organization or enterprise ruleset-required workflow

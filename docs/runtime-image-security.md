@@ -65,13 +65,17 @@ exact source revision:
    without granting the scanner a Docker socket or network access;
 4. requires that whole-image SBOM to contain the exact Node 22.23.1 binary and
    Alpine packages, and requires installed npm packages for the Safe backend;
-5. for the three NCC-bundled services, extracts and validates the embedded
-   CycloneDX inventory of the exact resolved production, non-optional dependency
-   graph supplied to the bundle, and requires exactly one readable inventory at
-   `/usr/app/bundle-input-dependencies.cdx.json` with no alternate-path lookup;
-   the Safe backend must contain no file at that path because its installed
-   `node_modules` are inventoried directly; and
-6. scans both evidence layers with Grype and fails on every HIGH or CRITICAL
+5. for each NCC-bundled service, independently archives the exact declared
+   source revision, performs a frozen, lifecycle-script-free, non-optional
+   production install with the pinned Node and pnpm toolchain, and regenerates
+   the expected CycloneDX dependency closure with the reviewed generator;
+6. extracts the final image's single readable inventory at
+   `/usr/app/bundle-input-dependencies.cdx.json` with no alternate-path lookup
+   and requires byte-for-byte equality, including the SHA-256 digest, with that
+   independently generated source closure before scanning it; the Safe backend
+   must contain no file at that path because its installed `node_modules` are
+   inventoried directly; and
+7. scans both evidence layers with Grype and fails on every HIGH or CRITICAL
    match.
 
 The NCC bundle-input inventory is deliberately conservative. It records the
@@ -81,6 +85,14 @@ point. A match therefore blocks activation pending remediation or explicit
 reachability analysis, but it is not by itself proof of exploitability. The Safe
 backend retains normal `node_modules`, so Syft directly inventories its installed
 runtime packages.
+The expected closure is generated from `git archive <expected revision>`, not
+from a mutable working tree, and the helper refuses a checkout whose `HEAD`
+differs from that revision. For pushed digests the source checkout and trusted
+policy checkout remain separate: the declared image source supplies only the
+archived package graph, while the protected `dev` policy supplies the
+digest-locked generator, equality verifier, scanner, and orchestration. A
+plausible but truncated or reformatted embedded SBOM therefore fails before
+vulnerability matching.
 
 The workflow retains the SBOM and JSON vulnerability report as run-scoped
 evidence, including a machine-readable summary that keeps whole-image and
@@ -109,6 +121,11 @@ independently proposes bounded weekly Docker-base updates for `/docker` and
 `/packages/safe-app-backend`; scanner-image refresh remains an explicit reviewed
 policy change.
 
+Concurrency is partitioned by event, manual mode, and ref. Only pull-request
+and push runs cancel older runs in their own domain. Scheduled and manually
+requested candidate or inventory scans are never cancelled by a push or by one
+another without replacement evidence.
+
 Grype's own compiled defaults exclude four indirect kernel-header match classes
 for RPM and Debian packages. Those defaults are retained in the JSON report and
 do not apply to these Alpine runtimes. Reya adds no vulnerability ID, package,
@@ -129,6 +146,7 @@ immutable digest before activation:
 gh workflow run runtime-image-security.yml \
   --repo Reya-Labs/cannon \
   --ref dev \
+  -f mode=candidate \
   -f runtime=safe-app-backend \
   -f image_ref=ghcr.io/reya-labs/safe-app-backend@sha256:<64-hex-digest> \
   -f expected_revision=<40-hex-source-commit>
@@ -140,6 +158,31 @@ source revision, derives its package version and commit timestamp, and then
 verifies and scans the pulled `linux/amd64` manifest. Manual requests for
 `repo`, `indexer`, or `api` are rejected before registry authentication until
 their approved publishers exist.
+
+To rebuild and scan all four images from the exact protected source selected by
+the workflow, use:
+
+```sh
+gh workflow run runtime-image-security.yml \
+  --repo Reya-Labs/cannon \
+  --ref dev \
+  -f mode=build-current
+```
+
+To resolve and scan the protected active and rollback inventory immediately,
+without waiting for Monday's recurrence, use:
+
+```sh
+gh workflow run runtime-image-security.yml \
+  --repo Reya-Labs/cannon \
+  --ref dev \
+  -f mode=inventory
+```
+
+`inventory` and `candidate` are distinct modes. Inventory mode rejects
+candidate digest and revision inputs and resolves only the checked-in protected
+inventory; candidate mode requires one explicit immutable digest and exact
+source revision.
 
 The repository currently contains a protected publisher only for
 `safe-app-backend`. The retired generic Docker workflow must not be restored.
@@ -204,7 +247,10 @@ No floating production tag is permitted.
 
 `.github/runtime-image-inventory.json` is the canonical scan inventory, not a
 deployment mechanism. Its schema and exact reviewed contents are digest-locked
-by workflow policy. It must name all four runtimes explicitly. An inactive
+by workflow policy. The file must also pass an exact pretty-printed JSON
+round-trip with a trailing newline; this rejects duplicate raw keys such as
+shadowed `status`, `active`, or `rollback` fields before semantic use. It must
+name all four runtimes explicitly. An inactive
 runtime must have `active: null` and no rollback entries. An active runtime must
 have one immutable active digest, one or two accepted immutable rollback
 digests, a 40-character source revision for each image, and a reviewed publisher
@@ -222,7 +268,8 @@ PRO-748 and every later activation must use this order:
 2. pass the manual exact-digest gate for both images;
 3. merge a protected Cannon inventory change recording both accepted digests
    and source revisions;
-4. verify the scheduled-inventory path resolves those exact entries; and
+4. run the on-demand `inventory` mode and verify the same scheduled-inventory
+   path resolves those exact entries; and
 5. only then approve the DevOps digest repin and manual sync.
 
 An activation whose runtime remains `inactive`, whose active digest differs from
