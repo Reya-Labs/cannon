@@ -21,6 +21,7 @@ const runtimeImagePaths = [
   '.github/scripts/generate-bundle-input-sbom.test.mjs',
   '.github/scripts/generate-expected-runtime-sbom.sh',
   '.github/scripts/generate-expected-runtime-sbom.test.mjs',
+  '.github/scripts/runtime-evidence-paths.test.mjs',
   '.github/scripts/scan-runtime-image.sh',
   '.github/scripts/validate-runtime-image-inventory.mjs',
   '.github/scripts/validate-runtime-image-inventory.test.mjs',
@@ -149,7 +150,7 @@ const workflowPolicies = new Map([
 const exactWorkflowDigests = new Map([
   [
     'runtime-image-security.yml',
-    '57e367db71a35cd21a7b8454ce0739611333457e59c1e6b02e1735cc3e0cf9f8',
+    'db4cd9dd977a9333eb2998f091daf9a63749f769e014f322948f68bc3246ee9b',
   ],
 ]);
 
@@ -164,15 +165,19 @@ const exactPolicyFileDigests = new Map([
   ],
   [
     '.github/scripts/generate-expected-runtime-sbom.sh',
-    '97bd18212674ea382830eb155465df6420a499408a724ef6504f9008c5edbbe7',
+    'bc2e476e8af434831a3fcde1409b5bfcfa3cbf754de3228c66a5180001737354',
   ],
   [
     '.github/scripts/generate-expected-runtime-sbom.test.mjs',
-    '8482728fb41722719eba083e7782711f5215021d7e5d208d8c14d7e674b1237b',
+    '5474e47a7c246a76d30de4703e6431e10f62e5c3c77342d8a12b12d991447871',
+  ],
+  [
+    '.github/scripts/runtime-evidence-paths.test.mjs',
+    '4c5dc6ca05445f7334f6b5cac387a621c41649c633ddaf31d445d6023dd9561f',
   ],
   [
     '.github/scripts/scan-runtime-image.sh',
-    '8c035461bbef6eadcafc593e87f2406d525bff2974ce32e3909040d8ef163cae',
+    'fd2f4bf4dcc0d132cd6c749b7d78cd8d2a26fc5b7c26b672a049c37dada314fb',
   ],
   [
     '.github/scripts/validate-runtime-image-inventory.mjs',
@@ -821,10 +826,15 @@ const auditRuntimeImageEvidenceContract = (repositoryRoot, errors) => {
       ) ||
       !scannerSource.includes(
         'cp "$expected_bundle_input_path" "$expected_bundle_sbom"'
-      )
+      ) ||
+      !scannerSource.includes('mkdir -m 0700 "$output_directory"') ||
+      !scannerSource.includes(
+        'require_distinct_outputs "$expected_bundle_sbom" "$bundle_sbom"'
+      ) ||
+      !scannerSource.includes('-L "$requested_expected_bundle_input"')
     ) {
       errors.push(
-        '.github/scripts/scan-runtime-image.sh: NCC evidence must exactly match an independently generated retained source closure before scanning'
+        '.github/scripts/scan-runtime-image.sh: NCC evidence must exactly match an independently generated retained source closure before scanning, using fresh, distinct regular files'
       );
     }
   }
@@ -858,10 +868,17 @@ const auditRuntimeImageEvidenceContract = (repositoryRoot, errors) => {
       ) ||
       !generatorSource.includes(
         '--env "NPM_CONFIG_GLOBALCONFIG=/tmp/pnpm-globalconfig"'
+      ) ||
+      !generatorSource.includes('mkdir -m 0700 "$output_parent"') ||
+      !generatorSource.includes(
+        'if [[ -e "$requested_output_parent" || -L "$requested_output_parent" ]]'
+      ) ||
+      !generatorSource.includes(
+        '"${expected_directory}/bundle-input-dependencies.cdx.json" \\\n  "$output_path"'
       )
     ) {
       errors.push(
-        '.github/scripts/generate-expected-runtime-sbom.sh: expected closure generation must ignore source-controlled pnpm hooks and isolate source-only npm configuration'
+        '.github/scripts/generate-expected-runtime-sbom.sh: expected closure generation must use a fresh output directory, must ignore source-controlled pnpm hooks, and must isolate source-only npm configuration'
       );
     }
   }
@@ -890,6 +907,48 @@ const auditRuntimeImageEvidenceContract = (repositoryRoot, errors) => {
           '.github/workflows/runtime-image-security.yml: concurrency must use unique schedule/manual run IDs and ref-group cancellation only for replaceable pull-request or push runs'
         );
       }
+      const currentSourcePathStep = workflow?.jobs?.[
+        'build-and-scan'
+      ]?.steps?.find(
+        (step) => step?.name === 'Configure isolated evidence paths'
+      );
+      const pushedDigestPathStep = workflow?.jobs?.[
+        'scan-pushed-digest'
+      ]?.steps?.find(
+        (step) => step?.name === 'Configure isolated evidence paths'
+      );
+      const currentSourceUploadStep = workflow?.jobs?.[
+        'build-and-scan'
+      ]?.steps?.find((step) =>
+        step?.uses?.startsWith('actions/upload-artifact@')
+      );
+      const pushedDigestUploadStep = workflow?.jobs?.[
+        'scan-pushed-digest'
+      ]?.steps?.find((step) =>
+        step?.uses?.startsWith('actions/upload-artifact@')
+      );
+      if (
+        !currentSourcePathStep?.run?.includes(
+          'evidence_directory="${RUNNER_TEMP}/cannon-runtime-security-${RUNTIME_KIND}"'
+        ) ||
+        !currentSourcePathStep?.run?.includes(
+          'expected_directory="${RUNNER_TEMP}/cannon-runtime-expected-${RUNTIME_KIND}"'
+        ) ||
+        !pushedDigestPathStep?.run?.includes(
+          'evidence_directory="${RUNNER_TEMP}/cannon-runtime-security-${RUNTIME_KIND}-${RUNTIME_SLOT}"'
+        ) ||
+        !pushedDigestPathStep?.run?.includes(
+          'expected_directory="${RUNNER_TEMP}/cannon-runtime-expected-${RUNTIME_KIND}-${RUNTIME_SLOT}"'
+        ) ||
+        currentSourceUploadStep?.with?.path !==
+          '${{ steps.paths.outputs.evidence_directory }}' ||
+        pushedDigestUploadStep?.with?.path !==
+          '${{ steps.paths.outputs.evidence_directory }}'
+      ) {
+        errors.push(
+          '.github/workflows/runtime-image-security.yml: generated and scanned evidence must stay in fresh runner-temporary directories outside the source checkout'
+        );
+      }
     }
 
     for (const requiredSnippet of [
@@ -908,12 +967,22 @@ const auditRuntimeImageEvidenceContract = (repositoryRoot, errors) => {
         'pushed-digest expected closure must use trusted policy and the exact image source revision',
       ],
       [
-        '"runtime-security-${RUNTIME_KIND}" \\\n' +
+        '.github/scripts/scan-runtime-image.sh \\\n' +
+          '            "$IMAGE_REF" \\\n' +
+          '            "$RUNTIME_KIND" \\\n' +
+          '            "$COMPONENT_NAME" \\\n' +
+          '            "$COMPONENT_VERSION" \\\n' +
+          '            "$EVIDENCE_DIRECTORY" \\\n' +
           '            "$expected_bundle_input"',
         'current-source scan must receive the independent expected closure',
       ],
       [
-        '"runtime-security-${RUNTIME_KIND}-${RUNTIME_SLOT}" \\\n' +
+        'policy/.github/scripts/scan-runtime-image.sh \\\n' +
+          '            "$IMAGE_REF" \\\n' +
+          '            "$RUNTIME_KIND" \\\n' +
+          '            "$component_name" \\\n' +
+          '            "$version" \\\n' +
+          '            "$EVIDENCE_DIRECTORY" \\\n' +
           '            "$expected_bundle_input"',
         'pushed-digest scan must receive the independent expected closure',
       ],
@@ -931,6 +1000,8 @@ const auditRuntimeImageEvidenceContract = (repositoryRoot, errors) => {
 
     for (const requiredEvidenceSeal of [
       'manifest_temp="$(mktemp "${evidence_directory}.SHA256SUMS.XXXXXX")"',
+      'test ! -L "$evidence_directory"',
+      'find "$evidence_directory" \\\n              -mindepth 1',
       'trap cleanup_manifest EXIT',
       'sha256sum --check "$manifest_temp"',
       'mv "$manifest_temp" "$evidence_directory/SHA256SUMS"',
@@ -949,15 +1020,26 @@ const auditRuntimeImageEvidenceContract = (repositoryRoot, errors) => {
     repositoryRoot,
     '.github/workflows/supply-chain.yml'
   );
-  if (
-    existsSync(supplyChainPath) &&
-    !readFileSync(supplyChainPath, 'utf8').includes(
-      'node .github/scripts/generate-expected-runtime-sbom.test.mjs'
-    )
-  ) {
-    errors.push(
-      '.github/workflows/supply-chain.yml: source-controlled pnpm-hook isolation test must remain enforced'
-    );
+  if (existsSync(supplyChainPath)) {
+    const supplyChainSource = readFileSync(supplyChainPath, 'utf8');
+    if (
+      !supplyChainSource.includes(
+        'node .github/scripts/generate-expected-runtime-sbom.test.mjs'
+      )
+    ) {
+      errors.push(
+        '.github/workflows/supply-chain.yml: source-controlled pnpm-hook isolation test must remain enforced'
+      );
+    }
+    if (
+      !supplyChainSource.includes(
+        'node .github/scripts/runtime-evidence-paths.test.mjs'
+      )
+    ) {
+      errors.push(
+        '.github/workflows/supply-chain.yml: runtime evidence path isolation test must remain enforced'
+      );
+    }
   }
 };
 

@@ -110,10 +110,19 @@ try {
   );
   writeFileSync(
     join(fixtureRoot, '.npmrc'),
-    ['ignore-pnpmfile=false', 'ignore-scripts=false', 'optional=true', ''].join(
-      '\n'
-    )
+    ['ignore-scripts=false', 'optional=true', ''].join('\n')
   );
+  assert.equal(
+    runPnpm(['config', 'get', 'ignore-pnpmfile']).trim(),
+    'false',
+    'the workspace fixture must attempt to disable pnpmfile isolation'
+  );
+  assert.equal(
+    existsSync(hookMarker),
+    true,
+    'an unisolated pnpm command must prove the adversarial hook is effective'
+  );
+  rmSync(hookMarker);
 
   runPnpm([
     '--filter',

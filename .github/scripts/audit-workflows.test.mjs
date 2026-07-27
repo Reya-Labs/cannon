@@ -148,6 +148,7 @@ assert.deepEqual(
   const runtimePaths = [
     '.github/scripts/generate-expected-runtime-sbom.sh',
     '.github/scripts/generate-expected-runtime-sbom.test.mjs',
+    '.github/scripts/runtime-evidence-paths.test.mjs',
     '.github/scripts/verify-runtime-bundle-input.mjs',
     '.github/scripts/verify-runtime-bundle-input.test.mjs',
   ];
@@ -675,6 +676,50 @@ assertRejected(
 );
 
 assertRejected(
+  'runtime evidence path adversarial test removed',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/supply-chain.yml'),
+      '      - run: node .github/scripts/runtime-evidence-paths.test.mjs\n',
+      ''
+    ),
+  'runtime evidence path isolation test must remain enforced'
+);
+
+assertRejected(
+  'runtime scanner reuses an attacker-controlled output directory',
+  (root) =>
+    replace(
+      join(root, '.github/scripts/scan-runtime-image.sh'),
+      'mkdir -m 0700 "$output_directory"',
+      'mkdir -p "$output_directory"'
+    ),
+  'fresh, distinct regular files'
+);
+
+assertRejected(
+  'runtime scanner drops pairwise output identity checks',
+  (root) =>
+    replace(
+      join(root, '.github/scripts/scan-runtime-image.sh'),
+      'require_distinct_outputs "$expected_bundle_sbom" "$bundle_sbom"',
+      'require_regular_output "$bundle_sbom"'
+    ),
+  'fresh, distinct regular files'
+);
+
+assertRejected(
+  'runtime expected closure reuses an attacker-controlled output directory',
+  (root) =>
+    replace(
+      join(root, '.github/scripts/generate-expected-runtime-sbom.sh'),
+      'mkdir -m 0700 "$output_parent"',
+      'mkdir -p "$output_parent"'
+    ),
+  'expected closure generation must use a fresh output directory'
+);
+
+assertRejected(
   'runtime expected closure retains source-only npm configuration',
   (root) =>
     replace(
@@ -712,11 +757,22 @@ assertRejected(
   (root) =>
     replace(
       join(root, '.github/workflows/runtime-image-security.yml'),
-      '"runtime-security-${RUNTIME_KIND}" \\\n' +
+      '            "$EVIDENCE_DIRECTORY" \\\n' +
         '            "$expected_bundle_input"',
-      '"runtime-security-${RUNTIME_KIND}" \\\n' + '            absent'
+      '            "$EVIDENCE_DIRECTORY" \\\n' + '            absent'
     ),
   'current-source scan must receive the independent expected closure'
+);
+
+assertRejected(
+  'current-source evidence is written inside the untrusted checkout',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-image-security.yml'),
+      'evidence_directory="${RUNNER_TEMP}/cannon-runtime-security-${RUNTIME_KIND}"',
+      'evidence_directory="runtime-security-${RUNTIME_KIND}"'
+    ),
+  'evidence must stay in fresh runner-temporary directories outside the source checkout'
 );
 
 assertRejected(

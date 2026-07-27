@@ -34,6 +34,7 @@ jobs:
       - run: node .github/scripts/audit-workflows.test.mjs
       - run: node .github/scripts/generate-bundle-input-sbom.test.mjs
       - run: node .github/scripts/generate-expected-runtime-sbom.test.mjs
+      - run: node .github/scripts/runtime-evidence-paths.test.mjs
       - run: node .github/scripts/validate-runtime-image-inventory.test.mjs
       - run: node .github/scripts/validate-runtime-image-inventory.mjs .github/runtime-image-inventory.json
       - run: node .github/scripts/verify-runtime-bundle-input.test.mjs

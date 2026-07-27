@@ -35,12 +35,54 @@ if [[ "$(git -C "$source_directory" rev-parse HEAD)" != "$expected_revision" ]];
   exit 1
 fi
 
-output_parent=$(dirname "$requested_output")
-mkdir -p "$output_parent"
-output_parent=$(cd "$output_parent" && pwd -P)
+if [[ "$requested_output" == /* ]]; then
+  normalized_requested_output=$requested_output
+else
+  normalized_requested_output="$(pwd -P)/${requested_output}"
+fi
+readonly normalized_requested_output
+requested_output_parent=$(dirname "$normalized_requested_output")
+readonly requested_output_parent
+requested_output_name=$(basename "$requested_output")
+readonly requested_output_name
+requested_output_parent_parent=$(dirname "$requested_output_parent")
+readonly requested_output_parent_parent
+requested_output_parent_name=$(basename "$requested_output_parent")
+readonly requested_output_parent_name
+
+if [[ "$requested_output_name" == '.' || "$requested_output_name" == '..' ||
+  "$requested_output_parent_name" == '.' ||
+  "$requested_output_parent_name" == '..' ]]; then
+  echo "expected bundle-input output must name a file in a dedicated directory" >&2
+  exit 2
+fi
+if [[ ! -d "$requested_output_parent_parent" ||
+  -L "$requested_output_parent_parent" ]]; then
+  echo "expected bundle-input output parent must be an existing, non-symlink directory" >&2
+  exit 2
+fi
+if [[ -e "$requested_output_parent" || -L "$requested_output_parent" ]]; then
+  echo "expected bundle-input output directory must not already exist" >&2
+  exit 2
+fi
+
+output_parent_parent=$(
+  cd "$requested_output_parent_parent" && pwd -P
+)
+readonly output_parent_parent
+output_parent="${output_parent_parent}/${requested_output_parent_name}"
 readonly output_parent
-output_path="${output_parent}/$(basename "$requested_output")"
+mkdir -m 0700 "$output_parent"
+if [[ ! -d "$output_parent" || -L "$output_parent" ]]; then
+  echo "expected bundle-input output directory was not created safely" >&2
+  exit 2
+fi
+output_path="${output_parent}/${requested_output_name}"
 readonly output_path
+if [[ -e "$output_path" || -L "$output_path" ]]; then
+  echo "expected bundle-input output file must not already exist" >&2
+  exit 2
+fi
 
 policy_directory=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 readonly policy_directory
@@ -141,10 +183,14 @@ docker run --rm \
   '
 
 test -s "${expected_directory}/bundle-input-dependencies.cdx.json"
-install \
-  -m 0444 \
+chmod 0444 "${expected_directory}/bundle-input-dependencies.cdx.json"
+ln \
   "${expected_directory}/bundle-input-dependencies.cdx.json" \
   "$output_path"
+if [[ ! -f "$output_path" || -L "$output_path" ]]; then
+  echo "expected bundle-input output must be a non-symlink regular file" >&2
+  exit 2
+fi
 output_digest=$(
   node "$bundle_input_verifier" "$output_path" "$output_path"
 )

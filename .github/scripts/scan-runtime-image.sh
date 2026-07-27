@@ -39,8 +39,34 @@ case "$runtime_kind" in
     ;;
 esac
 
-mkdir -p "$requested_output_directory"
-output_directory=$(cd "$requested_output_directory" && pwd -P)
+if [[ "$requested_output_directory" == /* ]]; then
+  normalized_requested_output_directory=$requested_output_directory
+else
+  normalized_requested_output_directory="$(pwd -P)/${requested_output_directory}"
+fi
+readonly normalized_requested_output_directory
+requested_output_parent=$(dirname "$normalized_requested_output_directory")
+readonly requested_output_parent
+requested_output_name=$(basename "$normalized_requested_output_directory")
+readonly requested_output_name
+if [[ "$requested_output_name" == '.' || "$requested_output_name" == '..' ||
+  ! -d "$requested_output_parent" || -L "$requested_output_parent" ]]; then
+  echo "runtime scan output must name a fresh directory under an existing, non-symlink parent" >&2
+  exit 2
+fi
+if [[ -e "$normalized_requested_output_directory" ||
+  -L "$normalized_requested_output_directory" ]]; then
+  echo "runtime scan output directory must not already exist" >&2
+  exit 2
+fi
+output_parent=$(cd "$requested_output_parent" && pwd -P)
+readonly output_parent
+output_directory="${output_parent}/${requested_output_name}"
+mkdir -m 0700 "$output_directory"
+if [[ ! -d "$output_directory" || -L "$output_directory" ]]; then
+  echo "runtime scan output directory was not created safely" >&2
+  exit 2
+fi
 scan_directory=$(mktemp -d "${output_directory}/.runtime-scan.XXXXXX")
 container_id=
 
@@ -58,6 +84,43 @@ readonly expected_bundle_sbom="${output_directory}/expected-bundle-input-${runti
 readonly image_report="${output_directory}/grype-image-${runtime_kind}.json"
 readonly bundle_report="${output_directory}/grype-bundle-input-${runtime_kind}.json"
 readonly summary="${output_directory}/scan-summary-${runtime_kind}.json"
+
+for reserved_output in \
+  "$image_sbom" \
+  "$bundle_sbom" \
+  "$expected_bundle_sbom" \
+  "$image_report" \
+  "$bundle_report" \
+  "$summary"; do
+  if [[ -e "$reserved_output" || -L "$reserved_output" ]]; then
+    echo "runtime scan destination must not already exist: $reserved_output" >&2
+    exit 2
+  fi
+done
+unset reserved_output
+
+require_regular_output() {
+  local output_path=$1
+  if [[ ! -f "$output_path" || -L "$output_path" ]]; then
+    echo "runtime scan output must be a non-symlink regular file: $output_path" >&2
+    exit 2
+  fi
+}
+
+require_distinct_outputs() {
+  local -a output_paths=("$@")
+  local left
+  local right
+  for ((left = 0; left < ${#output_paths[@]}; left++)); do
+    require_regular_output "${output_paths[left]}"
+    for ((right = left + 1; right < ${#output_paths[@]}; right++)); do
+      if [[ "${output_paths[left]}" -ef "${output_paths[right]}" ]]; then
+        echo "runtime scan outputs must refer to distinct files" >&2
+        exit 2
+      fi
+    done
+  done
+}
 
 printf 'check-for-app-update: false\n' > "${scan_directory}/syft-config.yaml"
 printf 'check-for-app-update: false\n' > "${scan_directory}/grype-update-config.yaml"
@@ -82,6 +145,7 @@ docker run --rm \
   --config /scan/syft-config.yaml \
   "docker-archive:/scan/image.tar" \
   --output spdx-json > "$image_sbom"
+require_regular_output "$image_sbom"
 
 jq -e '
   .spdxVersion == "SPDX-2.3" and
@@ -144,8 +208,11 @@ else
     echo "NCC runtimes require an independently generated bundle-input SBOM" >&2
     exit 2
   fi
-  if [[ ! -f "$requested_expected_bundle_input" || ! -r "$requested_expected_bundle_input" || ! -s "$requested_expected_bundle_input" ]]; then
-    echo "expected bundle-input SBOM must be a readable, non-empty regular file" >&2
+  if [[ ! -f "$requested_expected_bundle_input" ||
+    -L "$requested_expected_bundle_input" ||
+    ! -r "$requested_expected_bundle_input" ||
+    ! -s "$requested_expected_bundle_input" ]]; then
+    echo "expected bundle-input SBOM must be a readable, non-empty, non-symlink regular file" >&2
     exit 2
   fi
   expected_bundle_input_parent=$(
@@ -155,11 +222,13 @@ else
   expected_bundle_input_path="${expected_bundle_input_parent}/$(basename "$requested_expected_bundle_input")"
   readonly expected_bundle_input_path
   cp "$expected_bundle_input_path" "$expected_bundle_sbom"
+  require_regular_output "$expected_bundle_sbom"
 
   container_id=$(docker create "$image_ref")
   docker cp \
     "${container_id}:/usr/app/bundle-input-dependencies.cdx.json" \
     "$bundle_sbom"
+  require_distinct_outputs "$expected_bundle_sbom" "$bundle_sbom"
   docker rm "$container_id" >/dev/null
   container_id=
 
@@ -234,8 +303,15 @@ scan_sbom() {
 }
 
 scan_sbom "$image_sbom" "$image_report"
+require_distinct_outputs "$image_sbom" "$image_report"
 if [[ "$runtime_kind" != 'safe-app-backend' ]]; then
   scan_sbom "$bundle_sbom" "$bundle_report"
+  require_distinct_outputs \
+    "$image_sbom" \
+    "$expected_bundle_sbom" \
+    "$bundle_sbom" \
+    "$image_report" \
+    "$bundle_report"
 fi
 
 jq -e '
@@ -337,6 +413,17 @@ jq -n \
       interpretation: "Conservative production dependency input to the NCC bundle; a match is not proof that the vulnerable code path is reachable."
     }
   }' > "$summary"
+if [[ "$runtime_kind" == 'safe-app-backend' ]]; then
+  require_distinct_outputs "$image_sbom" "$image_report" "$summary"
+else
+  require_distinct_outputs \
+    "$image_sbom" \
+    "$expected_bundle_sbom" \
+    "$bundle_sbom" \
+    "$image_report" \
+    "$bundle_report" \
+    "$summary"
+fi
 
 cat "$summary"
 
