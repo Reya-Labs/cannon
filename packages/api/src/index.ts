@@ -11,6 +11,10 @@ type StartServerDependencies = {
   disconnectRedis?: () => Promise<void>;
 };
 
+function throwCombinedErrors(primaryError: unknown, cleanupError: unknown, message: string): never {
+  throw new AggregateError([primaryError, cleanupError], message);
+}
+
 export async function startServer(
   dependencies: StartServerDependencies = {}
 ): Promise<{ close: () => Promise<void>; server: Server }> {
@@ -35,9 +39,13 @@ export async function startServer(
         resolve();
       });
     });
-  } catch (error) {
-    await disconnectRedis();
-    throw error;
+  } catch (listenError) {
+    try {
+      await disconnectRedis();
+    } catch (disconnectError) {
+      throwCombinedErrors(listenError, disconnectError, 'query API startup and Redis cleanup both failed');
+    }
+    throw listenError;
   }
 
   // eslint-disable-next-line no-console
@@ -54,6 +62,7 @@ export async function startServer(
     close: async () => {
       if (closed) return;
       closed = true;
+      let closeError: unknown;
       try {
         await new Promise<void>((resolve, reject) => {
           const forceClose = setTimeout(() => server.closeAllConnections(), 5_000);
@@ -64,9 +73,20 @@ export async function startServer(
           });
           server.closeIdleConnections();
         });
-      } finally {
-        await disconnectRedis();
+      } catch (error) {
+        closeError = error;
       }
+
+      try {
+        await disconnectRedis();
+      } catch (disconnectError) {
+        if (closeError !== undefined) {
+          throwCombinedErrors(closeError, disconnectError, 'query API server and Redis shutdown both failed');
+        }
+        throw disconnectError;
+      }
+
+      if (closeError !== undefined) throw closeError;
     },
     server,
   };

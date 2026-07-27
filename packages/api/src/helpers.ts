@@ -3,7 +3,7 @@ import { BadRequestError, ServerError } from './errors';
 import { ApiDocumentType, RedisPackage, RedisTag } from './types';
 
 const packageNameRegex = /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]$/;
-export function isPackageName(packageName: unknown) {
+export function isPackageName(packageName: unknown): packageName is string {
   return typeof packageName === 'string' && packageNameRegex.test(packageName);
 }
 
@@ -26,7 +26,7 @@ export function isPartialPackageRef(packageName: unknown) {
 }
 
 const fullPackageRefRegex = /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]:[^@]+@[^\s]+$/;
-export function isFullPackageRef(fullPackageRef: unknown) {
+export function isFullPackageRef(fullPackageRef: unknown): fullPackageRef is string {
   return (
     typeof fullPackageRef === 'string' &&
     fullPackageRef.length <= MAX_PACKAGE_REF_LENGTH &&
@@ -45,7 +45,7 @@ export function isFunctionSelector(selector: unknown) {
 }
 
 const chainIdRegex = /^[1-9][0-9]*$/;
-export function isChainId(chainId: unknown) {
+export function isChainId(chainId: unknown): chainId is string {
   if (typeof chainId !== 'string' || !chainIdRegex.test(chainId)) return false;
   const parsed = Number.parseInt(chainId, 10);
   return Number.isSafeInteger(parsed) && parsed > 0;

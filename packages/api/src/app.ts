@@ -103,7 +103,6 @@ export function createApp({ checkReadiness, config, now = Date.now }: AppDepende
       limit: 100,
       standardHeaders: 'draft-7',
       legacyHeaders: false,
-      validate: { trustProxy: config.TRUST_PROXY === false },
     })
   );
 

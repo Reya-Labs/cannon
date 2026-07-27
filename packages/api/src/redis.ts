@@ -25,26 +25,77 @@ client.on('error', (error) => {
   console.error('Redis connection error', errorIdentity(error));
 });
 
-let connection: Promise<void> | undefined;
+type RedisLifecycleClient = {
+  readonly isOpen: boolean;
+  readonly isReady: boolean;
+  connect: () => Promise<unknown>;
+  disconnect: () => Promise<unknown>;
+  off: (event: 'end' | 'ready', listener: () => void) => unknown;
+  once: (event: 'end' | 'ready', listener: () => void) => unknown;
+};
+
+function waitForRedisReady(redis: RedisLifecycleClient): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      redis.off('ready', onReady);
+      redis.off('end', onEnd);
+    };
+    const onReady = () => {
+      cleanup();
+      resolve();
+    };
+    const onEnd = () => {
+      cleanup();
+      reject(new ServiceUnavailableError('Redis connection closed before becoming ready'));
+    };
+
+    redis.once('ready', onReady);
+    redis.once('end', onEnd);
+    if (redis.isReady) onReady();
+    else if (!redis.isOpen) onEnd();
+  });
+}
+
+export function createRedisLifecycle(redis: RedisLifecycleClient) {
+  let connection: Promise<void> | undefined;
+
+  const establishConnection = async () => {
+    if (!redis.isOpen) await redis.connect();
+    if (!redis.isReady) await waitForRedisReady(redis);
+  };
+
+  const connect = async (): Promise<void> => {
+    if (redis.isReady) return;
+    if (!connection) {
+      const attempt = establishConnection();
+      connection = attempt;
+      const clearAttempt = () => {
+        if (connection === attempt) connection = undefined;
+      };
+      void attempt.then(clearAttempt, clearAttempt);
+    }
+    await connection;
+  };
+
+  const disconnect = async (): Promise<void> => {
+    try {
+      if (redis.isOpen) await redis.disconnect();
+    } finally {
+      connection = undefined;
+    }
+  };
+
+  return { connect, disconnect };
+}
+
+const lifecycle = createRedisLifecycle(client);
 
 export async function connectRedis(): Promise<void> {
-  if (client.isReady) return;
-  if (!connection) {
-    connection = client.connect().then(() => undefined);
-  }
-  try {
-    await connection;
-  } finally {
-    if (!client.isReady) connection = undefined;
-  }
+  await lifecycle.connect();
 }
 
 export async function disconnectRedis(): Promise<void> {
-  try {
-    if (client.isOpen) await client.disconnect();
-  } finally {
-    connection = undefined;
-  }
+  await lifecycle.disconnect();
 }
 
 type ReadinessClient = {

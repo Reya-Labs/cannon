@@ -160,7 +160,13 @@ export function createPartialPackageRefQuery(
     const tags = results.filter((doc) => doc.type === 'tag').slice(0, MAX_CHAIN_RESULTS) as RedisTag[];
     const tagsBatch = redis.multi();
     for (const tag of tags) {
-      const { fullPackageRef } = PackageReference.from(tag.name, tag.versionOfTag, tag.preset);
+      let fullPackageRef: string;
+      try {
+        fullPackageRef = PackageReference.from(tag.name, tag.versionOfTag, tag.preset).fullPackageRef;
+      } catch {
+        warnMalformedDocument('tag');
+        continue;
+      }
       tagsBatch.hGetAll(`${keys.RKEY_PACKAGE_SEARCHABLE}:${fullPackageRef}#${tag.chainId}`);
     }
 

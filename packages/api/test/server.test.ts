@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-floating-promises -- node:test registration is intentionally synchronous. */
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { describe, it } from 'node:test';
 import type { ApiConfig } from '../src/config';
 import { ServiceUnavailableError } from '../src/errors';
@@ -60,5 +61,61 @@ describe('query API server lifecycle', () => {
     }
 
     assert.equal(disconnectCalls, 1);
+  });
+
+  it('reports both socket-close and Redis-disconnect failures', async () => {
+    const disconnectError = new Error('Redis disconnect failed');
+    const runtime = await startServer({
+      config: config(),
+      connectRedis: async () => undefined,
+      disconnectRedis: async () => {
+        throw disconnectError;
+      },
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      runtime.server.close((error) => (error ? reject(error) : resolve()));
+    });
+
+    await assert.rejects(runtime.close(), (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.message, 'query API server and Redis shutdown both failed');
+      assert.equal(error.errors.length, 2);
+      assert.equal((error.errors[0] as { code?: unknown }).code, 'ERR_SERVER_NOT_RUNNING');
+      assert.equal(error.errors[1], disconnectError);
+      return true;
+    });
+  });
+
+  it('reports both listen and Redis-cleanup failures', async () => {
+    const blockingServer = createServer();
+    await new Promise<void>((resolve) => blockingServer.listen(0, resolve));
+    const address = blockingServer.address();
+    assert.ok(address && typeof address !== 'string');
+    const disconnectError = new Error('Redis cleanup failed');
+
+    try {
+      await assert.rejects(
+        startServer({
+          config: config({ PORT: address.port }),
+          connectRedis: async () => undefined,
+          disconnectRedis: async () => {
+            throw disconnectError;
+          },
+        }),
+        (error: unknown) => {
+          assert.ok(error instanceof AggregateError);
+          assert.equal(error.message, 'query API startup and Redis cleanup both failed');
+          assert.equal(error.errors.length, 2);
+          assert.equal((error.errors[0] as { code?: unknown }).code, 'EADDRINUSE');
+          assert.equal(error.errors[1], disconnectError);
+          return true;
+        }
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        blockingServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
   });
 });

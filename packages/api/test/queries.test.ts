@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-floating-promises -- node:test registration is intentionally synchronous. */
+/* eslint-disable @typescript-eslint/no-floating-promises, no-console -- test registration and log interception are intentional. */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { AggregateSteps, type RedisClientType } from 'redis';
@@ -132,5 +132,77 @@ describe('bounded aggregate query factories', () => {
     await queryPartialPackageRef({ packageRef: 'package:latest' });
 
     assert.deepEqual(fanouts, [MAX_CHAIN_RESULTS, MAX_CHAIN_RESULTS]);
+  });
+
+  it('skips malformed tags without discarding valid tag resolutions', async () => {
+    let batchNumber = 0;
+    const fanouts: number[] = [];
+    const redis = {
+      multi: () => {
+        const keys: string[] = [];
+        return {
+          exec: async () => {
+            fanouts.push(keys.length);
+            batchNumber += 1;
+            if (batchNumber === 1) {
+              return [
+                {
+                  chainId: '1',
+                  name: 'valid-package',
+                  preset: 'main',
+                  tag: 'latest',
+                  timestamp: '1',
+                  type: 'tag',
+                  versionOfTag: '1.0.0',
+                },
+                {
+                  chainId: '2',
+                  name: '!',
+                  preset: 'main',
+                  tag: 'latest',
+                  timestamp: '1',
+                  type: 'tag',
+                  versionOfTag: '1.0.0',
+                },
+              ];
+            }
+            return [
+              {
+                chainId: '1',
+                deployUrl: 'ipfs://deploy',
+                metaUrl: 'ipfs://meta',
+                name: 'valid-package',
+                owner: '0x0000000000000000000000000000000000000001',
+                preset: 'main',
+                timestamp: '1',
+                type: 'package',
+                version: '1.0.0',
+              },
+            ];
+          },
+          hGetAll: (key: string) => {
+            keys.push(key);
+          },
+        };
+      },
+    } as unknown as RedisClientType;
+    const warnings: unknown[][] = [];
+    const originalConsoleWarn = console.warn;
+    console.warn = (...values: unknown[]) => warnings.push(values);
+
+    try {
+      const queryPartialPackageRef = createPartialPackageRefQuery(
+        async () => redis,
+        async () => [1, 2]
+      );
+      const result = await queryPartialPackageRef({ packageRef: 'valid-package:latest' });
+
+      assert.equal(result.total, 1);
+      assert.equal(result.data[0]?.name, 'valid-package');
+      assert.deepEqual(fanouts, [2, 1]);
+      assert.deepEqual(warnings, [['query API skipped malformed Redis document', { kind: 'tag' }]]);
+    } finally {
+      console.warn = originalConsoleWarn;
+    }
   });
 });
