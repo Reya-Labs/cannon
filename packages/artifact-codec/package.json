@@ -9,7 +9,7 @@
     "dist"
   ],
   "scripts": {
-    "test": "vitest run",
+    "test": "pnpm run build && node --test scripts/index.test.mjs",
     "test:browser-bundle": "node scripts/verify-browser-bundle.mjs",
     "test:kubo-oracle": "pnpm run build && node scripts/verify-kubo-oracle.mjs",
     "build": "pnpm run clean && tsc -p tsconfig.json && rollup -c && rm -rf ./.build",
@@ -42,8 +42,7 @@
     "@types/node": "22.14.0",
     "@types/pako": "2.0.3",
     "rollup": "npm:@rollup/wasm-node@4.39.0",
-    "typestub-ipfs-only-hash": "4.0.0",
-    "vitest": "2.1.8"
+    "typestub-ipfs-only-hash": "4.0.0"
   },
   "engines": {
     "node": ">=20.0.0"

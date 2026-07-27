@@ -1,5 +1,6 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
 import LegacyHash from 'typestub-ipfs-only-hash';
-import { describe, expect, it } from 'vitest';
 import {
   compress,
   extractValidCid,
@@ -9,17 +10,9 @@ import {
   getIpfsUrl,
   parseIpfsCid,
   uncompress,
-} from './index';
+} from '../dist/index.js';
 
-type CidVector = {
-  name: string;
-  size: number;
-  seed?: number;
-  bytes?: Uint8Array;
-  cid: string;
-};
-
-function deterministicBytes(length: number, seed: number): Uint8Array {
+function deterministicBytes(length, seed) {
   const bytes = new Uint8Array(length);
   let state = seed >>> 0;
 
@@ -33,7 +26,7 @@ function deterministicBytes(length: number, seed: number): Uint8Array {
   return bytes;
 }
 
-const KUBO_VECTORS: CidVector[] = [
+const KUBO_VECTORS = [
   {
     name: 'empty',
     size: 0,
@@ -115,70 +108,84 @@ const RANDOM_CORPUS = [
   [153_844, 953_165_028, 'QmaS7hHHeLuSHxJDfQrJsBzRwELmiqqwMn2jxHBWeUtvWF'],
   [53_508, 3_912_969_453, 'QmQEaUHypVN69MGY2iW4YWQt1sZcc4HGrhPYrL3PiJsurD'],
   [4_183, 4_159_379_323, 'QmSLyJHXkyNELUvQK69yJN3j9TfetCNAifC7y33iW7Wuhu'],
-] as const;
+];
 
-describe('getContentCID', () => {
-  it.each(KUBO_VECTORS)('matches the Kubo CIDv0 fixture for $name', async ({ size, seed, bytes, cid }) => {
-    const content = bytes ?? deterministicBytes(size, seed!);
-
-    await expect(getContentCID(content)).resolves.toBe(cid);
-    await expect(LegacyHash.of(content)).resolves.toBe(cid);
+for (const { name, size, seed, bytes, cid } of KUBO_VECTORS) {
+  test(`getContentCID matches the Kubo CIDv0 fixture for ${name}`, async () => {
+    const content = bytes ?? deterministicBytes(size, seed);
+    assert.equal(await getContentCID(content), cid);
+    assert.equal(await LegacyHash.of(content), cid);
   });
+}
 
-  it('matches the legacy implementation over a deterministic random corpus', async () => {
-    for (const [size, seed, expectedCid] of RANDOM_CORPUS) {
-      const content = deterministicBytes(size, seed);
-      const [actualCid, legacyCid] = await Promise.all([getContentCID(content), LegacyHash.of(content)]);
+test('getContentCID matches the legacy implementation over a deterministic random corpus', async () => {
+  for (const [size, seed, expectedCid] of RANDOM_CORPUS) {
+    const content = deterministicBytes(size, seed);
+    const [actualCid, legacyCid] = await Promise.all([
+      getContentCID(content),
+      LegacyHash.of(content),
+    ]);
 
-      expect(actualCid).toBe(expectedCid);
-      expect(actualCid).toBe(legacyCid);
-    }
-  });
-
-  it('is deterministic for equal bytes', async () => {
-    const first = deterministicBytes(524_321, 0x7430d00d);
-    const second = first.slice();
-
-    await expect(getContentCID(first)).resolves.toBe(await getContentCID(second));
-  });
-
-  it.each([
-    ['multibyte Unicode', 'Cannon CID 🚀 — こんにちは', 'QmZ2e7ad1h24r4jpKtV9BCDFEuig9BgpMqkfuGywboXdcs'],
-    ['a lone surrogate', '\ud800', 'QmTFs8cxGDXJL7FqWKfAbveU3KQQMPgf3TFwuVdQmVPTv8'],
-  ])('preserves legacy string encoding for %s', async (_, value, expectedCid) => {
-    await expect(getContentCID(value)).resolves.toBe(expectedCid);
-    await expect(LegacyHash.of(value)).resolves.toBe(expectedCid);
-  });
+    assert.equal(actualCid, expectedCid);
+    assert.equal(actualCid, legacyCid);
+  }
 });
 
-describe('artifact encoding compatibility', () => {
-  it('round trips compressed JSON bytes', () => {
-    const source = JSON.stringify({ cannon: true, nested: { value: 'artifact' } });
-    expect(uncompress(compress(source))).toBe(source);
-  });
-
-  it('returns the legacy content URL shape', async () => {
-    await expect(getContentUrl({ hello: 'world' })).resolves.toMatch(/^ipfs:\/\/Qm[1-9A-HJ-NP-Za-km-z]{44}$/);
-    await expect(getContentUrl(undefined)).resolves.toBeNull();
-  });
+test('getContentCID is deterministic for equal bytes', async () => {
+  const first = deterministicBytes(524_321, 0x7430d00d);
+  assert.equal(await getContentCID(first), await getContentCID(first.slice()));
 });
 
-describe('CID parsing compatibility', () => {
+for (const [name, value, expectedCid] of [
+  [
+    'multibyte Unicode',
+    'Cannon CID 🚀 — こんにちは',
+    'QmZ2e7ad1h24r4jpKtV9BCDFEuig9BgpMqkfuGywboXdcs',
+  ],
+  [
+    'a lone surrogate',
+    '\ud800',
+    'QmTFs8cxGDXJL7FqWKfAbveU3KQQMPgf3TFwuVdQmVPTv8',
+  ],
+]) {
+  test(`getContentCID preserves legacy string encoding for ${name}`, async () => {
+    assert.equal(await getContentCID(value), expectedCid);
+    assert.equal(await LegacyHash.of(value), expectedCid);
+  });
+}
+
+test('artifact encoding round trips compressed JSON bytes', () => {
+  const source = JSON.stringify({
+    cannon: true,
+    nested: { value: 'artifact' },
+  });
+  assert.equal(uncompress(compress(source)), source);
+});
+
+test('artifact encoding returns the legacy content URL shape', async () => {
+  assert.match(
+    await getContentUrl({ hello: 'world' }),
+    /^ipfs:\/\/Qm[1-9A-HJ-NP-Za-km-z]{44}$/
+  );
+  assert.equal(await getContentUrl(undefined), null);
+});
+
+test('CID parsing preserves strict and URL-prefixed parsing', () => {
   const cid = 'QmbFMke1KXqnYyBBWxB74N4c5SBnJMVAiMNRcGu6x1AwQH';
+  assert.equal(parseIpfsCid(cid), cid);
+  assert.equal(parseIpfsCid(`ipfs://${cid}`), null);
+  assert.equal(getIpfsCid(cid), cid);
+  assert.equal(getIpfsCid(`ipfs://${cid}`), cid);
+  assert.equal(getIpfsUrl(cid), `ipfs://${cid}`);
+  assert.equal(extractValidCid(cid), cid);
+});
 
-  it('preserves strict and URL-prefixed parsing', () => {
-    expect(parseIpfsCid(cid)).toBe(cid);
-    expect(parseIpfsCid(`ipfs://${cid}`)).toBeNull();
-    expect(getIpfsCid(cid)).toBe(cid);
-    expect(getIpfsCid(`ipfs://${cid}`)).toBe(cid);
-    expect(getIpfsUrl(cid)).toBe(`ipfs://${cid}`);
-    expect(extractValidCid(cid)).toBe(cid);
-  });
-
-  it('rejects malformed inputs without changing error compatibility', () => {
-    expect(parseIpfsCid(null)).toBeNull();
-    expect(getIpfsCid('not-a-cid')).toBeNull();
-    expect(getIpfsUrl('not-a-cid')).toBeNull();
-    expect(() => extractValidCid('not-a-cid')).toThrow('Invalid CID not-a-cid');
-  });
+test('CID parsing rejects malformed inputs without changing error compatibility', () => {
+  assert.equal(parseIpfsCid(null), null);
+  assert.equal(getIpfsCid('not-a-cid'), null);
+  assert.equal(getIpfsUrl('not-a-cid'), null);
+  assert.throws(
+    () => extractValidCid('not-a-cid'),
+    new Error('Invalid CID not-a-cid')
+  );
 });
