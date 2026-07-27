@@ -61,7 +61,7 @@ describe('bounded aggregate query factories', () => {
         { documents: [], total: 0 },
         {
           results: Array.from({ length: MAX_NAMESPACE_RESULTS + 20 }, (_, index) => ({
-            count: index + 1,
+            count: String(index + 1),
             name: `namespace-${index}`,
           })),
           total: MAX_NAMESPACE_RESULTS + 20,
@@ -81,8 +81,51 @@ describe('bounded aggregate query factories', () => {
     const result = await queryPackages({ includeNamespaces: true, limit: 500, query: '*' });
 
     assert.equal(result.data.length, MAX_NAMESPACE_RESULTS);
+    assert.equal(result.data[0]?.type, 'namespace');
+    assert.equal(result.data[0]?.count, 1);
+    assert.equal(typeof result.data[0]?.count, 'number');
     const limit = aggregateOptions?.STEPS?.find((step) => step.type === AggregateSteps.LIMIT);
     assert.deepEqual(limit, { type: AggregateSteps.LIMIT, from: 0, size: MAX_NAMESPACE_RESULTS });
+  });
+
+  it('skips namespace groups whose Redis COUNT cannot satisfy the numeric API contract', async () => {
+    const batch = {
+      exec: async () => [
+        { documents: [], total: 0 },
+        {
+          results: [
+            { count: '2', name: 'valid' },
+            { count: '0', name: 'zero' },
+            { count: '-1', name: 'negative' },
+            { count: '1.5', name: 'fractional' },
+            { count: String(Number.MAX_SAFE_INTEGER + 1), name: 'unsafe' },
+            { count: Buffer.from('3'), name: 'buffer' },
+          ],
+          total: 6,
+        },
+      ],
+      ft: {
+        aggregate: () => batch,
+        search: () => batch,
+      },
+    };
+    const redis = { multi: () => batch } as unknown as RedisClientType;
+    const warnings: unknown[][] = [];
+    const originalConsoleWarn = console.warn;
+    console.warn = (...values: unknown[]) => warnings.push(values);
+
+    try {
+      const queryPackages = createPackageQueryExecutor(async () => redis);
+      const result = await queryPackages({ includeNamespaces: true, query: '*' });
+
+      assert.deepEqual(result.data, [{ count: 2, name: 'valid', type: 'namespace' }]);
+      assert.deepEqual(
+        warnings,
+        Array.from({ length: 5 }, () => ['query API skipped malformed Redis document', { kind: 'namespace' }])
+      );
+    } finally {
+      console.warn = originalConsoleWarn;
+    }
   });
 
   it('evicts rejected chain query promises so a recovered Redis can be retried', async () => {

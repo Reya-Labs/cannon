@@ -13,6 +13,15 @@ import { getChainIds, MAX_CHAIN_RESULTS } from './chains';
 const DEFAULT_LIMIT = 500;
 export const MAX_NAMESPACE_RESULTS = 100;
 
+function parseNamespaceCount(value: unknown): number | undefined {
+  const normalized =
+    typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : typeof value === 'string' ? value : '';
+  if (!/^[1-9][0-9]*$/.test(normalized)) return undefined;
+
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
 export function createPackageQueryExecutor(getRedis: () => Promise<RedisClientType> = useRedis) {
   return async function queryPackages(params: { query: string; limit?: number; includeNamespaces?: boolean }) {
     const redis = await getRedis();
@@ -60,11 +69,16 @@ export function createPackageQueryExecutor(getRedis: () => Promise<RedisClientTy
         : [];
       for (const namespace of namespaceDocuments) {
         if (!namespace.name) continue;
+        const count = parseNamespaceCount(namespace.count);
+        if (count === undefined) {
+          warnMalformedDocument('namespace');
+          continue;
+        }
 
         data.push({
           type: 'namespace',
           name: namespace.name,
-          count: namespace.count,
+          count,
         } satisfies ApiNamespace);
       }
     }

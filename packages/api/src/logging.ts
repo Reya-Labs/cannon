@@ -17,7 +17,7 @@ export function errorIdentity(error: unknown): { code: string; name: string } {
   };
 }
 
-export function warnMalformedDocument(kind: 'contract' | 'package' | 'selector' | 'tag'): void {
+export function warnMalformedDocument(kind: 'contract' | 'namespace' | 'package' | 'selector' | 'tag'): void {
   // eslint-disable-next-line no-console
   console.warn('query API skipped malformed Redis document', { kind });
 }
