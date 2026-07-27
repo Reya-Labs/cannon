@@ -13,6 +13,11 @@ interface ArtifactWorkerOptions {
   waitUntilReady?: boolean;
 }
 
+interface WorkerSupervisorSignal {
+  requested: Promise<void>;
+  signal: AbortSignal;
+}
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -32,6 +37,7 @@ export async function startArtifactWorker(environment: unknown = process.env, op
   const ownsQueue = !options.queue;
   const queue = options.queue ?? createQueue(config);
   const client = options.client ?? createArtifactFacadeClient(config);
+  const requireReadiness = options.waitUntilReady !== false;
   const activeJobs = new AbortController();
   const onShutdown = () => activeJobs.abort();
   if (options.shutdownSignal?.aborted) {
@@ -39,12 +45,22 @@ export async function startArtifactWorker(environment: unknown = process.env, op
   } else {
     options.shutdownSignal?.addEventListener('abort', onShutdown, { once: true });
   }
-  const worker = startPinningWorker(queue, config, client, { shutdownSignal: activeJobs.signal });
-  const closeResources = createRetryableResourceCloser(() => [ownsQueue ? queue : worker], 'artifact worker cleanup failed');
+  const worker = startPinningWorker(queue, config, client, {
+    autorun: !requireReadiness,
+    shutdownSignal: activeJobs.signal,
+  });
+  let forceResourceClose = false;
+  const closeResources = createRetryableResourceCloser(
+    () => [ownsQueue ? queue : worker],
+    'artifact worker cleanup failed',
+    () => (ownsQueue ? queue.close(forceResourceClose) : worker.close(forceResourceClose))
+  );
   let shutdownListenerDisposed = false;
+  let stopped = new Promise<void>(() => undefined);
 
-  async function close() {
+  async function close(force = false) {
     activeJobs.abort();
+    forceResourceClose ||= force;
     await closeResources();
     if (!shutdownListenerDisposed) {
       options.shutdownSignal?.removeEventListener('abort', onShutdown);
@@ -52,7 +68,7 @@ export async function startArtifactWorker(environment: unknown = process.env, op
     }
   }
 
-  if (options.waitUntilReady === false) return { client, close, queue, worker };
+  if (!requireReadiness) return { client, close, queue, stopped, worker };
 
   try {
     await withTimeout(
@@ -60,13 +76,30 @@ export async function startArtifactWorker(environment: unknown = process.env, op
       config.ARTIFACT_READINESS_TIMEOUT_MS,
       'artifact worker readiness'
     );
-    return { client, close, queue, worker };
+    if (activeJobs.signal.aborted) throw new Error('artifact worker startup cancelled');
+    stopped = worker.run().then(
+      () => undefined,
+      () => undefined
+    );
+    return { client, close, queue, stopped, worker };
   } catch {
-    await close();
+    // No job should have started before readiness, so force-disconnect BullMQ
+    // initialization rather than waiting through its Redis retry strategy.
+    await close(true);
     // BullMQ and HTTP-client readiness errors may contain connection URLs or
     // credentials. Keep the executable boundary diagnostic intentionally
     // generic while still failing closed.
     throw new Error('artifact worker readiness failed');
+  }
+}
+
+export async function waitForArtifactWorkerShutdown(shutdown: WorkerSupervisorSignal, stopped: Promise<void>) {
+  const outcome = await Promise.race([
+    shutdown.requested.then(() => 'shutdown' as const),
+    stopped.then(() => 'worker-stopped' as const),
+  ]);
+  if (outcome === 'worker-stopped' && !shutdown.signal.aborted) {
+    throw new Error('artifact worker stopped unexpectedly');
   }
 }
 
@@ -76,7 +109,7 @@ export async function runArtifactWorker(environment: unknown = process.env) {
 
   try {
     service = await startArtifactWorker(environment, { shutdownSignal: shutdown.signal });
-    await shutdown.requested;
+    await waitForArtifactWorkerShutdown(shutdown, service.stopped);
   } finally {
     shutdown.dispose();
     await service?.close();
@@ -87,8 +120,11 @@ if (require.main === module) {
   void runArtifactWorker().catch((error: unknown) => {
     // Do not print configuration, bearer tokens, or unvalidated queue payloads.
     const message = error instanceof Error ? error.message : 'unknown failure';
+    // Cleanup has already been attempted. A pending TCPConnectWrap can outlive
+    // BullMQ/ioredis close promises briefly, so preserve natural process exit;
+    // the integration regression bounds that cleanup path.
+    process.exitCode = 1;
     // eslint-disable-next-line no-console
     console.error(`artifact worker failed: ${message}`);
-    process.exitCode = 1;
   });
 }

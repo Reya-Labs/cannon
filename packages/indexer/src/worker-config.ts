@@ -87,6 +87,10 @@ export function loadArtifactWorkerConfig(environment: unknown = process.env): Ar
   const sourceUrl = validateEndpoint('ARTIFACT_SOURCE_URL', config.ARTIFACT_SOURCE_URL, productionLike);
   const writerUrl = validateEndpoint('ARTIFACT_WRITER_URL', config.ARTIFACT_WRITER_URL, productionLike);
 
+  if (sourceUrl === writerUrl) {
+    throw new EnvError('ARTIFACT_SOURCE_URL and ARTIFACT_WRITER_URL must be distinct endpoints');
+  }
+
   if (!config.ARTIFACT_WRITER_TOKEN.trim()) {
     throw new EnvError('ARTIFACT_WRITER_TOKEN must be configured explicitly');
   }

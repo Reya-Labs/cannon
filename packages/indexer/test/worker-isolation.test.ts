@@ -12,7 +12,7 @@ import {
 } from '../src/artifact-closure';
 import { createPinningHandlers } from '../src/queue/pinning';
 import { createRetryableResourceCloser, listenForShutdown } from '../src/shutdown';
-import { startArtifactWorker } from '../src/worker';
+import { startArtifactWorker, waitForArtifactWorkerShutdown } from '../src/worker';
 import { PINNING_JOB_CONTRACT_VERSION, pinningJobContracts, validatePinningJobData } from '../src/queue/contracts';
 import { loadArtifactWorkerConfig } from '../src/worker-config';
 import type { Queue } from '../src/queue';
@@ -410,11 +410,47 @@ describe('graceful shutdown', () => {
 });
 
 describe('worker readiness', () => {
+  it('preserves autorun when callers explicitly bypass startup readiness', async () => {
+    let autorun: boolean | undefined;
+    const worker = {
+      async close() {
+        return undefined;
+      },
+      async waitUntilReady() {
+        throw new Error('readiness should be bypassed');
+      },
+    };
+    const queue = {
+      createWorker(_handlers: unknown, options?: { autorun?: boolean }) {
+        autorun = options?.autorun;
+        return worker;
+      },
+    } as unknown as Queue;
+    const client: ArtifactFacadeClient = {
+      async checkHealth() {
+        throw new Error('health should be bypassed');
+      },
+      async read() {
+        throw new Error('unused');
+      },
+      async write() {
+        throw new Error('unused');
+      },
+    };
+
+    const service = await startArtifactWorker(workerEnvironment(), { client, queue, waitUntilReady: false });
+    assert.equal(autorun, true);
+    await service.close();
+  });
+
   it('requires both Redis worker readiness and facade health', async () => {
     const calls: string[] = [];
     const worker = {
       async close() {
         calls.push('worker-close');
+      },
+      async run() {
+        calls.push('worker-run');
       },
       async waitUntilReady() {
         calls.push('redis-ready');
@@ -438,9 +474,9 @@ describe('worker readiness', () => {
     };
 
     const service = await startArtifactWorker(workerEnvironment(), { client, queue });
-    assert.deepEqual(calls.slice().sort(), ['facades-ready', 'redis-ready']);
+    assert.deepEqual(calls, ['redis-ready', 'facades-ready', 'worker-run']);
     await service.close();
-    assert.deepEqual(calls.slice().sort(), ['facades-ready', 'redis-ready', 'worker-close']);
+    assert.deepEqual(calls, ['redis-ready', 'facades-ready', 'worker-run', 'worker-close']);
   });
 
   it('closes the worker and redacts dependency details when readiness fails', async () => {
@@ -480,6 +516,98 @@ describe('worker readiness', () => {
         !error.message.includes('writer health')
     );
     assert.equal(closeCount, 1);
+  });
+
+  it('does not start consuming jobs after shutdown is requested during readiness', async () => {
+    let runCount = 0;
+    let forcedClose = false;
+    const worker = {
+      async close(force?: boolean) {
+        forcedClose = force === true;
+      },
+      async run() {
+        runCount++;
+      },
+      async waitUntilReady() {
+        return undefined;
+      },
+    };
+    const queue = {
+      createWorker() {
+        return worker;
+      },
+    } as unknown as Queue;
+    const client: ArtifactFacadeClient = {
+      async checkHealth() {
+        return undefined;
+      },
+      async read() {
+        throw new Error('unused');
+      },
+      async write() {
+        throw new Error('unused');
+      },
+    };
+    const shutdown = new AbortController();
+    shutdown.abort();
+
+    await assert.rejects(
+      startArtifactWorker(workerEnvironment(), { client, queue, shutdownSignal: shutdown.signal }),
+      /artifact worker readiness failed/
+    );
+    assert.equal(runCount, 0);
+    assert.equal(forcedClose, true);
+  });
+
+  it('reports an unexpected worker-loop stop to the supervisor without exposing its error', async () => {
+    let rejectRun: (error: Error) => void = () => undefined;
+    const run = new Promise<void>((_resolve, reject) => {
+      rejectRun = reject;
+    });
+    const worker = {
+      async close() {
+        return undefined;
+      },
+      run() {
+        return run;
+      },
+      async waitUntilReady() {
+        return undefined;
+      },
+    };
+    const queue = {
+      createWorker() {
+        return worker;
+      },
+    } as unknown as Queue;
+    const client: ArtifactFacadeClient = {
+      async checkHealth() {
+        return undefined;
+      },
+      async read() {
+        throw new Error('unused');
+      },
+      async write() {
+        throw new Error('unused');
+      },
+    };
+    const shutdown = new AbortController();
+    const service = await startArtifactWorker(workerEnvironment(), { client, queue });
+    const supervised = waitForArtifactWorkerShutdown(
+      { requested: new Promise<void>(() => undefined), signal: shutdown.signal },
+      service.stopped
+    );
+
+    rejectRun(new Error('redis://worker:secret@redis.internal:6379'));
+    await assert.rejects(
+      supervised,
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message === 'artifact worker stopped unexpectedly' &&
+        !error.message.includes('secret') &&
+        !error.message.includes('redis.internal')
+    );
+    await service.close();
   });
 
   it('allows a failed service cleanup to be retried and then becomes idempotent', async () => {

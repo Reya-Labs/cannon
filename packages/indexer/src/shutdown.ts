@@ -14,7 +14,8 @@ export interface AsyncCloseable {
  */
 export function createRetryableResourceCloser(
   getResources: () => Iterable<AsyncCloseable>,
-  failureMessage: string
+  failureMessage: string,
+  closeResource: (resource: AsyncCloseable) => Promise<unknown> = (resource) => resource.close()
 ): () => Promise<void> {
   const closed = new Set<AsyncCloseable>();
   let inFlight: Promise<void> | undefined;
@@ -23,7 +24,7 @@ export function createRetryableResourceCloser(
     const pending = [...new Set(getResources())].filter((resource) => !closed.has(resource));
     if (!pending.length) return;
 
-    const results = await Promise.allSettled(pending.map((resource) => resource.close()));
+    const results = await Promise.allSettled(pending.map(closeResource));
     let failed = false;
     for (const [index, result] of results.entries()) {
       if (result.status === 'fulfilled') {

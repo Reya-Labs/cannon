@@ -7,6 +7,7 @@ import type { PinningJobData } from './contracts';
 import type { Queue } from './index';
 
 interface PinningWorkerOptions {
+  autorun?: boolean;
   concurrency?: number;
   shutdownSignal?: AbortSignal;
 }
@@ -79,7 +80,9 @@ export function startPinningWorker(
   client: ArtifactFacadeClient,
   options?: PinningWorkerOptions
 ) {
-  const workerOptions: WorkerOptions | undefined =
-    options?.concurrency === undefined ? undefined : { concurrency: options.concurrency };
+  const workerOptions: WorkerOptions = {
+    autorun: options?.autorun,
+    concurrency: options?.concurrency ?? config.QUEUE_CONCURRENCY,
+  };
   return queue.createWorker(createPinningHandlers(client, config, options?.shutdownSignal), workerOptions);
 }

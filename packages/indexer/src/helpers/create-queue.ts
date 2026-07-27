@@ -10,6 +10,7 @@ export interface QueueOptions {
 }
 
 export interface WorkerOptions {
+  autorun?: boolean;
   concurrency: number;
 }
 
@@ -144,6 +145,7 @@ export function createQueue<T extends ParsedJobActions<string, any, DefaultJobCo
         await jobDef.handler(job.data, jobCtx);
       },
       {
+        autorun: workerOpts?.autorun ?? true,
         connection,
         concurrency,
       }
@@ -184,10 +186,19 @@ export function createQueue<T extends ParsedJobActions<string, any, DefaultJobCo
     } while (pending > 0);
   }
 
-  const closeResources = createRetryableResourceCloser(() => [...workers, queue], 'queue cleanup failed');
+  let forceWorkerClose = false;
+  const closeResources = createRetryableResourceCloser(
+    () => [...workers, queue],
+    'queue cleanup failed',
+    (resource) =>
+      workers.includes(resource as BullWorker<QueueJobData, any, QueueJobName>)
+        ? (resource as BullWorker<QueueJobData, any, QueueJobName>).close(forceWorkerClose)
+        : resource.close()
+  );
 
-  async function close() {
+  async function close(forceWorkers = false) {
     closingStarted = true;
+    forceWorkerClose ||= forceWorkers;
     await closeResources();
   }
 

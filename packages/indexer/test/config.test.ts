@@ -161,6 +161,17 @@ describe('artifact worker configuration', () => {
     assert.equal(config.ARTIFACT_WRITER_URL, 'http://localhost:8082');
   });
 
+  it('requires distinct reader and writer facade origins', () => {
+    assert.throws(
+      () =>
+        loadArtifactWorkerConfig({
+          ...validWorkerEnvironment(),
+          ARTIFACT_WRITER_URL: 'https://artifacts.example.com',
+        }),
+      /must be distinct/
+    );
+  });
+
   it('rejects writer tokens with surrounding whitespace', () => {
     assert.throws(
       () =>
