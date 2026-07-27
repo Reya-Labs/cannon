@@ -2,6 +2,10 @@ import * as viem from 'viem';
 
 type AbiFunctionOrError = Extract<viem.Abi[number], { type: 'function' | 'error' }>;
 
+/**
+ * Converts a viem function/error ABI item into the canonical text signature and
+ * four-byte Keccak selector stored by the registry index.
+ */
 export function canonicalAbiSelector(item: AbiFunctionOrError): {
   selector: `0x${string}`;
   signature: string;
