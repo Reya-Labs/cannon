@@ -23,10 +23,17 @@ RUN rm -rf /usr/local/lib/node_modules/npm \
     && rm /tmp/ncc.tgz
 COPY ./pnpm-workspace.yaml ./package.json ./pnpm-lock.yaml ./
 COPY ./packages/builder/package.json ./packages/builder/tsconfig.json ./packages/builder/tsconfig.build.json ./packages/builder/
+# The indexer still declares this workspace dependency even though its current
+# bundle entry point does not import it. Keep the real workspace metadata
+# present so the conservative bundle-input SBOM cannot silently drop it.
+COPY ./packages/cli/package.json ./packages/cli/
 COPY ./packages/repo/package.json ./packages/repo/tsconfig.json ./packages/repo/
 COPY ./packages/indexer/package.json ./packages/indexer/tsconfig.build.json ./packages/indexer/
 
-RUN pnpm i --frozen-lockfile --ignore-scripts --no-optional -r --filter @usecannon/builder --filter @usecannon/repo --filter @usecannon/indexer
+# Install every declared production workspace in the indexer closure. The CLI
+# sources are not bundled, but its materialized dependency graph is required so
+# the conservative SBOM can resolve and attest the full package closure.
+RUN pnpm i --frozen-lockfile --ignore-scripts --no-optional -r --filter @usecannon/builder --filter @usecannon/cli --filter @usecannon/repo --filter @usecannon/indexer
 COPY ./packages/builder/ ./packages/builder/
 COPY ./packages/repo/ ./packages/repo/
 COPY ./packages/indexer/ ./packages/indexer/
