@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - '.github/dependabot.yml'
+      - '.github/scripts/generate-bundle-input-sbom.mjs'
+      - '.github/scripts/generate-bundle-input-sbom.test.mjs'
+      - '.github/scripts/scan-runtime-image.sh'
       - '.github/scripts/verify-runtime-image.sh'
       - '.github/workflows/runtime-image-security.yml'
       - 'docker/api.Dockerfile'
@@ -24,6 +27,9 @@ on:
       - main
     paths:
       - '.github/dependabot.yml'
+      - '.github/scripts/generate-bundle-input-sbom.mjs'
+      - '.github/scripts/generate-bundle-input-sbom.test.mjs'
+      - '.github/scripts/scan-runtime-image.sh'
       - '.github/scripts/verify-runtime-image.sh'
       - '.github/workflows/runtime-image-security.yml'
       - 'docker/api.Dockerfile'
@@ -67,9 +73,6 @@ concurrency:
 
 permissions:
   contents: read
-
-env:
-  TRIVY_VERSION: v0.72.0
 
 jobs:
   build-and-scan:
@@ -115,13 +118,16 @@ jobs:
         env:
           PACKAGE_JSON: ${{ matrix.package_json }}
         run: |
+          name="$(jq -er '.name' "$PACKAGE_JSON")"
           version="$(jq -er '.version' "$PACKAGE_JSON")"
           source_date_epoch="$(git show -s --format=%ct "$SOURCE_REVISION")"
           created="$(date -u --date="@${source_date_epoch}" '+%Y-%m-%dT%H:%M:%SZ')"
+          test -n "$name"
           test "$version" != "unknown"
           test -n "$source_date_epoch"
           test -n "$created"
           {
+            echo "name=$name"
             echo "version=$version"
             echo "source_date_epoch=$source_date_epoch"
             echo "created=$created"
@@ -162,47 +168,55 @@ jobs:
             "$EXPECTED_COMMAND" \
             "$EXPECTED_CREATED"
 
-      - name: Generate SPDX SBOM with pinned Trivy
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          cache: true
-          format: spdx-json
-          image-ref: ${{ env.IMAGE_REF }}
-          output: sbom-${{ matrix.runtime }}.spdx.json
-          scan-type: image
-          version: ${{ env.TRIVY_VERSION }}
-
-      - name: Scan runtime HIGH and CRITICAL vulnerabilities
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          cache: true
-          exit-code: '1'
-          format: json
-          ignore-unfixed: false
-          image-ref: ${{ env.IMAGE_REF }}
-          output: trivy-${{ matrix.runtime }}.json
-          scan-type: image
-          scanners: vuln
-          severity: HIGH,CRITICAL
-          skip-setup-trivy: true
-          version: ${{ env.TRIVY_VERSION }}
+      - name: Generate and scan complete runtime evidence
+        env:
+          COMPONENT_NAME: ${{ steps.metadata.outputs.name }}
+          COMPONENT_VERSION: ${{ steps.metadata.outputs.version }}
+          RUNTIME_KIND: ${{ matrix.runtime }}
+        run: |
+          .github/scripts/scan-runtime-image.sh \
+            "$IMAGE_REF" \
+            "$RUNTIME_KIND" \
+            "$COMPONENT_NAME" \
+            "$COMPONENT_VERSION" \
+            "runtime-security-${RUNTIME_KIND}"
 
       - name: Record scan summary
         if: always()
         env:
-          IMAGE: ${{ matrix.runtime }}
+          RUNTIME_KIND: ${{ matrix.runtime }}
         run: |
-          if test -s "trivy-${IMAGE}.json"; then
-            critical="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' "trivy-${IMAGE}.json")"
-            high="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' "trivy-${IMAGE}.json")"
+          summary="runtime-security-${RUNTIME_KIND}/scan-summary-${RUNTIME_KIND}.json"
+          if test -s "$summary"; then
             {
-              echo "### ${IMAGE}"
+              echo "### ${RUNTIME_KIND}"
               echo
-              echo "- Trivy: ${TRIVY_VERSION}"
-              echo "- Critical findings: ${critical}"
-              echo "- High findings: ${high}"
+              echo '```json'
+              jq . "$summary"
+              echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Seal scan evidence manifest
+        if: always()
+        env:
+          RUNTIME_KIND: ${{ matrix.runtime }}
+        run: |
+          evidence_directory="runtime-security-${RUNTIME_KIND}"
+          test -d "$evidence_directory"
+          (
+            cd "$evidence_directory"
+            find . \
+              -maxdepth 1 \
+              -type f \
+              ! -name SHA256SUMS \
+              -printf '%P\0' \
+              | sort -z \
+              | xargs -0 -r sha256sum \
+              > SHA256SUMS
+            test -s SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
 
       - name: Upload immutable scan evidence
         if: always()
@@ -210,9 +224,7 @@ jobs:
         with:
           if-no-files-found: error
           name: runtime-security-${{ matrix.runtime }}-${{ env.SOURCE_REVISION }}
-          path: |
-            sbom-${{ matrix.runtime }}.spdx.json
-            trivy-${{ matrix.runtime }}.json
+          path: runtime-security-${{ matrix.runtime }}
           retention-days: 30
 
   scan-pushed-digest:
@@ -220,6 +232,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
+      attestations: read
       contents: read
       packages: read
     env:
@@ -277,6 +290,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
+      - name: Verify protected-dev build provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          evidence_directory="runtime-security-${RUNTIME_KIND}"
+          mkdir -p "$evidence_directory"
+          gh attestation verify "oci://${IMAGE_REF}" \
+            --repo "$TRUSTED_REPOSITORY" \
+            --source-digest "$EXPECTED_REVISION" \
+            --source-ref "$TRUSTED_REF" \
+            --deny-self-hosted-runners \
+            --format json \
+            > "${evidence_directory}/attestation-${RUNTIME_KIND}.json"
+
       - name: Pull exact linux/amd64 digest
         run: docker pull --platform linux/amd64 "$IMAGE_REF"
 
@@ -300,9 +327,11 @@ jobs:
               package_json=source/packages/safe-app-backend/package.json
               ;;
           esac
+          component_name="$(jq -er '.name' "$package_json")"
           version="$(jq -er '.version' "$package_json")"
           source_date_epoch="$(git -C source show -s --format=%ct "$EXPECTED_REVISION")"
           created="$(date -u --date="@${source_date_epoch}" '+%Y-%m-%dT%H:%M:%SZ')"
+          test -n "$component_name"
           test "$version" != "unknown"
           test -n "$source_date_epoch"
           test -n "$created"
@@ -314,30 +343,49 @@ jobs:
             "$expected_command" \
             "$created"
 
-      - name: Generate SPDX SBOM with pinned Trivy
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          cache: true
-          format: spdx-json
-          image-ref: ${{ env.IMAGE_REF }}
-          output: sbom-${{ env.RUNTIME_KIND }}.spdx.json
-          scan-type: image
-          version: ${{ env.TRIVY_VERSION }}
+      - name: Generate and scan complete pushed-digest evidence
+        run: |
+          case "$RUNTIME_KIND" in
+            repo)
+              package_json=source/packages/repo/package.json
+              ;;
+            indexer)
+              package_json=source/packages/indexer/package.json
+              ;;
+            api)
+              package_json=source/packages/api/package.json
+              ;;
+            safe-app-backend)
+              package_json=source/packages/safe-app-backend/package.json
+              ;;
+          esac
+          component_name="$(jq -er '.name' "$package_json")"
+          version="$(jq -er '.version' "$package_json")"
+          policy/.github/scripts/scan-runtime-image.sh \
+            "$IMAGE_REF" \
+            "$RUNTIME_KIND" \
+            "$component_name" \
+            "$version" \
+            "runtime-security-${RUNTIME_KIND}"
 
-      - name: Scan pushed digest HIGH and CRITICAL vulnerabilities
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          cache: true
-          exit-code: '1'
-          format: json
-          ignore-unfixed: false
-          image-ref: ${{ env.IMAGE_REF }}
-          output: trivy-${{ env.RUNTIME_KIND }}.json
-          scan-type: image
-          scanners: vuln
-          severity: HIGH,CRITICAL
-          skip-setup-trivy: true
-          version: ${{ env.TRIVY_VERSION }}
+      - name: Seal digest evidence manifest
+        if: always()
+        run: |
+          evidence_directory="runtime-security-${RUNTIME_KIND}"
+          test -d "$evidence_directory"
+          (
+            cd "$evidence_directory"
+            find . \
+              -maxdepth 1 \
+              -type f \
+              ! -name SHA256SUMS \
+              -printf '%P\0' \
+              | sort -z \
+              | xargs -0 -r sha256sum \
+              > SHA256SUMS
+            test -s SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
 
       - name: Upload immutable digest evidence
         if: always()
@@ -345,7 +393,5 @@ jobs:
         with:
           if-no-files-found: error
           name: pushed-runtime-security-${{ env.RUNTIME_KIND }}-${{ env.EXPECTED_REVISION }}
-          path: |
-            sbom-${{ env.RUNTIME_KIND }}.spdx.json
-            trivy-${{ env.RUNTIME_KIND }}.json
+          path: runtime-security-${{ env.RUNTIME_KIND }}
           retention-days: 90

@@ -13,6 +13,9 @@ const defaultRepositoryRoot = resolve(dirname(scriptPath), '../..');
 
 const runtimeImagePaths = [
   '.github/dependabot.yml',
+  '.github/scripts/generate-bundle-input-sbom.mjs',
+  '.github/scripts/generate-bundle-input-sbom.test.mjs',
+  '.github/scripts/scan-runtime-image.sh',
   '.github/scripts/verify-runtime-image.sh',
   '.github/workflows/runtime-image-security.yml',
   'docker/api.Dockerfile',
@@ -126,14 +129,22 @@ const workflowPolicies = new Map([
 const exactWorkflowDigests = new Map([
   [
     'runtime-image-security.yml',
-    'f8e18ec880b987b9d247cde6ad8fe06657e75c91aca51d191ca28bae3aef72c6',
+    '5452b3639233655691185f3ea7495c46f626145b7f205eceaba9e1fa632d42f7',
   ],
 ]);
 
 const exactPolicyFileDigests = new Map([
   [
+    '.github/scripts/generate-bundle-input-sbom.mjs',
+    'ee941346cf3fc93d1acdd9a17310898ab23ef16f9a3da87065dad45ed386230e',
+  ],
+  [
+    '.github/scripts/scan-runtime-image.sh',
+    'ff5eee3cd4763b85ffca796a6a937d4273cfb6d1c9932168799a207d9f9009e4',
+  ],
+  [
     '.github/scripts/verify-runtime-image.sh',
-    '6072f2e7f299a7a2752fc80db04cfb61a91be4c3aaa836a57f3bcc0ed8062538',
+    '149ed11e9ef1eca9152e9ecc7bab621b7813c565a4fb357b9487e9e31b9a5da6',
   ],
 ]);
 
@@ -600,14 +611,18 @@ const auditWorkflow = (
       const expectedJobPermissions =
         displayPath === '.github/workflows/runtime-image-security.yml' &&
         jobName === 'scan-pushed-digest'
-          ? { contents: 'read', packages: 'read' }
+          ? {
+              attestations: 'read',
+              contents: 'read',
+              packages: 'read',
+            }
           : undefined;
       if (
         expectedJobPermissions !== undefined &&
         !isDeepStrictEqual(job.permissions, expectedJobPermissions)
       ) {
         errors.push(
-          `${displayPath}: job ${jobName} permissions must be exactly contents: read and packages: read`
+          `${displayPath}: job ${jobName} permissions must be exactly attestations: read, contents: read, and packages: read`
         );
       } else if (expectedJobPermissions === undefined && 'permissions' in job) {
         errors.push(

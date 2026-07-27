@@ -418,7 +418,7 @@ assertRejected(
       '      packages: read',
       '      packages: write'
     ),
-  'permissions must be exactly contents: read and packages: read'
+  'permissions must be exactly attestations: read, contents: read, and packages: read'
 );
 
 assertRejected(
@@ -429,7 +429,18 @@ assertRejected(
       '      packages: read',
       '      packages: read\n      issues: read'
     ),
-  'permissions must be exactly contents: read and packages: read'
+  'permissions must be exactly attestations: read, contents: read, and packages: read'
+);
+
+assertRejected(
+  'runtime digest scanner without attestation permission',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-image-security.yml'),
+      '      attestations: read\n',
+      ''
+    ),
+  'permissions must be exactly attestations: read, contents: read, and packages: read'
 );
 
 assertRejected(
@@ -444,12 +455,56 @@ assertRejected(
 );
 
 assertRejected(
+  'runtime verifier skips default entry syntax validation',
+  (root) =>
+    replace(
+      join(root, '.github/scripts/verify-runtime-image.sh'),
+      '  node --check "/usr/app/${EXPECTED_ENTRY_FILE}"\n',
+      ''
+    ),
+  'source must exactly match the reviewed policy digest'
+);
+
+assertRejected(
+  'runtime scanner substitution',
+  (root) =>
+    replace(
+      join(root, '.github/scripts/scan-runtime-image.sh'),
+      'fd4ab4d1042b522c896e73bdf09ab8bf384fa417df99d6dd0d6e1008c7e7c821',
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    ),
+  'source must exactly match the reviewed policy digest'
+);
+
+assertRejected(
+  'runtime bundle-input inventory relaxation',
+  (root) =>
+    replace(
+      join(root, '.github/scripts/generate-bundle-input-sbom.mjs'),
+      'if (components.size === 0) {\n',
+      'if (components.size < 0) {\n'
+    ),
+  'source must exactly match the reviewed policy digest'
+);
+
+assertRejected(
   'runtime digest scan from an untrusted workflow repository',
   (root) =>
     replace(
       join(root, '.github/workflows/runtime-image-security.yml'),
       '          test "$TRUSTED_REPOSITORY" = "Reya-Labs/cannon"',
       '          test -n "$TRUSTED_REPOSITORY"'
+    ),
+  'source must exactly match the reviewed workflow digest'
+);
+
+assertRejected(
+  'runtime digest scan without protected-dev attestation source',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-image-security.yml'),
+      '            --source-ref "$TRUSTED_REF" \\\n',
+      ''
     ),
   'source must exactly match the reviewed workflow digest'
 );

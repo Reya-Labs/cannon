@@ -14,6 +14,36 @@ expected_version=$4
 expected_command=$5
 expected_created=${6:-}
 
+expected_entry_file=$(
+  jq -er '
+    if
+      type == "array" and
+      length == 2 and
+      .[0] == "node" and
+      (.[1] | type) == "string" and
+      (.[1] | length) > 0
+    then
+      .[1]
+    else
+      error("expected command must be [\"node\",\"RELATIVE_ENTRY_FILE\"]")
+    end
+  ' <<<"$expected_command"
+)
+if [[ ! "$expected_entry_file" =~ ^[A-Za-z0-9_./-]+$ ]]; then
+  echo "expected entry file contains unsupported characters" >&2
+  exit 1
+fi
+case "/${expected_entry_file}/" in
+  */../*|*/./*|/*//*)
+    echo "expected entry file must be a normalized relative path" >&2
+    exit 1
+    ;;
+esac
+if [[ "$expected_entry_file" == /* ]]; then
+  echo "expected entry file must be relative to /usr/app" >&2
+  exit 1
+fi
+
 inspect_json=$(docker image inspect "$image_ref")
 
 assert_json_value() {
@@ -70,12 +100,16 @@ docker run --rm \
   --cap-drop ALL \
   --security-opt no-new-privileges \
   --pids-limit 64 \
+  --env "EXPECTED_ENTRY_FILE=${expected_entry_file}" \
   --entrypoint /bin/sh \
   "$image_ref" -euc '
   test "$(id -u)" = "1000"
   test "$(id -g)" = "1000"
   test "$(node --version)" = "v22.23.1"
   test "$(node -p "process.platform + \"/\" + process.arch")" = "linux/x64"
+  test -f "/usr/app/${EXPECTED_ENTRY_FILE}"
+  test -r "/usr/app/${EXPECTED_ENTRY_FILE}"
+  node --check "/usr/app/${EXPECTED_ENTRY_FILE}"
   for tool in npm npx pnpm corepack yarn yarnpkg; do
     ! command -v "$tool" >/dev/null 2>&1
   done

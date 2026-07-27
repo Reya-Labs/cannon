@@ -28,6 +28,8 @@ jobs:
       - run: npm ci --ignore-scripts --prefix .github/scripts
       - run: node .github/scripts/audit-workflows.mjs
       - run: node .github/scripts/audit-workflows.test.mjs
+      - run: node .github/scripts/generate-bundle-input-sbom.test.mjs
+      - run: bash -n .github/scripts/scan-runtime-image.sh .github/scripts/verify-runtime-image.sh
 
   dependency-review:
     if: github.event_name == 'pull_request'

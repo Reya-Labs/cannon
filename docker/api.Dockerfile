@@ -4,6 +4,9 @@ FROM node-runtime AS build
 
 WORKDIR /usr/app
 
+ARG SOURCE_DATE_EPOCH=0
+ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
+
 ARG PNPM_VERSION=10.11.0
 ARG PNPM_SHA512=6540583f41cc5f628eb3d9773ecee802f4f9ef9923cc45b69890fb47991d4b092964694ec3a4f738a420c918a333062c8b925d312f42e4f0c263eb603551f977
 ARG NCC_VERSION=0.44.1
@@ -16,20 +19,29 @@ RUN rm -rf /usr/local/lib/node_modules/npm \
     && corepack enable pnpm \
     && wget -q -O /tmp/ncc.tgz "https://registry.npmjs.org/@vercel/ncc/-/ncc-${NCC_VERSION}.tgz" \
     && echo "${NCC_SHA512}  /tmp/ncc.tgz" | sha512sum -c - \
-    && pnpm add --global --offline /tmp/ncc.tgz \
+    && pnpm add --global --ignore-scripts --offline /tmp/ncc.tgz \
     && rm /tmp/ncc.tgz
 COPY ./pnpm-workspace.yaml ./package.json ./pnpm-lock.yaml ./
 COPY ./packages/builder/package.json ./packages/builder/tsconfig.json ./packages/builder/tsconfig.build.json ./packages/builder/
 COPY ./packages/cli/package.json ./packages/cli/tsconfig.json ./packages/cli/tsconfig.build.json ./packages/cli/
 COPY ./packages/api/package.json ./packages/api/tsconfig.json ./packages/api/
 
-RUN pnpm i --frozen-lockfile --no-optional -r --filter @usecannon/builder --filter @usecannon/cli --filter @usecannon/api
+RUN pnpm i --frozen-lockfile --ignore-scripts --no-optional -r --filter @usecannon/builder --filter @usecannon/cli --filter @usecannon/api
 COPY ./packages/builder/ ./packages/builder/
 COPY ./packages/cli/ ./packages/cli/
 COPY ./packages/api/ ./packages/api/
 
 RUN pnpm run -r --filter @usecannon/builder build:node
 RUN ncc build ./packages/api/src/index.ts -o ./packages/api/dist
+COPY ./.github/scripts/generate-bundle-input-sbom.mjs /usr/local/lib/generate-bundle-input-sbom.mjs
+RUN pnpm --filter @usecannon/api list --prod --no-optional --depth Infinity --json \
+      > /tmp/bundle-input-dependencies.json \
+    && node /usr/local/lib/generate-bundle-input-sbom.mjs \
+      /usr/app \
+      /tmp/bundle-input-dependencies.json \
+      /usr/app/packages/api/dist/bundle-input-dependencies.cdx.json \
+      @usecannon/api \
+      "$(node -p "require('./packages/api/package.json').version")"
 
 FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
