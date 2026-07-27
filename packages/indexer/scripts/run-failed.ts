@@ -1,8 +1,7 @@
-import { createQueue } from '../src/queue';
+import { startArtifactWorker } from '../src/worker';
 
 async function main() {
-  const queue = createQueue();
-  queue.createWorker();
+  const { queue } = await startArtifactWorker(process.env, { waitUntilReady: true });
 
   const failedJobs = await queue.queue.getFailed();
 

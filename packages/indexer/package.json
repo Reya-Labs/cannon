@@ -9,6 +9,7 @@
     "clean": "rm -rf ./dist",
     "test": "NODE_ENV=test node --test --require ts-node/register test/*.test.ts",
     "start": "node dist/index.js",
+    "start-artifact-worker": "node dist/worker.js",
     "start-4byte-directory": "node dist/4byte-directory.js",
     "dev": "ts-node src/index.ts"
   },

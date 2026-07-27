@@ -16,6 +16,7 @@ COPY ./packages/indexer/ ./packages/indexer/
 RUN pnpm run -r --filter @usecannon/builder build:node
 RUN pnpm run -r --filter @usecannon/repo build
 RUN ncc build ./packages/indexer/src/index.ts -o ./packages/indexer/dist/registry
+RUN ncc build ./packages/indexer/src/worker.ts -o ./packages/indexer/dist/artifact-worker
 RUN ncc build ./packages/indexer/src/4byte-directory.ts -o ./packages/indexer/dist/4byte-directory
 
 FROM node:22.11.0-alpine@sha256:b64ced2e7cd0a4816699fe308ce6e8a08ccba463c757c00c14cd372e3d2c763e

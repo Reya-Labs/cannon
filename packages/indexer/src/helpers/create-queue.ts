@@ -27,18 +27,22 @@ export interface QueueJobAttributes<JobName extends string, JobData = any> {
   opts?: { jobId: string };
 }
 
-export interface JobSchema<JobName extends string, JobData, JobContext extends DefaultJobContext<JobName, JobData>> {
+export interface JobActionSchema<JobName extends string, JobData, JobContext extends DefaultJobContext<JobName, JobData>> {
   name: JobName;
   action: (data: JobData, ctx: JobContext) => QueueJobAttributes<JobName, JobData>;
+}
+
+export interface JobHandlerSchema<JobName extends string, JobData, JobContext extends DefaultJobContext<JobName, JobData>> {
+  name: JobName;
   handler: (data: JobData, ctx: JobContext) => Promise<void>;
 }
 
-interface ParsedJobsSchemas<JobName extends string, JobData, JobContext extends DefaultJobContext<JobName, JobData>> {
-  jobs: JobSchema<JobName, JobData, JobContext>[];
+interface ParsedJobActions<JobName extends string, JobData, JobContext extends DefaultJobContext<JobName, JobData>> {
+  jobs: JobActionSchema<JobName, JobData, JobContext>[];
   ctx: JobContext;
 }
 
-export function createJobs<T extends JobSchema<string, any, DefaultJobContext<string, any>>, GivenJobContext>(
+export function createJobs<T extends JobActionSchema<string, any, DefaultJobContext<string, any>>, GivenJobContext>(
   jobs: T[],
   ctx: GivenJobContext = {} as GivenJobContext
 ) {
@@ -49,10 +53,10 @@ export function createJobs<T extends JobSchema<string, any, DefaultJobContext<st
   return {
     jobs,
     ctx: ctx as JobContext,
-  } satisfies ParsedJobsSchemas<JobName, JobData, JobContext>;
+  } satisfies ParsedJobActions<JobName, JobData, JobContext>;
 }
 
-export function createQueue<T extends ParsedJobsSchemas<string, any, DefaultJobContext<string, any>>>(
+export function createQueue<T extends ParsedJobActions<string, any, DefaultJobContext<string, any>>>(
   jobs: T,
   queueOpts: QueueOptions
 ) {
@@ -105,13 +109,25 @@ export function createQueue<T extends ParsedJobsSchemas<string, any, DefaultJobC
   }
 
   const workers: BullWorker<QueueJobData, any, QueueJobName>[] = [];
-  function createWorker(workerOpts?: WorkerOptions) {
+  function createWorker(
+    jobHandlers: JobHandlerSchema<QueueJobName, QueueJobData, QueueContext>[],
+    workerOpts?: WorkerOptions
+  ) {
+    const handlerNames = jobHandlers.map(({ name }) => name);
+    const missingHandlers = jobs.jobs.map(({ name }) => name).filter((name) => !handlerNames.includes(name as QueueJobName));
+    if (missingHandlers.length) {
+      throw new Error(`Missing queue handlers: ${missingHandlers.join(', ')}`);
+    }
+    if (new Set(handlerNames).size !== handlerNames.length) {
+      throw new Error('Duplicate queue handlers are not allowed');
+    }
+
     const concurrency = workerOpts?.concurrency || queueOpts?.defaultConcurrency || 1;
 
     const worker = new BullWorker<QueueJobData, any, QueueJobName>(
       queueOpts.queueName,
       async (job) => {
-        const jobDef = jobs.jobs.find((j) => j.name === job.name);
+        const jobDef = jobHandlers.find((candidate) => candidate.name === job.name);
 
         if (!jobDef) {
           throw new Error(`Unknown job name: ${job.name}`);

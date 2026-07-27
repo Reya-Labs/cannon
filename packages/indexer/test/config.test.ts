@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { loadFourByteConfig } from '../src/4byte-config';
 import { loadRegistryConfig } from '../src/config';
+import { loadIndexerProcessConfig } from '../src/process-config';
+import { loadArtifactWorkerConfig } from '../src/worker-config';
 
 function validRegistryEnvironment(): Record<string, string> {
   return {
@@ -11,12 +13,6 @@ function validRegistryEnvironment(): Record<string, string> {
     NODE_ENV: 'production',
     OPTIMISM_PROVIDER_URL: 'wss://optimism.example.com/rpc',
     REDIS_URL: 'rediss://redis.example.com:6379',
-    S3_BUCKET: 'cannon',
-    S3_ENDPOINT: 'https://objects.example.com',
-    S3_FOLDER: 'repo-v2',
-    S3_KEY: 'read-write-key',
-    S3_REGION: 'us-east-1',
-    S3_SECRET: 'read-write-secret',
   };
 }
 
@@ -33,6 +29,13 @@ describe('registry configuration', () => {
 
     assert.equal(config.MAINNET_PROVIDER_URL, 'https://mainnet.example.com/rpc');
     assert.equal(config.OPTIMISM_PROVIDER_URL, 'wss://optimism.example.com/rpc');
+  });
+
+  it('does not require privileged object-storage credentials', () => {
+    const config = loadRegistryConfig(validRegistryEnvironment());
+
+    assert.equal('S3_KEY' in config, false);
+    assert.equal('S3_SECRET' in config, false);
   });
 
   it('returns canonical provider URLs for transport selection', () => {
@@ -92,6 +95,33 @@ describe('registry configuration', () => {
           OPTIMISM_PROVIDER_URL: 'https://rpc.example.com/',
         }),
       /must be distinct/
+    );
+  });
+});
+
+describe('indexer process configuration', () => {
+  it('preserves combined mode by default', () => {
+    assert.equal(loadIndexerProcessConfig({}).INDEXER_PROCESS_MODE, 'combined');
+  });
+
+  it('requires storage credentials only in the privileged artifact worker', () => {
+    const common = {
+      IPFS_URL: 'https://artifacts.example.com',
+      NODE_ENV: 'production',
+      REDIS_URL: 'rediss://redis.example.com:6379',
+    };
+
+    assert.throws(() => loadArtifactWorkerConfig(common), /S3_/);
+    assert.doesNotThrow(() =>
+      loadArtifactWorkerConfig({
+        ...common,
+        S3_BUCKET: 'cannon',
+        S3_ENDPOINT: 'https://objects.example.com',
+        S3_FOLDER: 'repo-v2',
+        S3_KEY: 'write-key',
+        S3_REGION: 'us-east-1',
+        S3_SECRET: 'write-secret',
+      })
     );
   });
 });

@@ -587,17 +587,15 @@ export async function scanChain(
   }
 }
 
-export async function loop() {
+export async function loop(options: { startArtifactWorker?: (queue: Queue) => Promise<void> | void } = {}) {
   const mainnetClient = createRpcClient('mainnet', config.MAINNET_PROVIDER_URL);
   const optimismClient = createRpcClient('optimism', config.OPTIMISM_PROVIDER_URL);
   await assertRpcChain(mainnetClient, viemChains.mainnet.id, 'mainnet');
   await assertRpcChain(optimismClient, viemChains.optimism.id, 'optimism');
 
   const redis = await useRedis(config.REDIS_URL);
-  const queue = createQueue();
-
-  // Initialize worker for pinning images
-  queue.createWorker();
+  const queue = createQueue(config);
+  await options.startArtifactWorker?.(queue);
 
   console.log('start scan loop');
 
