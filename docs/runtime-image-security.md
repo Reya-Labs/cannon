@@ -93,11 +93,23 @@ archived package graph, while the protected `dev` policy supplies the
 digest-locked generator, equality verifier, scanner, and orchestration. A
 plausible but truncated or reformatted embedded SBOM therefore fails before
 vulnerability matching.
+The source-only regeneration retains the same reviewed root manifest,
+`pnpm-workspace.yaml`, lockfile, and package manifests used by the Docker build.
+It removes `.npmrc` and pnpm hook files that the runtime Dockerfiles do not copy
+before installation, supplies empty user/global npm configuration, and also
+passes `--ignore-pnpmfile` during install and the pnpm-10.11-supported
+`--config.ignore-pnpmfile=true` during inventory, alongside explicit
+`--ignore-scripts`, `--no-optional`, and `--frozen-lockfile`. A standard or
+custom workspace-configured hook therefore cannot execute or prune the
+independently expected closure.
 
 The workflow retains the SBOM and JSON vulnerability report as run-scoped
 evidence, including a machine-readable summary that keeps whole-image and
 bundle-input results separate and a verified `SHA256SUMS` manifest over every
-retained file. The scanners are immutable, capability-free, read-only
+retained file. Each manifest is first written to a unique sibling on the same
+filesystem, verified while the evidence directory is the working directory,
+and only then atomically moved into the evidence directory; a cleanup trap
+removes an incomplete sibling. The scanners are immutable, capability-free, read-only
 containers. Syft receives only the read-only image archive. Grype
 first refreshes and hash-validates its vulnerability database without any SBOM
 mounted; the separate scan containers then receive read-only SBOM evidence with
@@ -121,10 +133,10 @@ independently proposes bounded weekly Docker-base updates for `/docker` and
 `/packages/safe-app-backend`; scanner-image refresh remains an explicit reviewed
 policy change.
 
-Concurrency is partitioned by event, manual mode, and ref. Only pull-request
-and push runs cancel older runs in their own domain. Scheduled and manually
-requested candidate or inventory scans are never cancelled by a push or by one
-another without replacement evidence.
+Concurrency is partitioned by event. Pull-request and push runs reuse their
+event/ref group and may cancel an older replaceable run. Every scheduled or
+manually dispatched run uses its unique GitHub run ID, so neither running nor
+pending candidate/inventory evidence can be replaced by another run.
 
 Grype's own compiled defaults exclude four indirect kernel-header match classes
 for RPM and Debian packages. Those defaults are retained in the JSON report and

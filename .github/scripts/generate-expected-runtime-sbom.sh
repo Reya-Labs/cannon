@@ -76,6 +76,14 @@ trap cleanup EXIT
 git -C "$source_directory" archive --format=tar "$expected_revision" |
   tar -xf - -C "$workspace"
 
+# The runtime Dockerfiles copy only the reviewed lockfile, workspace file, root
+# manifest and selected package manifests before install. Source-only pnpm hook
+# and npm configuration files must therefore not gain influence here.
+find "$workspace" \
+  \( -type f -o -type l \) \
+  \( -name .npmrc -o -name .pnpmfile.cjs -o -name pnpmfile.cjs \) \
+  -delete
+
 docker run --rm \
   --platform linux/amd64 \
   --user "${runner_uid}:${runner_gid}" \
@@ -89,6 +97,8 @@ docker run --rm \
   --volume "${generator}:/policy/generate-bundle-input-sbom.mjs:ro" \
   --workdir /workspace \
   --env "COREPACK_HOME=/tmp/corepack" \
+  --env "NPM_CONFIG_GLOBALCONFIG=/tmp/pnpm-globalconfig" \
+  --env "NPM_CONFIG_USERCONFIG=/tmp/pnpm-userconfig" \
   --env "PNPM_SHA512=${pnpm_sha512}" \
   --env "PNPM_HOME=/tmp/pnpm-home" \
   --env "PNPM_VERSION=${pnpm_version}" \
@@ -98,16 +108,20 @@ docker run --rm \
   "$node_image" \
   /bin/sh -euc '
     mkdir -p "$COREPACK_HOME" "$PNPM_HOME" "$XDG_CACHE_HOME"
+    : > "$NPM_CONFIG_USERCONFIG"
+    : > "$NPM_CONFIG_GLOBALCONFIG"
     corepack prepare "pnpm@${PNPM_VERSION}+sha512.${PNPM_SHA512}" --activate
     test "$(corepack pnpm --version)" = "$PNPM_VERSION"
     corepack pnpm \
       --filter "${TARGET_PACKAGE}..." \
       install \
       --frozen-lockfile \
+      --ignore-pnpmfile \
       --ignore-scripts \
       --no-optional \
       --store-dir /tmp/pnpm-store
     corepack pnpm \
+      --config.ignore-pnpmfile=true \
       --filter "$TARGET_PACKAGE" \
       list \
       --prod \

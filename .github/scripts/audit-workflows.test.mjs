@@ -147,6 +147,7 @@ assert.deepEqual(
   const runtimeWorkflow = parseDocument(runtimeWorkflowSource).toJS();
   const runtimePaths = [
     '.github/scripts/generate-expected-runtime-sbom.sh',
+    '.github/scripts/generate-expected-runtime-sbom.test.mjs',
     '.github/scripts/verify-runtime-bundle-input.mjs',
     '.github/scripts/verify-runtime-bundle-input.test.mjs',
   ];
@@ -165,8 +166,13 @@ assert.deepEqual(
   );
   assert.equal(
     runtimeWorkflow.concurrency.group,
-    "runtime-image-security-${{ github.event_name }}-${{ inputs.mode || 'automatic' }}-${{ github.ref }}",
-    'concurrency domains must include event and manual mode before the ref'
+    "runtime-image-security-${{ github.event_name }}-${{ (github.event_name == 'pull_request' || github.event_name == 'push') && github.ref || github.run_id }}",
+    'only replaceable push and pull-request domains may reuse a ref group'
+  );
+  assert.match(
+    runtimeWorkflow.concurrency.group,
+    /github\.run_id/u,
+    'schedule and workflow_dispatch concurrency groups must be unique per run'
   );
   const cancellationExpression =
     runtimeWorkflow.concurrency['cancel-in-progress'];
@@ -558,10 +564,21 @@ assertRejected(
   (root) =>
     replace(
       join(root, '.github/workflows/runtime-image-security.yml'),
-      "  group: runtime-image-security-${{ github.event_name }}-${{ inputs.mode || 'automatic' }}-${{ github.ref }}",
+      "  group: runtime-image-security-${{ github.event_name }}-${{ (github.event_name == 'pull_request' || github.event_name == 'push') && github.ref || github.run_id }}",
       '  group: runtime-image-security-${{ github.ref }}'
     ),
-  'concurrency must isolate event and manual-mode domains'
+  'concurrency must use unique schedule/manual run IDs'
+);
+
+assertRejected(
+  'runtime manual and scheduled scans reuse a replaceable ref group',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-image-security.yml'),
+      "  group: runtime-image-security-${{ github.event_name }}-${{ (github.event_name == 'pull_request' || github.event_name == 'push') && github.ref || github.run_id }}",
+      '  group: runtime-image-security-${{ github.event_name }}-${{ github.ref }}'
+    ),
+  'concurrency must use unique schedule/manual run IDs'
 );
 
 assertRejected(
@@ -572,7 +589,18 @@ assertRejected(
       "  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}",
       '  cancel-in-progress: true'
     ),
-  'cancel only replaceable pull-request or push runs'
+  'ref-group cancellation only for replaceable pull-request or push runs'
+);
+
+assertRejected(
+  'runtime evidence manifest is written inside its scanned directory',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-image-security.yml'),
+      '          manifest_temp="$(mktemp "${evidence_directory}.SHA256SUMS.XXXXXX")"\n',
+      '          manifest_temp="${evidence_directory}/SHA256SUMS"\n'
+    ),
+  'evidence manifests must be verified through unique same-filesystem sibling files'
 );
 
 assertRejected(
@@ -611,6 +639,50 @@ assertRejected(
       'git -C "$source_directory" archive --format=tar HEAD'
     ),
   'expected closure must be generated from the exact declared checked-out source revision'
+);
+
+assertRejected(
+  'runtime expected closure executes source pnpm hooks',
+  (root) =>
+    replace(
+      join(root, '.github/scripts/generate-expected-runtime-sbom.sh'),
+      '      --ignore-pnpmfile \\\n',
+      ''
+    ),
+  'must ignore source-controlled pnpm hooks'
+);
+
+assertRejected(
+  'runtime expected closure inventory executes a configured pnpm hook',
+  (root) =>
+    replace(
+      join(root, '.github/scripts/generate-expected-runtime-sbom.sh'),
+      '      --config.ignore-pnpmfile=true \\\n',
+      ''
+    ),
+  'must ignore source-controlled pnpm hooks'
+);
+
+assertRejected(
+  'runtime pnpm-hook adversarial test removed',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/supply-chain.yml'),
+      '      - run: node .github/scripts/generate-expected-runtime-sbom.test.mjs\n',
+      ''
+    ),
+  'source-controlled pnpm-hook isolation test must remain enforced'
+);
+
+assertRejected(
+  'runtime expected closure retains source-only npm configuration',
+  (root) =>
+    replace(
+      join(root, '.github/scripts/generate-expected-runtime-sbom.sh'),
+      '  \\( -name .npmrc -o -name .pnpmfile.cjs -o -name pnpmfile.cjs \\) \\\n',
+      '  -name .never-matches \\\n'
+    ),
+  'must ignore source-controlled pnpm hooks'
 );
 
 assertRejected(

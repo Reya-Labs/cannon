@@ -7,6 +7,7 @@ on:
       - '.github/scripts/generate-bundle-input-sbom.mjs'
       - '.github/scripts/generate-bundle-input-sbom.test.mjs'
       - '.github/scripts/generate-expected-runtime-sbom.sh'
+      - '.github/scripts/generate-expected-runtime-sbom.test.mjs'
       - '.github/scripts/scan-runtime-image.sh'
       - '.github/scripts/validate-runtime-image-inventory.mjs'
       - '.github/scripts/validate-runtime-image-inventory.test.mjs'
@@ -36,6 +37,7 @@ on:
       - '.github/scripts/generate-bundle-input-sbom.mjs'
       - '.github/scripts/generate-bundle-input-sbom.test.mjs'
       - '.github/scripts/generate-expected-runtime-sbom.sh'
+      - '.github/scripts/generate-expected-runtime-sbom.test.mjs'
       - '.github/scripts/scan-runtime-image.sh'
       - '.github/scripts/validate-runtime-image-inventory.mjs'
       - '.github/scripts/validate-runtime-image-inventory.test.mjs'
@@ -89,7 +91,7 @@ on:
         type: string
 
 concurrency:
-  group: runtime-image-security-${{ github.event_name }}-${{ inputs.mode || 'automatic' }}-${{ github.ref }}
+  group: runtime-image-security-${{ github.event_name }}-${{ (github.event_name == 'pull_request' || github.event_name == 'push') && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 permissions:
@@ -256,6 +258,12 @@ jobs:
         run: |
           evidence_directory="runtime-security-${RUNTIME_KIND}"
           test -d "$evidence_directory"
+          evidence_directory="$(cd "$evidence_directory" && pwd -P)"
+          manifest_temp="$(mktemp "${evidence_directory}.SHA256SUMS.XXXXXX")"
+          cleanup_manifest() {
+            rm -f "$manifest_temp"
+          }
+          trap cleanup_manifest EXIT
           (
             cd "$evidence_directory"
             find . \
@@ -265,10 +273,12 @@ jobs:
               -printf '%P\0' \
               | sort -z \
               | xargs -0 -r sha256sum \
-              > SHA256SUMS
-            test -s SHA256SUMS
-            sha256sum --check SHA256SUMS
+              > "$manifest_temp"
+            test -s "$manifest_temp"
+            sha256sum --check "$manifest_temp"
           )
+          mv "$manifest_temp" "$evidence_directory/SHA256SUMS"
+          trap - EXIT
 
       - name: Upload immutable scan evidence
         if: always()
@@ -535,6 +545,12 @@ jobs:
         run: |
           evidence_directory="runtime-security-${RUNTIME_KIND}-${RUNTIME_SLOT}"
           test -d "$evidence_directory"
+          evidence_directory="$(cd "$evidence_directory" && pwd -P)"
+          manifest_temp="$(mktemp "${evidence_directory}.SHA256SUMS.XXXXXX")"
+          cleanup_manifest() {
+            rm -f "$manifest_temp"
+          }
+          trap cleanup_manifest EXIT
           (
             cd "$evidence_directory"
             find . \
@@ -544,10 +560,12 @@ jobs:
               -printf '%P\0' \
               | sort -z \
               | xargs -0 -r sha256sum \
-              > SHA256SUMS
-            test -s SHA256SUMS
-            sha256sum --check SHA256SUMS
+              > "$manifest_temp"
+            test -s "$manifest_temp"
+            sha256sum --check "$manifest_temp"
           )
+          mv "$manifest_temp" "$evidence_directory/SHA256SUMS"
+          trap - EXIT
 
       - name: Upload immutable digest evidence
         if: always()

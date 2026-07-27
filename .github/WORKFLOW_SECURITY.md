@@ -62,13 +62,18 @@ same signer/source revision; another same-repository workflow cannot satisfy tha
 The inventory is accepted only as canonical unique-key JSON, and its semantic schema is checked directly in the
 workflow-policy job. The same protected inventory can be scanned immediately through the explicit `inventory`
 dispatch mode; it is distinct from the single-candidate mode. Runtime-image concurrency is partitioned by event,
-manual mode and ref, and schedule/manual runs are never cancelled by pushes.
+with ref-group replacement only for pull-request/push events; schedule and manual runs use unique run IDs and cannot
+replace pending evidence.
 
 For repo, indexer and API, both current-source and pushed-digest scans independently recreate the frozen,
 non-optional production closure from the exact declared source revision with the digest-locked policy generator.
 The extracted final-image CycloneDX evidence must be byte-identical to that retained expected closure before Grype
 runs. Safe remains the explicit exception: it must have no NCC closure file and its installed packages are scanned
 directly.
+Source-only `.npmrc` and pnpm hook files are excluded because the runtime Dockerfiles do not copy them before
+installation. Empty user/global npm configuration plus explicit frozen, no-optional, ignore-scripts and
+ignore-pnpmfile controls on both install and inventory keep standard or custom workspace-configured hooks from
+executing or changing the independently expected graph.
 
 The in-repository `workflow-policy` job is advisory: a pull request can replace a required job with a no-op while
 preserving its check name. After merge, PRO-731 must install an organization or enterprise ruleset-required workflow

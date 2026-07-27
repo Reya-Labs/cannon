@@ -20,6 +20,7 @@ const runtimeImagePaths = [
   '.github/scripts/generate-bundle-input-sbom.mjs',
   '.github/scripts/generate-bundle-input-sbom.test.mjs',
   '.github/scripts/generate-expected-runtime-sbom.sh',
+  '.github/scripts/generate-expected-runtime-sbom.test.mjs',
   '.github/scripts/scan-runtime-image.sh',
   '.github/scripts/validate-runtime-image-inventory.mjs',
   '.github/scripts/validate-runtime-image-inventory.test.mjs',
@@ -148,7 +149,7 @@ const workflowPolicies = new Map([
 const exactWorkflowDigests = new Map([
   [
     'runtime-image-security.yml',
-    '32fcee6c72db52ebdc28b26d4ac3911aa97e23a33cadeaa616ee1f0e935c33c4',
+    '57e367db71a35cd21a7b8454ce0739611333457e59c1e6b02e1735cc3e0cf9f8',
   ],
 ]);
 
@@ -163,7 +164,11 @@ const exactPolicyFileDigests = new Map([
   ],
   [
     '.github/scripts/generate-expected-runtime-sbom.sh',
-    '41acb0dea6c2f6e742d2c410e23a9110c440a8532ae4f4b73a907dedc7781b5e',
+    '97bd18212674ea382830eb155465df6420a499408a724ef6504f9008c5edbbe7',
+  ],
+  [
+    '.github/scripts/generate-expected-runtime-sbom.test.mjs',
+    '8482728fb41722719eba083e7782711f5215021d7e5d208d8c14d7e674b1237b',
   ],
   [
     '.github/scripts/scan-runtime-image.sh',
@@ -232,6 +237,7 @@ const allowedGitHubContexts = new Map([
       'github.event.pull_request.head.sha',
       'github.ref_protected',
       'github.repository',
+      'github.run_id',
       'github.sha',
       'github.token',
     ]),
@@ -841,6 +847,23 @@ const auditRuntimeImageEvidenceContract = (repositoryRoot, errors) => {
         '.github/scripts/generate-expected-runtime-sbom.sh: expected closure must be generated from the exact declared checked-out source revision'
       );
     }
+    if (
+      generatorSource.split('--ignore-pnpmfile').length - 1 !== 1 ||
+      generatorSource.split('--config.ignore-pnpmfile=true').length - 1 !== 1 ||
+      !generatorSource.includes(
+        '\\( -name .npmrc -o -name .pnpmfile.cjs -o -name pnpmfile.cjs \\)'
+      ) ||
+      !generatorSource.includes(
+        '--env "NPM_CONFIG_USERCONFIG=/tmp/pnpm-userconfig"'
+      ) ||
+      !generatorSource.includes(
+        '--env "NPM_CONFIG_GLOBALCONFIG=/tmp/pnpm-globalconfig"'
+      )
+    ) {
+      errors.push(
+        '.github/scripts/generate-expected-runtime-sbom.sh: expected closure generation must ignore source-controlled pnpm hooks and isolate source-only npm configuration'
+      );
+    }
   }
 
   const workflowPath = join(
@@ -856,7 +879,7 @@ const auditRuntimeImageEvidenceContract = (repositoryRoot, errors) => {
     if (document.errors.length === 0) {
       const workflow = document.toJS({ maxAliasCount: 0 });
       const expectedConcurrencyGroup =
-        "runtime-image-security-${{ github.event_name }}-${{ inputs.mode || 'automatic' }}-${{ github.ref }}";
+        "runtime-image-security-${{ github.event_name }}-${{ (github.event_name == 'pull_request' || github.event_name == 'push') && github.ref || github.run_id }}";
       const expectedCancellation =
         "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}";
       if (
@@ -864,7 +887,7 @@ const auditRuntimeImageEvidenceContract = (repositoryRoot, errors) => {
         workflow?.concurrency?.['cancel-in-progress'] !== expectedCancellation
       ) {
         errors.push(
-          '.github/workflows/runtime-image-security.yml: concurrency must isolate event and manual-mode domains and cancel only replaceable pull-request or push runs'
+          '.github/workflows/runtime-image-security.yml: concurrency must use unique schedule/manual run IDs and ref-group cancellation only for replaceable pull-request or push runs'
         );
       }
     }
@@ -905,6 +928,36 @@ const auditRuntimeImageEvidenceContract = (repositoryRoot, errors) => {
         );
       }
     }
+
+    for (const requiredEvidenceSeal of [
+      'manifest_temp="$(mktemp "${evidence_directory}.SHA256SUMS.XXXXXX")"',
+      'trap cleanup_manifest EXIT',
+      'sha256sum --check "$manifest_temp"',
+      'mv "$manifest_temp" "$evidence_directory/SHA256SUMS"',
+      'trap - EXIT',
+    ]) {
+      if (workflowSource.split(requiredEvidenceSeal).length - 1 !== 2) {
+        errors.push(
+          '.github/workflows/runtime-image-security.yml: both evidence manifests must be verified through unique same-filesystem sibling files before atomic placement'
+        );
+        break;
+      }
+    }
+  }
+
+  const supplyChainPath = join(
+    repositoryRoot,
+    '.github/workflows/supply-chain.yml'
+  );
+  if (
+    existsSync(supplyChainPath) &&
+    !readFileSync(supplyChainPath, 'utf8').includes(
+      'node .github/scripts/generate-expected-runtime-sbom.test.mjs'
+    )
+  ) {
+    errors.push(
+      '.github/workflows/supply-chain.yml: source-controlled pnpm-hook isolation test must remain enforced'
+    );
   }
 };
 
