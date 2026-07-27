@@ -56,6 +56,10 @@ function waitForRedisReady(redis: RedisLifecycleClient): Promise<void> {
   });
 }
 
+/**
+ * Builds an idempotent Redis lifecycle that coalesces concurrent connection
+ * attempts and permits retry after failure or disconnect.
+ */
 export function createRedisLifecycle(redis: RedisLifecycleClient) {
   let connection: Promise<void> | undefined;
 
@@ -90,10 +94,12 @@ export function createRedisLifecycle(redis: RedisLifecycleClient) {
 
 const lifecycle = createRedisLifecycle(client);
 
+/** Connects the process-wide Redis client and waits until it is ready. */
 export async function connectRedis(): Promise<void> {
   await lifecycle.connect();
 }
 
+/** Disconnects the process-wide Redis client when it is open. */
 export async function disconnectRedis(): Promise<void> {
   await lifecycle.disconnect();
 }

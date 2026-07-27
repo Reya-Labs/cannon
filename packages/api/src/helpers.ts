@@ -4,10 +4,12 @@ import { BadRequestError, ServerError } from './errors';
 import { ApiDocumentType, RedisPackage, RedisTag } from './types';
 
 const packageNameRegex = /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]$/;
+/** Returns whether a value is a canonical Cannon package name. */
 export function isPackageName(packageName: unknown): packageName is string {
   return typeof packageName === 'string' && packageNameRegex.test(packageName);
 }
 
+/** Validates a package name and escapes hyphens for RediSearch queries. */
 export function parsePackageName(packageName: string) {
   if (!isPackageName(packageName)) {
     throw new BadRequestError('Invalid package name');
@@ -18,6 +20,7 @@ export function parsePackageName(packageName: string) {
 
 const MAX_PACKAGE_REF_LENGTH = 256;
 const partialPackageRefRegex = /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]:[^@]+(?:@[^\s]+)?$/;
+/** Returns whether a bounded value is a valid Cannon partial package reference. */
 export function isPartialPackageRef(packageName: unknown): packageName is string {
   return (
     typeof packageName === 'string' &&
@@ -28,6 +31,7 @@ export function isPartialPackageRef(packageName: unknown): packageName is string
 }
 
 const fullPackageRefRegex = /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]:[^@]+@[^\s]+$/;
+/** Returns whether a bounded value is a valid Cannon package reference with an explicit preset. */
 export function isFullPackageRef(fullPackageRef: unknown): fullPackageRef is string {
   return (
     typeof fullPackageRef === 'string' &&
@@ -38,15 +42,18 @@ export function isFullPackageRef(fullPackageRef: unknown): fullPackageRef is str
 }
 
 const contractNameRegex = /^[A-Z][A-Za-z0-9_]*$/;
+/** Returns whether a value is a supported Solidity contract identifier. */
 export function isContractName(contractName: unknown) {
   return typeof contractName === 'string' && contractNameRegex.test(contractName);
 }
 
 const functionSelectorRegex = /^0x[0-9a-fA-F]{8}$/;
+/** Returns whether a value is a four-byte EVM function or error selector. */
 export function isFunctionSelector(selector: unknown) {
   return typeof selector === 'string' && functionSelectorRegex.test(selector);
 }
 
+/** Returns whether a value is a bounded canonical function-style ABI signature. */
 export function isAbiSignature(signature: unknown): signature is string {
   if (typeof signature !== 'string' || signature.length > 512) return false;
 
@@ -59,6 +66,7 @@ export function isAbiSignature(signature: unknown): signature is string {
 }
 
 const chainIdRegex = /^[1-9][0-9]*$/;
+/** Returns whether a value encodes a positive JavaScript-safe chain identifier. */
 export function isChainId(chainId: unknown): chainId is string {
   if (typeof chainId !== 'string' || !chainIdRegex.test(chainId)) return false;
   const parsed = Number.parseInt(chainId, 10);
@@ -66,6 +74,7 @@ export function isChainId(chainId: unknown): chainId is string {
 }
 
 const MAX_CHAIN_IDS = 20;
+/** Parses and deduplicates a bounded comma-separated chain-id query parameter. */
 export function parseChainIds(chainIds: unknown): number[] {
   if (chainIds === undefined || chainIds === null || chainIds === '') return [];
   if (typeof chainIds !== 'string') throw new BadRequestError('Invalid chainIds parameter');
@@ -78,6 +87,7 @@ export function parseChainIds(chainIds: unknown): number[] {
 }
 
 const MAX_TEXT_QUERY_LENGTH = 256;
+/** Normalizes a bounded free-text query into the restricted RediSearch token alphabet. */
 export function parseTextQuery(query: unknown): string {
   if (query === undefined || query === null || query === '') return '';
 
@@ -96,6 +106,7 @@ export function parseTextQuery(query: unknown): string {
 }
 
 const QUERY_TYPES = new Set<ApiDocumentType>(['namespace', 'package', 'contract', 'function', 'error']);
+/** Parses and deduplicates the supported public document-type filter. */
 export function parseQueryTypes(type: unknown): ApiDocumentType[] {
   if (type === undefined || type === null || type === '') return [];
   if (typeof type !== 'string' || type.length > 128) throw new BadRequestError('Invalid types parameter');
@@ -109,6 +120,7 @@ export function parseQueryTypes(type: unknown): ApiDocumentType[] {
 
 const selectorRegex = /^0x[0-9a-fA-F]{8}$/;
 const MAX_SELECTORS = 20;
+/** Parses, lowercases, and deduplicates a bounded list of four-byte selectors. */
 export function parseSelectors(value: unknown): viem.Hex[] {
   if (typeof value !== 'string' || !value) throw new BadRequestError('Query selector not specified');
   const selectors = value.split(',');
@@ -122,12 +134,14 @@ export function parseSelectors(value: unknown): viem.Hex[] {
   return [...new Set(selectors.map((selector) => selector.toLowerCase()))] as viem.Hex[];
 }
 
+/** Parses the optional public selector kind, rejecting unsupported document types. */
 export function parseSelectorType(value: unknown): 'function' | 'error' | undefined {
   if (value === undefined) return undefined;
   if (value === 'function' || value === 'error') return value;
   throw new BadRequestError('type must be function or error');
 }
 
+/** Parses publisher addresses and rejects malformed configured values. */
 export function parseAddresses(addresses: any) {
   if (typeof addresses !== 'string') return [] as viem.Address[];
   const result = addresses.split(',');
@@ -139,6 +153,7 @@ export function parseAddresses(addresses: any) {
   return result as viem.Address[];
 }
 
+/** Returns whether a mutable Redis tag resolves to the supplied immutable package record. */
 export function isRedisTagOfPackage(a: RedisPackage, b: RedisTag) {
   return a.name === b.name && a.version === b.versionOfTag && a.preset === b.preset && a.chainId === b.chainId;
 }

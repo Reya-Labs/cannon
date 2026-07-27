@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { AggregateSteps, type RedisClientType } from 'redis';
 import { createChainQueries, MAX_CHAIN_RESULTS } from '../src/queries/chains';
+import { scopeContractQuery } from '../src/queries/contracts';
 import { createPackageQueryExecutor, createPartialPackageRefQuery, MAX_NAMESPACE_RESULTS } from '../src/queries/packages';
 import { createSelectorQueryExecutor } from '../src/queries/selectors';
 
@@ -10,7 +11,27 @@ const DEPLOY_URL = 'ipfs://QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn';
 const META_URL = 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
 const DEPLOY_URL_V1 = 'ipfs://bafybeiczsscdsbs7ffqz55asqdf3smv6klcw3gofszvwlyarci47bgf354';
 
+async function withCapturedWarnings<T>(run: () => Promise<T>): Promise<{ result: T; warnings: unknown[][] }> {
+  const warnings: unknown[][] = [];
+  const originalConsoleWarn = console.warn;
+  console.warn = (...values: unknown[]) => warnings.push(values);
+
+  try {
+    return { result: await run(), warnings };
+  } finally {
+    console.warn = originalConsoleWarn;
+  }
+}
+
 describe('bounded aggregate query factories', () => {
+  it('groups OR contract searches before applying chain scope', () => {
+    const query = "@contractName:'Core' | @contractName:Core* | @contractName:*Core*";
+
+    assert.equal(scopeContractQuery(query), query);
+    assert.equal(scopeContractQuery(query, []), query);
+    assert.equal(scopeContractQuery(query, [1, 1729]), `(${query}),@chainId:{1|1729}`);
+  });
+
   it('limits and validates chain aggregates while reusing the cached query promise', async () => {
     let aggregateCalls = 0;
     let aggregateOptions: { STEPS?: { from?: number; size?: number; type?: string }[] } | undefined;
@@ -143,22 +164,16 @@ describe('bounded aggregate query factories', () => {
       },
     };
     const redis = { multi: () => batch } as unknown as RedisClientType;
-    const warnings: unknown[][] = [];
-    const originalConsoleWarn = console.warn;
-    console.warn = (...values: unknown[]) => warnings.push(values);
-
-    try {
+    const { result, warnings } = await withCapturedWarnings(async () => {
       const queryPackages = createPackageQueryExecutor(async () => redis);
-      const result = await queryPackages({ includeNamespaces: true, query: '*' });
+      return queryPackages({ includeNamespaces: true, query: '*' });
+    });
 
-      assert.deepEqual(result.data, [{ count: 2, name: 'valid', type: 'namespace' }]);
-      assert.deepEqual(
-        warnings,
-        Array.from({ length: 5 }, () => ['query API skipped malformed Redis document', { kind: 'namespace' }])
-      );
-    } finally {
-      console.warn = originalConsoleWarn;
-    }
+    assert.deepEqual(result.data, [{ count: 2, name: 'valid', type: 'namespace' }]);
+    assert.deepEqual(
+      warnings,
+      Array.from({ length: 5 }, () => ['query API skipped malformed Redis document', { kind: 'namespace' }])
+    );
   });
 
   it('evicts rejected chain query promises so a recovered Redis can be retried', async () => {
@@ -290,27 +305,21 @@ describe('bounded aggregate query factories', () => {
         };
       },
     } as unknown as RedisClientType;
-    const warnings: unknown[][] = [];
-    const originalConsoleWarn = console.warn;
-    console.warn = (...values: unknown[]) => warnings.push(values);
-
-    try {
+    const { result, warnings } = await withCapturedWarnings(async () => {
       const queryPartialPackageRef = createPartialPackageRefQuery(
         async () => redis,
         async () => [1, 2]
       );
-      const result = await queryPartialPackageRef({ packageRef: 'valid-package:latest' });
+      return queryPartialPackageRef({ packageRef: 'valid-package:latest' });
+    });
 
-      assert.equal(result.total, 1);
-      assert.equal(result.data[0]?.name, 'valid-package');
-      assert.equal(result.data[0]?.chainId, 1);
-      assert.equal(result.data[0]?.publisher, '0x0000000000000000000000000000000000000001');
-      assert.equal('owner' in result.data[0]!, false);
-      assert.deepEqual(fanouts, [2, 1]);
-      assert.deepEqual(warnings, [['query API skipped malformed Redis document', { kind: 'tag' }]]);
-    } finally {
-      console.warn = originalConsoleWarn;
-    }
+    assert.equal(result.total, 1);
+    assert.equal(result.data[0]?.name, 'valid-package');
+    assert.equal(result.data[0]?.chainId, 1);
+    assert.equal(result.data[0]?.publisher, '0x0000000000000000000000000000000000000001');
+    assert.equal('owner' in result.data[0]!, false);
+    assert.deepEqual(fanouts, [2, 1]);
+    assert.deepEqual(warnings, [['query API skipped malformed Redis document', { kind: 'tag' }]]);
   });
 
   it('normalizes exact-version partial matches into the public package contract', async () => {
@@ -431,29 +440,23 @@ describe('bounded aggregate query factories', () => {
         hGetAll: () => undefined,
       }),
     } as unknown as RedisClientType;
-    const warnings: unknown[][] = [];
-    const originalConsoleWarn = console.warn;
-    console.warn = (...values: unknown[]) => warnings.push(values);
-
-    try {
+    const { result, warnings } = await withCapturedWarnings(async () => {
       const queryPartialPackageRef = createPartialPackageRefQuery(
         async () => redis,
         async () => [1, 2, 3, 4, 5]
       );
 
-      const result = await queryPartialPackageRef({ packageRef: 'valid-package:1.2.3' });
+      return queryPartialPackageRef({ packageRef: 'valid-package:1.2.3' });
+    });
 
-      assert.equal(result.total, 1);
-      assert.equal(result.data[0]?.chainId, 5);
-      assert.deepEqual(warnings, [
-        ['query API skipped malformed Redis document', { kind: 'package' }],
-        ['query API skipped malformed Redis document', { kind: 'package' }],
-        ['query API skipped malformed Redis document', { kind: 'package' }],
-        ['query API skipped malformed Redis document', { kind: 'package' }],
-      ]);
-    } finally {
-      console.warn = originalConsoleWarn;
-    }
+    assert.equal(result.total, 1);
+    assert.equal(result.data[0]?.chainId, 5);
+    assert.deepEqual(warnings, [
+      ['query API skipped malformed Redis document', { kind: 'package' }],
+      ['query API skipped malformed Redis document', { kind: 'package' }],
+      ['query API skipped malformed Redis document', { kind: 'package' }],
+      ['query API skipped malformed Redis document', { kind: 'package' }],
+    ]);
   });
 
   it('applies chain scope before the selector limit and rejects contextual global records', async () => {
@@ -504,41 +507,35 @@ describe('bounded aggregate query factories', () => {
         },
       },
     };
-    const warnings: unknown[][] = [];
-    const originalConsoleWarn = console.warn;
-    console.warn = (...values: unknown[]) => warnings.push(values);
-
-    try {
+    const { result, warnings } = await withCapturedWarnings(async () => {
       const querySelectors = createSelectorQueryExecutor(async () => redis);
-      const result = await querySelectors({
+      return querySelectors({
         limit: 20,
         query: '@selector:{0x82b42900}',
         chainIds: [1729],
       });
+    });
 
-      assert.deepEqual(searchQueries, ['@selector:{0x82b42900},@chainId:{1729}']);
-      assert.equal(result.total, 2);
-      assert.deepEqual(
-        result.data.map(({ type, chainId }) => [type, chainId]),
-        [
-          ['error', 1729],
-          ['function', 1729],
-        ]
-      );
-      assert.equal(
-        result.data.some(({ chainId }) => Number.isNaN(chainId)),
-        false
-      );
-      assert.deepEqual(warnings, [
-        ['query API skipped malformed Redis document', { kind: 'selector' }],
-        ['query API skipped malformed Redis document', { kind: 'selector' }],
-        ['query API skipped malformed Redis document', { kind: 'selector' }],
-        ['query API skipped malformed Redis document', { kind: 'selector' }],
-        ['query API skipped malformed Redis document', { kind: 'selector' }],
-        ['query API skipped malformed Redis document', { kind: 'selector' }],
-      ]);
-    } finally {
-      console.warn = originalConsoleWarn;
-    }
+    assert.deepEqual(searchQueries, ['@selector:{0x82b42900},@chainId:{1729}']);
+    assert.equal(result.total, 2);
+    assert.deepEqual(
+      result.data.map(({ type, chainId }) => [type, chainId]),
+      [
+        ['error', 1729],
+        ['function', 1729],
+      ]
+    );
+    assert.equal(
+      result.data.some(({ chainId }) => Number.isNaN(chainId)),
+      false
+    );
+    assert.deepEqual(warnings, [
+      ['query API skipped malformed Redis document', { kind: 'selector' }],
+      ['query API skipped malformed Redis document', { kind: 'selector' }],
+      ['query API skipped malformed Redis document', { kind: 'selector' }],
+      ['query API skipped malformed Redis document', { kind: 'selector' }],
+      ['query API skipped malformed Redis document', { kind: 'selector' }],
+      ['query API skipped malformed Redis document', { kind: 'selector' }],
+    ]);
   });
 });

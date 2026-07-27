@@ -60,10 +60,18 @@ async function _aggregateContracts(query: string, limit: number): Promise<Contra
   return data;
 }
 
+/**
+ * Applies an optional chain constraint to a complete RediSearch contract query.
+ *
+ * The base query is grouped so an OR expression cannot escape the chain
+ * constraint through RediSearch operator precedence.
+ */
+export function scopeContractQuery(query: string, chainIds?: number[]): string {
+  return chainIds?.length ? `(${query}),@chainId:{${chainIds.join('|')}}` : query;
+}
+
 async function _queryContracts(params: { query: string; limit?: number; chainIds?: number[] }) {
-  const queries = [params.query];
-  if (params.chainIds?.length) queries.push(`@chainId:{${params.chainIds.join('|')}}`);
-  const results = await _aggregateContracts(queries.join(','), params.limit ?? 20);
+  const results = await _aggregateContracts(scopeContractQuery(params.query, params.chainIds), params.limit ?? 20);
 
   const data = results.map((doc) => {
     const ref = new PackageReference(doc.package);

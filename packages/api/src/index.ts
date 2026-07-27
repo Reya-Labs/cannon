@@ -15,6 +15,12 @@ function throwCombinedErrors(primaryError: unknown, cleanupError: unknown, messa
   throw new AggregateError([primaryError, cleanupError], message);
 }
 
+/**
+ * Starts the query API before connecting to Redis in the background.
+ *
+ * Injected dependencies support isolated lifecycle tests. Startup and shutdown
+ * preserve both primary and cleanup failures in an AggregateError.
+ */
 export async function startServer(
   dependencies: StartServerDependencies = {}
 ): Promise<{ close: () => Promise<void>; server: Server }> {

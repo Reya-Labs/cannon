@@ -14,6 +14,11 @@ function normalizeMetricLabels(labels: Record<string, number | string>): void {
   }
 }
 
+/**
+ * Creates the authenticated metrics route on the API listener.
+ *
+ * Route and method normalization keep label cardinality finite.
+ */
 export function createMetricsRouter(config: ApiConfig): Router {
   const metrics = Router();
   const registry = new Registry();
