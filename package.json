@@ -17,7 +17,7 @@
     "verify:artifact-release": "node .github/scripts/verify-artifact-codec-release.mjs",
     "prepare:artifact-release": "pnpm -r --filter @usecannon/artifact-codec --filter @usecannon/builder --filter @usecannon/cli --filter hardhat-cannon run clean && pnpm -r --filter @usecannon/artifact-codec --filter @usecannon/builder --filter @usecannon/cli --filter hardhat-cannon run build",
     "publish": "pnpm run verify:artifact-release -- --require-versioned && pnpm run prepare:artifact-release && lerna publish from-package --no-private --concurrency 1 --reject-cycles --graph-type dependencies",
-    "publish-alpha": "pnpm run verify:artifact-release -- --require-versioned && pnpm run prepare:artifact-release && lerna publish from-package --no-private --concurrency 1 --reject-cycles --graph-type dependencies --preid alpha --dist-tag alpha",
+    "publish-alpha": "pnpm run verify:artifact-release -- --require-versioned && pnpm run prepare:artifact-release && lerna publish from-package --no-private --concurrency 1 --reject-cycles --graph-type dependencies --dist-tag alpha",
     "test": "pnpm -r --if-present --filter './packages/**' --filter !@usecannon/repo run test",
     "docgen-md": "pnpm -r --if-present run docgen",
     "changeset": "changeset"
@@ -57,7 +57,6 @@
     "react-multi-ref": "^1.0.2",
     "scroll-into-view-if-needed": "^3.1.0"
   },
-  "engineStrict": true,
   "engines": {
     "node": ">=20.0.0",
     "pnpm": ">=9"

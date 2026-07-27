@@ -9,12 +9,12 @@
     "dist"
   ],
   "scripts": {
-    "test": "pnpm run build && node --test scripts/index.test.mjs",
+    "test": "pnpm run build && node --test scripts/index.test.mjs scripts/watch-process.test.mjs",
     "test:browser-bundle": "node scripts/verify-browser-bundle.mjs",
     "test:kubo-oracle": "pnpm run build && node scripts/verify-kubo-oracle.mjs",
-    "build": "pnpm run clean && tsc -p tsconfig.json && rollup -c && rm -rf ./.build",
+    "build": "pnpm run clean && tsc -p tsconfig.json && rollup -c && node scripts/clean.mjs .build",
     "watch": "tsc -p tsconfig.json && rollup -c && node scripts/watch.mjs",
-    "clean": "rm -rf ./dist ./.build",
+    "clean": "node scripts/clean.mjs dist .build",
     "prepack": "pnpm run build"
   },
   "keywords": [
@@ -46,6 +46,5 @@
   },
   "engines": {
     "node": ">=20.0.0"
-  },
-  "engineStrict": true
+  }
 }

@@ -121,6 +121,71 @@ function hasCoupledMajorIntent(source) {
   );
 }
 
+function buildConsumerRuntimeCheck(expectedCid, expectedVersion) {
+  return [
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    "const codec = require('@usecannon/artifact-codec');",
+    "const builder = require('@usecannon/builder');",
+    `const expected = ${JSON.stringify(expectedCid)};`,
+    `const expectedVersion = ${JSON.stringify(expectedVersion)};`,
+    'function readInstalledManifest(packageName) {',
+    '  let directory = path.dirname(require.resolve(packageName));',
+    '  while (directory !== path.dirname(directory)) {',
+    "    const manifestPath = path.join(directory, 'package.json');",
+    '    if (fs.existsSync(manifestPath)) {',
+    "      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));",
+    '      if (manifest.name === packageName) return manifest;',
+    '    }',
+    '    directory = path.dirname(directory);',
+    '  }',
+    '  throw new Error(`could not resolve installed manifest for ${packageName}`);',
+    '}',
+    "for (const packageName of ['@usecannon/artifact-codec', '@usecannon/builder', '@usecannon/cli', 'hardhat-cannon']) {",
+    '  const manifest = readInstalledManifest(packageName);',
+    '  if (manifest.version !== expectedVersion) {',
+    '    throw new Error(`${packageName} resolved ${manifest.version}; expected ${expectedVersion}`);',
+    '  }',
+    '}',
+    "Promise.all([codec.getContentCID(Buffer.from('hello world')), builder.getContentCID(Buffer.from('hello world'))])",
+    '  .then(([codecCid, builderCid]) => {',
+    '    if (codecCid !== expected || builderCid !== expected) {',
+    '      throw new Error(`artifact CID mismatch: ${codecCid} ${builderCid}; expected ${expected}`);',
+    '    }',
+    '  })',
+    '  .catch((error) => {',
+    '    console.error(error);',
+    '    process.exitCode = 1;',
+    '  });',
+  ].join('\n');
+}
+
+function selectReleaseFailure(primaryError, cleanupErrors) {
+  if (primaryError !== undefined) return primaryError;
+  if (cleanupErrors.length === 0) return undefined;
+  if (cleanupErrors.length === 1) return cleanupErrors[0];
+  return new AggregateError(
+    cleanupErrors,
+    'release verification cleanup failed'
+  );
+}
+
+{
+  const primaryFailureProbe = new Error('primary release failure probe');
+  const cleanupFailureProbe = new Error('cleanup failure probe');
+  assert.equal(
+    selectReleaseFailure(primaryFailureProbe, [cleanupFailureProbe]),
+    primaryFailureProbe,
+    'cleanup failures must not replace the primary release-contract failure'
+  );
+  assert.equal(
+    selectReleaseFailure(undefined, [cleanupFailureProbe]),
+    cleanupFailureProbe,
+    'cleanup failures must propagate when the release contract succeeded'
+  );
+}
+
+let primaryError;
 try {
   const verifierArguments = process.argv
     .slice(2)
@@ -209,9 +274,9 @@ try {
       `${packageName} must declare the Cannon v3 Node 20 floor`
     );
     assert.equal(
-      manifest.engineStrict,
-      true,
-      `${packageName} must enforce its declared Node floor`
+      Object.hasOwn(manifest, 'engineStrict'),
+      false,
+      `${packageName} must not claim ineffective package-level engine enforcement`
     );
   }
   const sourceMajor = Number(sourceCodecManifest.version.split('.')[0]);
@@ -379,7 +444,11 @@ try {
   ]) {
     assert.equal(manifest.version, codecManifest.version);
     assert.equal(manifest.engines?.node, '>=20.0.0');
-    assert.equal(manifest.engineStrict, true);
+    assert.equal(
+      Object.hasOwn(manifest, 'engineStrict'),
+      false,
+      `${manifest.name} must not publish the ineffective engineStrict field`
+    );
   }
   assert.equal(codecManifest.publishConfig?.access, 'public');
   assert.equal(
@@ -445,6 +514,11 @@ try {
     readFileSync(join(repositoryRoot, 'package.json'), 'utf8')
   );
   assert.equal(
+    Object.hasOwn(rootPackage, 'engineStrict'),
+    false,
+    'the root manifest must not claim ineffective package-level engine enforcement'
+  );
+  assert.equal(
     rootPackage.scripts['prepare:artifact-release'],
     'pnpm -r --filter @usecannon/artifact-codec --filter @usecannon/builder --filter @usecannon/cli --filter hardhat-cannon run clean && pnpm -r --filter @usecannon/artifact-codec --filter @usecannon/builder --filter @usecannon/cli --filter hardhat-cannon run build',
     'the retry-safe release preparation must clean and rebuild the complete fixed group'
@@ -460,6 +534,12 @@ try {
     assert.match(script, /--graph-type dependencies/u);
     assert.doesNotMatch(script, /--no-sort/u);
   }
+  assert.doesNotMatch(
+    rootPackage.scripts['publish-alpha'],
+    /--preid/u,
+    'from-package publishes manifest versions and must not pretend to calculate a prerelease'
+  );
+  assert.match(rootPackage.scripts['publish-alpha'], /--dist-tag alpha/u);
 
   writeFileSync(
     join(consumerDirectory, 'package.json'),
@@ -472,10 +552,16 @@ try {
         dependencies: {
           '@usecannon/artifact-codec': `file:${codecTarball}`,
           '@usecannon/builder': `file:${builderTarball}`,
+          '@usecannon/cli': `file:${cliTarball}`,
+          'hardhat-cannon': `file:${hardhatTarball}`,
+          hardhat: '2.22.19',
         },
         pnpm: {
           overrides: {
             [`@usecannon/artifact-codec@${codecManifest.version}`]: `file:${codecTarball}`,
+            [`@usecannon/builder@${builderManifest.version}`]: `file:${builderTarball}`,
+            [`@usecannon/cli@${cliManifest.version}`]: `file:${cliTarball}`,
+            [`hardhat-cannon@${hardhatManifest.version}`]: `file:${hardhatTarball}`,
           },
         },
       },
@@ -526,41 +612,99 @@ try {
       cwd: consumerDirectory,
     }
   );
+  const runtimeExpectedCid = 'Qmf412jQZiuVUtdgnB36FXFX7xg5V6KEbSJ4dpQuhkLyfD';
+  const rejectionWarningEnvironment = {
+    NODE_OPTIONS: '--unhandled-rejections=warn',
+  };
   run(
     process.execPath,
     [
       '-e',
-      [
-        "const codec = require('@usecannon/artifact-codec');",
-        "const builder = require('@usecannon/builder');",
-        "const expected = 'Qmf412jQZiuVUtdgnB36FXFX7xg5V6KEbSJ4dpQuhkLyfD';",
-        "Promise.all([codec.getContentCID(Buffer.from('hello world')), builder.getContentCID(Buffer.from('hello world'))])",
-        '  .then(([codecCid, builderCid]) => {',
-        '    if (codecCid !== expected || builderCid !== expected) throw new Error(`${codecCid} ${builderCid}`);',
-        '  });',
-      ].join('\n'),
+      buildConsumerRuntimeCheck(runtimeExpectedCid, codecManifest.version),
     ],
-    { cwd: consumerDirectory }
+    {
+      cwd: consumerDirectory,
+      env: rejectionWarningEnvironment,
+    }
   );
-} finally {
+  assert.throws(
+    () =>
+      run(
+        process.execPath,
+        [
+          '-e',
+          buildConsumerRuntimeCheck(
+            'invalid-regression-probe',
+            codecManifest.version
+          ),
+        ],
+        {
+          cwd: consumerDirectory,
+          env: rejectionWarningEnvironment,
+        }
+      ),
+    /exited 1[\s\S]*artifact CID mismatch/u,
+    'a CID mismatch must fail explicitly even when unhandled rejections only warn'
+  );
+} catch (error) {
+  primaryError = error;
+}
+
+const cleanupErrors = [];
+const cleanupSteps = [
+  ['generated output cleanup', cleanGeneratedOutput],
+  [
+    'temporary release directory cleanup',
+    () => rmSync(temporaryRoot, { recursive: true, force: true }),
+  ],
+];
+if (publicationHead !== undefined) {
+  cleanupSteps.push(
+    [
+      'release HEAD re-verification',
+      () =>
+        assert.equal(
+          run('git', ['rev-parse', '--verify', 'HEAD']),
+          publicationHead,
+          'release verification must remain bound to one Git commit'
+        ),
+    ],
+    [
+      'release worktree re-verification',
+      () =>
+        assert.equal(
+          run('git', ['status', '--porcelain=v1', '--untracked-files=all']),
+          publicationStatus,
+          'release verification lifecycle scripts must not mutate publish inputs'
+        ),
+    ]
+  );
+}
+
+for (const [label, cleanup] of cleanupSteps) {
   try {
-    cleanGeneratedOutput();
-  } finally {
-    rmSync(temporaryRoot, { recursive: true, force: true });
-  }
-  if (publicationHead !== undefined) {
-    assert.equal(
-      run('git', ['rev-parse', '--verify', 'HEAD']),
-      publicationHead,
-      'release verification must remain bound to one Git commit'
-    );
-    assert.equal(
-      run('git', ['status', '--porcelain=v1', '--untracked-files=all']),
-      publicationStatus,
-      'release verification lifecycle scripts must not mutate publish inputs'
+    cleanup();
+  } catch (error) {
+    cleanupErrors.push(
+      new Error(`${label} failed`, {
+        cause: error,
+      })
     );
   }
 }
+
+if (primaryError !== undefined && cleanupErrors.length > 0) {
+  for (const cleanupError of cleanupErrors) {
+    process.stderr.write(
+      `Suppressed after primary release-contract failure: ${
+        cleanupError.stack ?? cleanupError
+      }\n`
+    );
+  }
+}
+
+const releaseFailure = selectReleaseFailure(primaryError, cleanupErrors);
+if (releaseFailure !== undefined) throw releaseFailure;
 
 process.stdout.write(
   `Artifact release contract verified on Node ${

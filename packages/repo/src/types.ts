@@ -32,6 +32,13 @@ export interface CatContext {
   objectStoreRead: ObjectStoreReadClient;
 }
 
+/**
+ * Minimum artifact shape consumed by the repository service.
+ *
+ * `miscUrl` points to the content-addressed miscellaneous artifact payload.
+ * The index signature preserves additional Cannon artifact fields that the
+ * repository stores without interpreting.
+ */
 export interface CannonPackageArtifact {
   miscUrl: string;
   [key: string]: unknown;

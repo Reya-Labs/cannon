@@ -44,7 +44,7 @@ jobs:
       - run: pnpm --filter @usecannon/builder build
       - run: pnpm exec eslint 'packages/{artifact-codec,builder,cli,repo}/**/*.{js,mjs,ts}'
       - run: pnpm exec eslint --no-ignore .github/scripts/verify-artifact-codec-release.mjs
-      - run: pnpm exec prettier --check .changeset/config.json .github/scripts/verify-artifact-codec-release.mjs packages/artifact-codec/scripts/watch.mjs packages/builder/scripts/watch.mjs
+      - run: pnpm exec prettier --check .changeset/config.json .github/scripts/verify-artifact-codec-release.mjs packages/artifact-codec/scripts/*.mjs packages/builder/scripts/watch.mjs
       - run: pnpm --filter @usecannon/cli build
       - run: pnpm --filter @usecannon/cli exec jest src/settings.test.ts src/loader.test.ts src/helpers.test.ts --runInBand
       - run: pnpm --filter @usecannon/repo build

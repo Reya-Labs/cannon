@@ -1,6 +1,5 @@
-import { spawn } from 'node:child_process';
+import { spawnPnpm, terminateProcessTrees } from './watch-process.mjs';
 
-const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 const commands = [
   {
     label: 'TypeScript',
@@ -21,7 +20,7 @@ const commands = [
 
 const children = commands.map(({ label, args }) => ({
   label,
-  process: spawn(pnpm, args, {
+  process: spawnPnpm(args, {
     cwd: new URL('..', import.meta.url),
     stdio: 'inherit',
   }),
@@ -34,8 +33,8 @@ function stop(exitCode, signal = 'SIGTERM') {
   stopping = true;
   process.exitCode = exitCode;
 
-  for (const child of children) {
-    child.process.kill(signal);
+  for (const failure of terminateProcessTrees(children, signal)) {
+    console.error(`${failure.label} watcher failed to stop:`, failure.error);
   }
 }
 
