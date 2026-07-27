@@ -12,6 +12,7 @@
     "build": "node src/build.mjs",
     "lint": "node scripts/lint.mjs",
     "scan": "node scripts/scan-export.mjs dist",
-    "test": "node --test"
+    "test": "node --test",
+    "verify:dormant": "node scripts/verify-dormant-clients.mjs"
   }
 }

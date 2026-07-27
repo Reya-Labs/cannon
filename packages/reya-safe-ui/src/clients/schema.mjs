@@ -1,0 +1,495 @@
+import { REYA_CHAIN_ID } from './config.mjs';
+import { fail } from './errors.mjs';
+
+const BASE58_ALPHABET =
+  '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const BASE58_VALUES = new Map(
+  [...BASE58_ALPHABET].map((character, index) => [character, index])
+);
+const ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
+const CONTRACT_NAME_PATTERN = /^[A-Z][A-Za-z0-9_]{0,127}$/;
+const PACKAGE_NAME_PATTERN = /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]$/;
+const PACKAGE_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,31}$/;
+const PACKAGE_PRESET_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,23}$/;
+const SELECTOR_PATTERN = /^0x(?:[0-9a-f]{8}|[0-9a-f]{64})$/;
+const MAX_RESPONSE_TOTAL = 1_000_000;
+const MAX_SEARCH_RESULTS = 500;
+const MAX_PACKAGE_RESULTS = 500;
+const MAX_SELECTOR_RESULTS = 10;
+const DOCUMENT_TYPES = new Set([
+  'contract',
+  'error',
+  'event',
+  'function',
+  'namespace',
+  'package',
+]);
+const SELECTOR_TYPES = new Set(['error', 'event', 'function']);
+
+function reject() {
+  fail('RESPONSE_REJECTED');
+}
+
+function isPlainObject(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function assertObject(value) {
+  if (!isPlainObject(value)) reject();
+  return value;
+}
+
+function assertExactKeys(value, required, optional = []) {
+  const record = assertObject(value);
+  const actual = Reflect.ownKeys(record);
+  if (
+    required.some((key) => !Object.hasOwn(record, key)) ||
+    actual.some(
+      (key) =>
+        typeof key !== 'string' ||
+        (!required.includes(key) && !optional.includes(key))
+    )
+  ) {
+    reject();
+  }
+  return record;
+}
+
+function assertString(value, maximum, pattern) {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > maximum ||
+    /[\u0000-\u001f\u007f]/.test(value) ||
+    (pattern && !pattern.test(value))
+  ) {
+    reject();
+  }
+  return value;
+}
+
+function assertNonNegativeInteger(value, maximum = Number.MAX_SAFE_INTEGER) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > maximum) {
+    reject();
+  }
+  return value;
+}
+
+function assertChainId(value) {
+  if (value !== REYA_CHAIN_ID) reject();
+  return value;
+}
+
+function assertIndexedChainId(value) {
+  if (!Number.isSafeInteger(value) || value < 1) reject();
+  return value;
+}
+
+function assertAddress(value) {
+  return assertString(value, 42, ADDRESS_PATTERN);
+}
+
+function decodeBase58(value) {
+  const bytes = [0];
+
+  for (const character of value) {
+    const digit = BASE58_VALUES.get(character);
+    if (digit === undefined) return undefined;
+
+    let carry = digit;
+    for (let index = 0; index < bytes.length; index += 1) {
+      carry += bytes[index] * 58;
+      bytes[index] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+
+  for (
+    let index = 0;
+    index < value.length - 1 && value[index] === '1';
+    index += 1
+  ) {
+    bytes.push(0);
+  }
+  return Uint8Array.from(bytes.reverse());
+}
+
+export function isCanonicalCidV0(value) {
+  if (
+    typeof value !== 'string' ||
+    value.length !== 46 ||
+    !value.startsWith('Qm')
+  ) {
+    return false;
+  }
+
+  const decoded = decodeBase58(value);
+  return (
+    decoded?.byteLength === 34 && decoded[0] === 0x12 && decoded[1] === 0x20
+  );
+}
+
+function assertIpfsUrl(value, allowEmpty = false) {
+  if (allowEmpty && value === '') return value;
+  if (
+    typeof value !== 'string' ||
+    !value.startsWith('ipfs://') ||
+    !isCanonicalCidV0(value.slice('ipfs://'.length))
+  ) {
+    reject();
+  }
+  return value;
+}
+
+function assertPackageName(value) {
+  return assertString(value, 31, PACKAGE_NAME_PATTERN);
+}
+
+function assertPackageVersion(value) {
+  return assertString(value, 32, PACKAGE_VERSION_PATTERN);
+}
+
+function assertPackagePreset(value) {
+  return assertString(value, 24, PACKAGE_PRESET_PATTERN);
+}
+
+function assertPackage(document) {
+  const value = assertExactKeys(
+    document,
+    [
+      'chainId',
+      'deployUrl',
+      'metaUrl',
+      'name',
+      'preset',
+      'publisher',
+      'timestamp',
+      'type',
+      'version',
+    ],
+    ['miscUrl']
+  );
+  if (value.type !== 'package') reject();
+  assertPackageName(value.name);
+  assertPackageVersion(value.version);
+  assertPackagePreset(value.preset);
+  assertChainId(value.chainId);
+  assertIpfsUrl(value.deployUrl);
+  assertIpfsUrl(value.metaUrl, true);
+  if (Object.hasOwn(value, 'miscUrl')) assertIpfsUrl(value.miscUrl);
+  assertNonNegativeInteger(value.timestamp);
+  assertAddress(value.publisher);
+  return value;
+}
+
+function assertNamespace(document) {
+  const value = assertExactKeys(document, ['count', 'name', 'type']);
+  if (value.type !== 'namespace') reject();
+  assertPackageName(value.name);
+  assertNonNegativeInteger(value.count, MAX_RESPONSE_TOTAL);
+  return value;
+}
+
+function assertContract(document) {
+  const value = assertExactKeys(document, [
+    'address',
+    'chainId',
+    'name',
+    'packageName',
+    'preset',
+    'type',
+    'version',
+  ]);
+  if (value.type !== 'contract') reject();
+  assertString(value.name, 128, CONTRACT_NAME_PATTERN);
+  assertAddress(value.address);
+  assertChainId(value.chainId);
+  assertPackageName(value.packageName);
+  assertPackagePreset(value.preset);
+  assertPackageVersion(value.version);
+  return value;
+}
+
+function assertSelector(document) {
+  const optional = [
+    'address',
+    'chainId',
+    'contractName',
+    'packageName',
+    'preset',
+    'version',
+  ];
+  const value = assertExactKeys(
+    document,
+    ['name', 'selector', 'type'],
+    optional
+  );
+  if (!SELECTOR_TYPES.has(value.type)) reject();
+  assertString(value.name, 512);
+  assertString(value.selector, 66, SELECTOR_PATTERN);
+
+  if (Object.hasOwn(value, 'address')) assertAddress(value.address);
+  if (Object.hasOwn(value, 'chainId')) assertChainId(value.chainId);
+  if (Object.hasOwn(value, 'contractName')) {
+    assertString(value.contractName, 128, CONTRACT_NAME_PATTERN);
+  }
+
+  const packageFields = ['packageName', 'preset', 'version'];
+  const packageFieldCount = packageFields.filter((key) =>
+    Object.hasOwn(value, key)
+  ).length;
+  if (packageFieldCount !== 0 && packageFieldCount !== packageFields.length) {
+    reject();
+  }
+  if (packageFieldCount === packageFields.length) {
+    assertPackageName(value.packageName);
+    assertPackagePreset(value.preset);
+    assertPackageVersion(value.version);
+    if (
+      !Object.hasOwn(value, 'address') ||
+      !Object.hasOwn(value, 'chainId') ||
+      !Object.hasOwn(value, 'contractName')
+    ) {
+      reject();
+    }
+  }
+  return value;
+}
+
+function assertDocument(document) {
+  const value = assertObject(document);
+  if (!DOCUMENT_TYPES.has(value.type)) reject();
+  switch (value.type) {
+    case 'contract':
+      return assertContract(value);
+    case 'namespace':
+      return assertNamespace(value);
+    case 'package':
+      return assertPackage(value);
+    case 'error':
+    case 'event':
+    case 'function':
+      return assertSelector(value);
+    default:
+      reject();
+  }
+}
+
+function assertArray(value, maximum) {
+  if (!Array.isArray(value) || value.length > maximum) reject();
+  return value;
+}
+
+function assertStatus(value) {
+  if (value !== 200) reject();
+}
+
+function deepFreeze(value) {
+  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const item of Object.values(value)) deepFreeze(item);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+export function validateChainsResponse(response) {
+  const value = assertExactKeys(response, ['data', 'status', 'total']);
+  assertStatus(value.status);
+  assertNonNegativeInteger(value.total, MAX_RESPONSE_TOTAL);
+  const data = assertArray(value.data, 50);
+  data.forEach(assertIndexedChainId);
+  if (
+    new Set(data).size !== data.length ||
+    value.total < data.length ||
+    !data.includes(REYA_CHAIN_ID)
+  ) {
+    reject();
+  }
+  return deepFreeze({
+    data: [REYA_CHAIN_ID],
+    status: 200,
+    total: 1,
+  });
+}
+
+export function validatePackagesResponse(response) {
+  const value = assertExactKeys(response, ['data', 'status', 'total']);
+  assertStatus(value.status);
+  assertNonNegativeInteger(value.total, MAX_RESPONSE_TOTAL);
+  const data = assertArray(value.data, MAX_PACKAGE_RESULTS);
+  data.forEach(assertPackage);
+  if (value.total < data.length) reject();
+  return deepFreeze(value);
+}
+
+export function validatePackageResponse(response) {
+  const value = assertExactKeys(response, ['data', 'status']);
+  assertStatus(value.status);
+  assertPackage(value.data);
+  return deepFreeze(value);
+}
+
+export function validateSearchResponse(response) {
+  const value = assertExactKeys(response, [
+    'data',
+    'isAddress',
+    'isContractName',
+    'isFunctionSelector',
+    'isHex',
+    'isPackageRef',
+    'isTx',
+    'query',
+    'status',
+    'total',
+  ]);
+  assertStatus(value.status);
+  assertString(value.query, 256);
+  for (const key of [
+    'isAddress',
+    'isContractName',
+    'isFunctionSelector',
+    'isHex',
+    'isPackageRef',
+    'isTx',
+  ]) {
+    if (typeof value[key] !== 'boolean') reject();
+  }
+  assertNonNegativeInteger(value.total, MAX_RESPONSE_TOTAL);
+  const data = assertArray(value.data, MAX_SEARCH_RESULTS);
+  data.forEach(assertDocument);
+  if (value.total < data.length) reject();
+  return deepFreeze(value);
+}
+
+export function validateSelectorResponse(response, requestedSelectors) {
+  const value = assertExactKeys(response, ['results', 'status']);
+  assertStatus(value.status);
+  const results = assertObject(value.results);
+  const keys = Object.keys(results).sort();
+  const expected = [...requestedSelectors].sort();
+  if (JSON.stringify(keys) !== JSON.stringify(expected)) reject();
+
+  for (const selector of expected) {
+    const entries = assertArray(results[selector], MAX_SELECTOR_RESULTS);
+    entries.forEach(assertSelector);
+  }
+  return deepFreeze(value);
+}
+
+export function validateSearchInput(input) {
+  const value = assertInputObject(input, ['query'], ['types']);
+  if (
+    typeof value.query !== 'string' ||
+    value.query.length === 0 ||
+    value.query.length > 256 ||
+    value.query !== value.query.trim() ||
+    /[\u0000-\u001f\u007f]/.test(value.query) ||
+    !/[A-Za-z0-9]/.test(value.query)
+  ) {
+    fail('INVALID_INPUT');
+  }
+
+  let types = [];
+  if (Object.hasOwn(value, 'types')) {
+    if (
+      !Array.isArray(value.types) ||
+      value.types.length === 0 ||
+      value.types.length > DOCUMENT_TYPES.size ||
+      value.types.some(
+        (type) => typeof type !== 'string' || !DOCUMENT_TYPES.has(type)
+      ) ||
+      new Set(value.types).size !== value.types.length
+    ) {
+      fail('INVALID_INPUT');
+    }
+    types = [...value.types];
+  }
+  return Object.freeze({ query: value.query, types: Object.freeze(types) });
+}
+
+function assertInputObject(input, required, optional = []) {
+  if (!isPlainObject(input)) fail('INVALID_INPUT');
+  const keys = Reflect.ownKeys(input);
+  if (
+    required.some((key) => !Object.hasOwn(input, key)) ||
+    keys.some(
+      (key) =>
+        typeof key !== 'string' ||
+        (!required.includes(key) && !optional.includes(key))
+    )
+  ) {
+    fail('INVALID_INPUT');
+  }
+  return input;
+}
+
+export function validatePackageNameInput(input) {
+  const value = assertInputObject(input, ['packageName']);
+  if (
+    typeof value.packageName !== 'string' ||
+    !PACKAGE_NAME_PATTERN.test(value.packageName)
+  ) {
+    fail('INVALID_INPUT');
+  }
+  return value.packageName;
+}
+
+export function validatePackageRefInput(input) {
+  const value = assertInputObject(input, ['fullPackageRef']);
+  if (
+    typeof value.fullPackageRef !== 'string' ||
+    value.fullPackageRef.length > 89
+  ) {
+    fail('INVALID_INPUT');
+  }
+
+  const match = /^(?<name>[^:]+):(?<version>[^@]+)@(?<preset>.+)$/.exec(
+    value.fullPackageRef
+  );
+  if (
+    !match?.groups ||
+    !PACKAGE_NAME_PATTERN.test(match.groups.name) ||
+    !PACKAGE_VERSION_PATTERN.test(match.groups.version) ||
+    !PACKAGE_PRESET_PATTERN.test(match.groups.preset)
+  ) {
+    fail('INVALID_INPUT');
+  }
+  return value.fullPackageRef;
+}
+
+export function validateSelectorInput(input) {
+  const value = assertInputObject(input, ['selectors'], ['type']);
+  if (
+    !Array.isArray(value.selectors) ||
+    value.selectors.length === 0 ||
+    value.selectors.length > 20 ||
+    value.selectors.some(
+      (selector) =>
+        typeof selector !== 'string' || !SELECTOR_PATTERN.test(selector)
+    ) ||
+    new Set(value.selectors).size !== value.selectors.length
+  ) {
+    fail('INVALID_INPUT');
+  }
+  if (Object.hasOwn(value, 'type') && !SELECTOR_TYPES.has(value.type)) {
+    fail('INVALID_INPUT');
+  }
+  return Object.freeze({
+    selectors: Object.freeze([...value.selectors]),
+    type: value.type,
+  });
+}
+
+export function validateCidInput(input) {
+  const value = assertInputObject(input, ['cid']);
+  if (!isCanonicalCidV0(value.cid)) fail('INVALID_INPUT');
+  return value.cid;
+}
