@@ -64,7 +64,13 @@ const workflowPolicies = new Map([
   ],
 ]);
 
-const optionalWorkflows = new Set(['reya-safe-ui.yml']);
+// PRO-731 is based before the PRO-715 UI branch. Keep that branch independently
+// testable, but make the workflow mandatory as soon as the UI package is in the
+// composed tree. This turns a workflow deletion into a fail-closed policy error
+// without duplicating PRO-715 files in this branch.
+const transitionalWorkflowMarkers = new Map([
+  ['reya-safe-ui.yml', 'packages/reya-safe-ui/package.json'],
+]);
 
 const retiredWorkflows = new Set([
   'backmerge.yml',
@@ -621,10 +627,9 @@ export const auditRepository = (repositoryRoot = defaultRepositoryRoot) => {
   }
 
   for (const expectedWorkflow of workflowPolicies.keys()) {
-    if (
-      !optionalWorkflows.has(expectedWorkflow) &&
-      !workflows.includes(expectedWorkflow)
-    ) {
+    const marker = transitionalWorkflowMarkers.get(expectedWorkflow);
+    const isRequired = marker === undefined || existsSync(join(root, marker));
+    if (isRequired && !workflows.includes(expectedWorkflow)) {
       errors.push(`${expectedWorkflow}: required workflow is missing`);
     }
   }

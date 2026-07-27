@@ -41,8 +41,11 @@ repository/environment boundary described below.
 
 - retired mutation workflows and hosted Cannon publication credentials;
 - unreviewed workflows, triggers, permissions, runners, actions, and container images;
+- deletion of the Reya Safe UI workflow once the `packages/reya-safe-ui` package is present in the composed tree;
 - `pull_request_target`, repository-secret references, and GitHub-token references outside the exact Safe-backend
   publisher contract;
+- any extra Safe-backend publisher field, step, command, action input, registry, image destination, or whole/computed
+  secrets context;
 - floating action references and mutable container image references;
 - persisted checkout credentials; and
 - ignored failures.
