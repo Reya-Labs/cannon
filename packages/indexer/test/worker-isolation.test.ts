@@ -13,7 +13,13 @@ import {
 import { createPinningHandlers } from '../src/queue/pinning';
 import { createRetryableResourceCloser, listenForShutdown } from '../src/shutdown';
 import { startArtifactWorker, waitForArtifactWorkerShutdown } from '../src/worker';
-import { PINNING_JOB_CONTRACT_VERSION, pinningJobContracts, validatePinningJobData } from '../src/queue/contracts';
+import {
+  PINNING_JOB_CONTRACT_VERSION,
+  optionalPinningMetadataCids,
+  pinningJobContracts,
+  tryNormalizePinningCid,
+  validatePinningJobData,
+} from '../src/queue/contracts';
 import { loadArtifactWorkerConfig } from '../src/worker-config';
 import type { Queue } from '../src/queue';
 
@@ -113,9 +119,14 @@ async function recursiveFixture() {
 
   return {
     artifacts,
+    child,
+    childMisc,
     expectedCids: new Set(artifacts.map(({ cid }) => cid)),
+    grandchild,
+    grandchildMisc,
     metadata,
     root,
+    rootMisc,
     source: new Map(artifacts.map(({ cid, data }) => [cid, data])),
   };
 }
@@ -164,8 +175,24 @@ describe('pinning queue V1 contract', () => {
 
   it('preserves legacy CID normalization and rejects malformed payloads without reflecting them', () => {
     assert.equal(validatePinningJobData({ cid: ` ipfs://${TEST_CID} ` }).cid, TEST_CID);
+    assert.equal(tryNormalizePinningCid(`ipfs://${TEST_METADATA_CID}`), TEST_METADATA_CID);
+    assert.equal(tryNormalizePinningCid('secret payload'), undefined);
     assert.throws(() => validatePinningJobData({ cid: `${TEST_CID}/nested` }), /^Error: Invalid CID$/);
     assert.throws(() => validatePinningJobData({ cid: TEST_CID, metadataCids: ['secret payload'] }), /^Error: Invalid CID$/);
+  });
+
+  it('omits malformed optional metadata without suppressing the deployment job', () => {
+    const action = pinningJobContracts.jobs.find((job) => job.name === 'PIN_PACKAGE');
+    assert.ok(action);
+
+    const metadataCids = optionalPinningMetadataCids('malformed optional metadata');
+    const job = action.action({ cid: TEST_CID, ...(metadataCids ? { metadataCids } : {}) });
+
+    assert.equal(metadataCids, undefined);
+    assert.deepEqual(job.data, {
+      cid: TEST_CID,
+      contractVersion: PINNING_JOB_CONTRACT_VERSION,
+    });
   });
 });
 
@@ -181,6 +208,48 @@ describe('artifact closure mirroring', () => {
     assert.deepEqual(new Set(facade.writes), fixture.expectedCids);
     assert.deepEqual(new Set(facade.stored.keys()), fixture.expectedCids);
     assert.equal(closure.packageCids.size, 3);
+    assert.equal(closure.rootCid, fixture.root.cid);
+    assert.equal(facade.writes.at(-1), fixture.root.cid);
+    assert.ok(facade.writes.indexOf(fixture.grandchildMisc.cid) < facade.writes.indexOf(fixture.grandchild.cid));
+    assert.ok(facade.writes.indexOf(fixture.grandchild.cid) < facade.writes.indexOf(fixture.child.cid));
+    assert.ok(facade.writes.indexOf(fixture.childMisc.cid) < facade.writes.indexOf(fixture.child.cid));
+    assert.ok(facade.writes.indexOf(fixture.child.cid) < facade.writes.indexOf(fixture.root.cid));
+    assert.ok(facade.writes.indexOf(fixture.rootMisc.cid) < facade.writes.indexOf(fixture.root.cid));
+  });
+
+  it('does not expose an imported package or root when that package write fails', async () => {
+    const fixture = await recursiveFixture();
+    const facade = mockFacade(fixture.source);
+    const originalWrite = facade.write.bind(facade);
+    facade.write = async (cid, data, signal) => {
+      if (cid === fixture.child.cid) throw new Error('imported package write failed');
+      return originalWrite(cid, data, signal);
+    };
+
+    await assert.rejects(
+      mirrorArtifactClosure(facade, fixture.root.cid, [fixture.metadata.cid], workerConfig()),
+      /imported package write failed/
+    );
+    assert.equal(facade.writes.includes(fixture.root.cid), false);
+    assert.equal(facade.stored.has(fixture.root.cid), false);
+    assert.equal(facade.stored.has(fixture.child.cid), false);
+  });
+
+  it('publishes shared package dependencies before every importer', async () => {
+    const sharedMisc = await rawArtifact('shared misc');
+    const shared = await compressedArtifact(deployment(sharedMisc.cid, []));
+    const siblingMisc = await rawArtifact('sibling misc');
+    const sibling = await compressedArtifact(deployment(siblingMisc.cid, [shared.cid]));
+    const rootMisc = await rawArtifact('diamond root misc');
+    const root = await compressedArtifact(deployment(rootMisc.cid, [shared.cid, sibling.cid]));
+    const artifacts = [root, rootMisc, shared, sharedMisc, sibling, siblingMisc];
+    const facade = mockFacade(new Map(artifacts.map(({ cid, data }) => [cid, data])));
+
+    const closure = await mirrorArtifactClosure(facade, root.cid, [], workerConfig());
+
+    assert.deepEqual(closure.packageWriteOrder, [shared.cid, sibling.cid, root.cid]);
+    assert.ok(facade.writes.indexOf(shared.cid) < facade.writes.indexOf(sibling.cid));
+    assert.ok(facade.writes.indexOf(sibling.cid) < facade.writes.indexOf(root.cid));
   });
 
   it('replays idempotently through an immutable facade', async () => {
@@ -272,15 +341,17 @@ describe('artifact closure mirroring', () => {
     assert.deepEqual(nodeCountFacade.writes, []);
   });
 
-  it('fails exact reconciliation when the writer acknowledges another CID', async () => {
+  it('rejects a dependency acknowledgement mismatch before exposing the root', async () => {
     const fixture = await recursiveFixture();
     const wrongCid = (await rawArtifact('wrong acknowledgement')).cid;
-    const facade = mockFacade(fixture.source, () => wrongCid);
+    const facade = mockFacade(fixture.source, (cid) => (cid === fixture.metadata.cid ? wrongCid : cid));
 
     await assert.rejects(
       mirrorArtifactClosure(facade, fixture.root.cid, [fixture.metadata.cid], workerConfig()),
-      /missing, 1 extra/
+      /acknowledged an unexpected CID/
     );
+    assert.equal(facade.writes.includes(fixture.root.cid), false);
+    assert.equal(facade.stored.has(fixture.root.cid), false);
   });
 });
 

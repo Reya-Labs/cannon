@@ -6,6 +6,10 @@ The indexer image contains three independent entrypoints:
 - `node dist/artifact-worker/index.js` runs only the artifact mirror worker.
 - `node dist/4byte-directory/index.js` is the optional, one-shot 4byte enrichment worker.
 
+`pnpm start` and `pnpm start-artifact-worker` target the NCC bundle paths.
+After a TypeScript-only `pnpm build`, use `pnpm start:compiled` or
+`pnpm start-artifact-worker:compiled` instead.
+
 The registry bundle never imports or starts either worker. Worker startup or runtime failure therefore cannot stop registry scanning or enqueueing.
 
 ## Registry configuration
@@ -32,8 +36,8 @@ worker rejects redirects, applies deadlines, streams responses into explicit
 bounds, independently recomputes every CID, and discovers the complete package
 closure before writing. A package job mirrors the root, every recursive import,
 every `miscUrl`, and each non-empty on-chain metadata CID. Writer responses are
-reconciled as an exact set, including missing and extra members, and replays are
-idempotent.
+reconciled as an exact set, including missing and extra members. Dependencies
+are written before the root publication boundary, and replays are idempotent.
 
 Every queue attempt has an aggregate `ARTIFACT_JOB_TIMEOUT_MS` deadline and
 active reads/writes are cancelled on worker shutdown. Resource controls are
@@ -42,8 +46,9 @@ configurable with `ARTIFACT_FETCH_TIMEOUT_MS`,
 `ARTIFACT_MAX_FETCH_BYTES`, `ARTIFACT_MAX_NODE_BYTES`,
 `ARTIFACT_MAX_COMPRESSED_BYTES`, `ARTIFACT_MAX_INFLATED_BYTES`,
 `ARTIFACT_MAX_CLOSURE_BYTES`, `ARTIFACT_MAX_CLOSURE_INFLATED_BYTES`,
-`ARTIFACT_MAX_CLOSURE_NODES`, `ARTIFACT_MAX_WRITE_RESPONSE_BYTES`, and
-`ARTIFACT_WORKER_PAYLOAD_BUDGET_BYTES`. The default queue concurrency is one.
+`ARTIFACT_MAX_CLOSURE_NODES`, `ARTIFACT_MAX_HEALTH_RESPONSE_BYTES`,
+`ARTIFACT_MAX_WRITE_RESPONSE_BYTES`, and `ARTIFACT_WORKER_PAYLOAD_BUDGET_BYTES`.
+The default queue concurrency is one.
 Startup rejects configurations where concurrency multiplied by the conservative
 per-job payload estimate (retained closure plus transient node and inflate/JSON
 copies) exceeds the payload budget. Container memory must additionally cover

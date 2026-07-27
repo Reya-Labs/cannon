@@ -14,6 +14,8 @@ export function health(ctx: HealthContext) {
         version: packageJson.version,
       });
     } catch {
+      // Backend errors may include object-store endpoints, bucket names, or
+      // credentials. Keep both the response and server log payload-free.
       console.error('repository dependency health check failed');
       res.status(503).json({ status: 'error', message: 'Repository dependency check failed' });
     }

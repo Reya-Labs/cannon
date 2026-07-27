@@ -25,6 +25,21 @@ describe('GET /health', function () {
       .expect(200, { status: 'ok', version });
   });
 
+  it('should return 503 for write readiness when write storage is unavailable', async function () {
+    const healthCheck = vi
+      .spyOn(ctx.objectStoreWrite, 'healthCheck')
+      .mockRejectedValueOnce(new Error('object storage write unavailable'));
+
+    try {
+      await ctx.repo
+        .get('/health/write')
+        .set('Authorization', `Bearer ${ctx.authToken}`)
+        .expect(503, { status: 'error', message: 'Repository dependency check failed' });
+    } finally {
+      healthCheck.mockRestore();
+    }
+  });
+
   it('should return 503 when read-only object storage access is unavailable', async function () {
     const healthCheck = vi
       .spyOn(ctx.objectStoreRead, 'healthCheck')

@@ -1,5 +1,14 @@
 import type { ArtifactWorkerConfig } from './worker-config';
 
+/**
+ * Bounded HTTP facade used by the artifact worker.
+ *
+ * Reads, writes, and readiness probes use their corresponding byte limits and
+ * request deadlines from {@link ArtifactWorkerConfig}. Operations reject on
+ * timeout, cancellation, non-success status, malformed responses, or exceeded
+ * bounds. Thrown messages intentionally omit endpoints, bearer tokens, response
+ * bodies, and underlying transport errors.
+ */
 export interface ArtifactFacadeClient {
   checkHealth(signal?: AbortSignal): Promise<void>;
   read(cid: string, signal?: AbortSignal): Promise<Buffer>;
@@ -79,6 +88,9 @@ async function readBoundedBody(
       await reader.cancel().catch(() => undefined);
       throw request.abortError(label);
     }
+    // Fetch/body errors can embed endpoints or response details. Deliberately
+    // omit them from both the message and `cause` because callers may serialize
+    // the complete error object into telemetry.
     throw new Error(`${label} failed`);
   } finally {
     reader.releaseLock();
@@ -129,6 +141,8 @@ async function requestWithDeadline(
     if (controller.signal.aborted) {
       throw abortError();
     }
+    // Do not attach the transport error as `cause`; it can contain request
+    // origins, credentials, or proxy diagnostics.
     throw new Error(`${label} failed`);
   }
 }
@@ -155,6 +169,13 @@ function writerAddUrl(origin: string, cid: string) {
   return url;
 }
 
+/**
+ * Creates a redirect-rejecting, deadline-bound facade client.
+ *
+ * The optional fetch implementation is intended for deterministic tests. The
+ * returned client preserves the redacted error contract of
+ * {@link ArtifactFacadeClient}; callers must not expect raw transport errors.
+ */
 export function createArtifactFacadeClient(
   config: ArtifactWorkerConfig,
   fetchImpl: FetchImplementation = fetch
@@ -169,10 +190,11 @@ export function createArtifactFacadeClient(
       signal
     );
     try {
-      const body = await readBoundedBody(request.response, config.ARTIFACT_MAX_WRITE_RESPONSE_BYTES, label, request);
       if (!request.response.ok) {
+        await request.response.body?.cancel().catch(() => undefined);
         throw new Error(`${label} returned HTTP ${request.response.status}`);
       }
+      const body = await readBoundedBody(request.response, config.ARTIFACT_MAX_HEALTH_RESPONSE_BYTES, label, request);
       if (body.length === 0) {
         throw new Error(`${label} returned an empty response`);
       }

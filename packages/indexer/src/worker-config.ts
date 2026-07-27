@@ -28,6 +28,7 @@ const artifactWorkerConfigSpecs = {
   ARTIFACT_MAX_CLOSURE_BYTES: num({ default: 64 * MEBIBYTE }),
   ARTIFACT_MAX_CLOSURE_INFLATED_BYTES: num({ default: 256 * MEBIBYTE }),
   ARTIFACT_MAX_CLOSURE_NODES: num({ default: 128 }),
+  ARTIFACT_MAX_HEALTH_RESPONSE_BYTES: num({ default: 4 * 1024 }),
   ARTIFACT_MAX_WRITE_RESPONSE_BYTES: num({ default: 64 * 1024 }),
   ARTIFACT_WORKER_PAYLOAD_BUDGET_BYTES: num({ default: 256 * MEBIBYTE }),
 };
@@ -110,6 +111,7 @@ export function loadArtifactWorkerConfig(environment: unknown = process.env): Ar
     'ARTIFACT_MAX_CLOSURE_BYTES',
     'ARTIFACT_MAX_CLOSURE_INFLATED_BYTES',
     'ARTIFACT_MAX_CLOSURE_NODES',
+    'ARTIFACT_MAX_HEALTH_RESPONSE_BYTES',
     'ARTIFACT_MAX_WRITE_RESPONSE_BYTES',
     'ARTIFACT_WORKER_PAYLOAD_BUDGET_BYTES',
   ] as const) {

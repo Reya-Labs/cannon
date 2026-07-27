@@ -65,6 +65,29 @@ describe('artifact facade HTTP client', () => {
     assert.ok(writerRequest?.init?.body instanceof FormData);
   });
 
+  it('preserves a failing readiness status without consuming an oversized error body', async () => {
+    const fetchMock: typeof fetch = async (input) => {
+      const url = new URL(input.toString());
+      if (url.hostname === 'writer.test') {
+        return streamingResponse([Buffer.alloc(1024)], { status: 503 });
+      }
+      return Response.json({ status: 'ok' });
+    };
+    const client = createArtifactFacadeClient(config({ ARTIFACT_MAX_HEALTH_RESPONSE_BYTES: '1' }), fetchMock);
+
+    await assert.rejects(client.checkHealth(), /artifact writer health check returned HTTP 503/);
+  });
+
+  it('rejects an empty successful readiness response', async () => {
+    const fetchMock: typeof fetch = async (input) => {
+      const url = new URL(input.toString());
+      return url.hostname === 'writer.test' ? new Response(null, { status: 200 }) : Response.json({ status: 'ok' });
+    };
+    const client = createArtifactFacadeClient(config(), fetchMock);
+
+    await assert.rejects(client.checkHealth(), /artifact writer health check returned an empty response/);
+  });
+
   it('bounds a streaming source response even without content-length', async () => {
     const fetchMock: typeof fetch = async () => streamingResponse([Buffer.from('123'), Buffer.from('456')], { status: 200 });
     const client = createArtifactFacadeClient(

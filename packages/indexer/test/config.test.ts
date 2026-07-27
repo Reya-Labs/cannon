@@ -196,6 +196,14 @@ describe('artifact worker configuration', () => {
       () =>
         loadArtifactWorkerConfig({
           ...validWorkerEnvironment(),
+          ARTIFACT_MAX_HEALTH_RESPONSE_BYTES: '0',
+        }),
+      /ARTIFACT_MAX_HEALTH_RESPONSE_BYTES/
+    );
+    assert.throws(
+      () =>
+        loadArtifactWorkerConfig({
+          ...validWorkerEnvironment(),
           ARTIFACT_MAX_FETCH_BYTES: '10',
           ARTIFACT_MAX_NODE_BYTES: '11',
         }),

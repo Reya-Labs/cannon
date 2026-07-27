@@ -27,9 +27,9 @@ export async function useRedis(redisUrl: string): Promise<ActualRedisClientType>
     console.log(' · redis connected ·');
   });
 
-  client.on('error', (err) => {
+  client.on('error', () => {
     // eslint-disable-next-line no-console
-    console.error(`redis connection error: ${err instanceof Error ? err.message : 'unknown failure'}`);
+    console.error('redis connection error');
   });
 
   await client.connect();

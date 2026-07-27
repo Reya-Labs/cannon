@@ -11,8 +11,10 @@
     "bundle:worker": "rm -rf ./dist/artifact-worker && ncc build src/worker.ts --transpile-only -o dist/artifact-worker",
     "clean": "rm -rf ./dist",
     "test": "NODE_ENV=test node --test --require ts-node/register test/*.test.ts",
-    "start": "node dist/index.js",
-    "start-artifact-worker": "node dist/worker.js",
+    "start": "node dist/registry/index.js",
+    "start-artifact-worker": "node dist/artifact-worker/index.js",
+    "start:compiled": "node dist/index.js",
+    "start-artifact-worker:compiled": "node dist/worker.js",
     "start-4byte-directory": "node dist/4byte-directory.js",
     "dev": "ts-node src/index.ts"
   },

@@ -32,6 +32,14 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   }
 }
 
+/**
+ * Creates the artifact worker and, by default, gates queue consumption on Redis
+ * plus reader/writer facade readiness.
+ *
+ * The caller owns the returned service and must call `close()`. Startup failure
+ * force-closes partially initialized BullMQ resources before rejecting with a
+ * redacted diagnostic.
+ */
 export async function startArtifactWorker(environment: unknown = process.env, options: ArtifactWorkerOptions = {}) {
   const config = loadArtifactWorkerConfig(environment);
   const ownsQueue = !options.queue;
@@ -93,6 +101,10 @@ export async function startArtifactWorker(environment: unknown = process.env, op
   }
 }
 
+/**
+ * Waits for an explicit shutdown request and treats an independently stopped
+ * BullMQ worker as fatal so the process supervisor can restart it.
+ */
 export async function waitForArtifactWorkerShutdown(shutdown: WorkerSupervisorSignal, stopped: Promise<void>) {
   const outcome = await Promise.race([
     shutdown.requested.then(() => 'shutdown' as const),
@@ -103,6 +115,13 @@ export async function waitForArtifactWorkerShutdown(shutdown: WorkerSupervisorSi
   }
 }
 
+/**
+ * Runs the supervised artifact-worker entrypoint.
+ *
+ * Signal-driven shutdown aborts active artifact requests and drains owned
+ * resources. Startup, runtime, and cleanup failures reject to the executable
+ * boundary, which sets a non-zero exit code without logging secrets.
+ */
 export async function runArtifactWorker(environment: unknown = process.env) {
   const shutdown = listenForShutdown();
   let service: Awaited<ReturnType<typeof startArtifactWorker>> | undefined;

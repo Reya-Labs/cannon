@@ -1,13 +1,18 @@
-import { inflateSync } from 'node:zlib';
+import { promisify } from 'node:util';
+import { inflate as inflateCallback } from 'node:zlib';
 import { getContentCID, getDeploymentImports } from '@usecannon/builder';
 import type { DeploymentInfo } from '@usecannon/builder';
 import type { ArtifactFacadeClient } from './artifact-client';
 import type { ArtifactWorkerConfig } from './worker-config';
 
+const inflate = promisify(inflateCallback);
+
 export interface ArtifactClosure {
   artifacts: Map<string, Buffer>;
-  packageCids: Set<string>;
   inflatedBytes: number;
+  packageCids: Set<string>;
+  packageWriteOrder: string[];
+  rootCid: string;
 }
 
 export interface ClosureDifference {
@@ -48,15 +53,40 @@ export function assertExactClosure(expected: Iterable<string>, actual: Iterable<
   }
 }
 
+function orderPackagesByDependencies(
+  rootCid: string,
+  packageCids: Set<string>,
+  packageDependencies: Map<string, Set<string>>
+): string[] {
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const ordered: string[] = [];
+
+  function visit(cid: string) {
+    if (visited.has(cid)) return;
+    if (visiting.has(cid)) throw new Error('artifact closure contains cyclic package imports');
+
+    visiting.add(cid);
+    for (const dependency of packageDependencies.get(cid) ?? []) visit(dependency);
+    visiting.delete(cid);
+    visited.add(cid);
+    ordered.push(cid);
+  }
+
+  visit(rootCid);
+  assertExactClosure(packageCids, ordered);
+  return ordered;
+}
+
 function throwIfCancelled(signal?: AbortSignal) {
   if (signal?.aborted) throw new Error('artifact job cancelled');
 }
 
-function parseDeployment(
+async function parseDeployment(
   data: Buffer,
   config: ArtifactWorkerConfig,
   signal?: AbortSignal
-): { deployment: DeploymentInfo; inflatedBytes: number } {
+): Promise<{ deployment: DeploymentInfo; inflatedBytes: number }> {
   throwIfCancelled(signal);
   if (data.length > config.ARTIFACT_MAX_COMPRESSED_BYTES) {
     throw new Error('compressed package exceeds its per-node limit');
@@ -64,7 +94,7 @@ function parseDeployment(
 
   let inflated: Buffer;
   try {
-    inflated = inflateSync(data, { maxOutputLength: config.ARTIFACT_MAX_INFLATED_BYTES });
+    inflated = await inflate(data, { maxOutputLength: config.ARTIFACT_MAX_INFLATED_BYTES });
   } catch {
     throw new Error('package is invalid or exceeds its inflated per-node limit');
   }
@@ -125,6 +155,7 @@ export async function discoverArtifactClosure(
   const artifacts = new Map<string, Buffer>();
   const expectedCids = new Set<string>();
   const packageCids = new Set<string>();
+  const packageDependencies = new Map<string, Set<string>>();
   const packageQueue: string[] = [];
   let closureBytes = 0;
   let closureInflatedBytes = 0;
@@ -167,7 +198,7 @@ export async function discoverArtifactClosure(
     throwIfCancelled(signal);
     const packageCid = packageQueue[index];
     const data = await load(packageCid);
-    const parsed = parseDeployment(data, config, signal);
+    const parsed = await parseDeployment(data, config, signal);
     closureInflatedBytes += parsed.inflatedBytes;
     if (closureInflatedBytes > config.ARTIFACT_MAX_CLOSURE_INFLATED_BYTES) {
       throw new Error('artifact closure exceeds its inflated byte limit');
@@ -180,9 +211,11 @@ export async function discoverArtifactClosure(
     } catch {
       throw new Error('package contains invalid deployment imports');
     }
+    const dependencies = new Set<string>();
     for (const imported of imports) {
-      addExpected(imported?.url, true);
+      dependencies.add(addExpected(imported?.url, true));
     }
+    packageDependencies.set(packageCid, dependencies);
   }
 
   for (const cid of expectedCids) {
@@ -192,7 +225,8 @@ export async function discoverArtifactClosure(
 
   throwIfCancelled(signal);
   assertExactClosure(expectedCids, artifacts.keys());
-  return { artifacts, packageCids, inflatedBytes: closureInflatedBytes };
+  const packageWriteOrder = orderPackagesByDependencies(rootCid, packageCids, packageDependencies);
+  return { artifacts, inflatedBytes: closureInflatedBytes, packageCids, packageWriteOrder, rootCid };
 }
 
 export async function mirrorArtifactClosure(
@@ -205,10 +239,27 @@ export async function mirrorArtifactClosure(
   const closure = await discoverArtifactClosure(client, rootCid, metadataCids, config, signal);
   const mirrored: string[] = [];
 
+  async function writeVerified(cid: string, data: Buffer) {
+    throwIfCancelled(signal);
+    const acknowledgedCid = await client.write(cid, data, signal);
+    throwIfCancelled(signal);
+    if (acknowledgedCid !== cid) {
+      throw new Error('artifact writer acknowledged an unexpected CID');
+    }
+    mirrored.push(acknowledgedCid);
+  }
+
+  // Package CIDs are publication boundaries. Write ordinary artifacts first,
+  // then packages in dependency-first topological order and the requested root
+  // last.
   for (const [cid, data] of closure.artifacts) {
-    throwIfCancelled(signal);
-    mirrored.push(await client.write(cid, data, signal));
-    throwIfCancelled(signal);
+    if (closure.packageCids.has(cid)) continue;
+    await writeVerified(cid, data);
+  }
+  for (const cid of closure.packageWriteOrder) {
+    const data = closure.artifacts.get(cid);
+    if (!data) throw new Error('artifact closure is missing a package node');
+    await writeVerified(cid, data);
   }
 
   assertExactClosure(closure.artifacts.keys(), mirrored);

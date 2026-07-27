@@ -22,6 +22,8 @@ import { ActualRedisClientType, useRedis } from './redis';
 import { canonicalAbiSelector } from './abi-selector';
 import { assertRpcChain, createRpcClient } from './helpers/rpc';
 import { createQueue, Queue } from './queue';
+import { optionalPinningMetadataCids } from './queue/contracts';
+import { handleRegistryEventFailure, reportRegistryFailure, UnsupportedRegistryEventError } from './registry-event-failure';
 import { createIndexesIfNedeed } from './search-indexes';
 
 const BLOCK_BATCH_SIZE = 5000;
@@ -240,8 +242,8 @@ export async function handleCannonPublish(
     if (recordDeployStep[type]) {
       try {
         await recordDeployStep[type](redis, deployInfo.state[actionName], def, deployInfo.meta, packageRef, actionName);
-      } catch (err) {
-        console.log(`[warn] failed special handler for ${type} on action ${actionName}: ${err?.toString && err.toString()}`);
+      } catch (error) {
+        reportRegistryFailure('action', error);
       }
     } else {
       const batch = redis.multi();
@@ -318,8 +320,8 @@ export async function handleCannonPublish(
 
   try {
     await notify(packageRef, chainId);
-  } catch (err) {
-    console.error('[warn] notify failed:', err);
+  } catch (error) {
+    reportRegistryFailure('notification', error);
   }
 }
 
@@ -464,11 +466,12 @@ export async function scanChain(
               const packageVersion = viem.hexToString(event.args.tag, { size: 32 });
               const deployUrl = event.args.deployUrl ?? event.args.url;
               const metaUrl = event.args.metaUrl ?? '';
+              const metadataCids = optionalPinningMetadataCids(metaUrl);
 
               const queueBatch = queue.createBatch();
               queueBatch.add('PIN_PACKAGE', {
                 cid: deployUrl,
-                ...(typeof metaUrl === 'string' && metaUrl.trim() ? { metadataCids: [metaUrl] } : {}),
+                ...(metadataCids ? { metadataCids } : {}),
               });
 
               await queueBatch.exec();
@@ -577,20 +580,18 @@ export async function scanChain(
               break;
             }
             default:
-              throw new Error('unrecognized registry event');
+              throw new UnsupportedRegistryEventError('unsupported registry event');
           }
-        } catch {
-          console.log('[REG] failed to parse registry event');
-          // process this package later
-          await redis.lPush(rkey.RKEY_RETRY_PROCESS_PACKAGE, JSON.stringify(event));
+        } catch (error) {
+          await handleRegistryEventFailure(error, event, redis);
         }
       }
 
       await redis.set(rkey.RKEY_LAST_IDX + ':' + 1, mainnetScan.scanToBlock);
       await redis.set(rkey.RKEY_LAST_IDX + ':' + 10, optimismScan.scanToBlock);
       consecutiveFailures = 0;
-    } catch (err) {
-      console.error('failure while scanning cannon publishes:', err);
+    } catch (error) {
+      reportRegistryFailure('scan', error);
       consecutiveFailures++;
     }
 

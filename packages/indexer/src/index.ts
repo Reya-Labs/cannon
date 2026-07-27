@@ -1,8 +1,15 @@
 export * from './db';
 
 import { loop } from './registry';
+import { reportRegistryFailure } from './registry-event-failure';
 import { listenForShutdown } from './shutdown';
 
+/**
+ * Runs the registry producer until shutdown or a terminal scan failure.
+ *
+ * SIGINT/SIGTERM abort the scan loop; the loop owns and closes its Redis and
+ * BullMQ resources before this promise settles.
+ */
 export async function runRegistryProcess() {
   const shutdown = listenForShutdown();
 
@@ -15,10 +22,7 @@ export async function runRegistryProcess() {
 
 if (require.main === module) {
   void runRegistryProcess().catch((error: unknown) => {
-    // Keep errors free of configuration values and event payloads.
-    const message = error instanceof Error ? error.message : 'unknown failure';
-    // eslint-disable-next-line no-console
-    console.error(`registry process failed: ${message}`);
+    reportRegistryFailure('process', error);
     process.exitCode = 1;
   });
 }

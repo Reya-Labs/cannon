@@ -28,7 +28,7 @@ const MAX_METADATA_CIDS = 32;
  * Matches the existing builder `extractValidCid` wire behavior without making
  * the producer contract depend on generated builder output.
  */
-function extractLegacyCannonCid(value: unknown): string {
+export function normalizePinningCid(value: unknown): string {
   if (typeof value !== 'string') throw new Error('Invalid CID');
 
   const trimmed = value.trim();
@@ -38,6 +38,27 @@ function extractLegacyCannonCid(value: unknown): string {
   }
 
   return cid;
+}
+
+/**
+ * Applies the queue wire-format CID rules without reflecting malformed input.
+ */
+export function tryNormalizePinningCid(value: unknown): string | undefined {
+  try {
+    return normalizePinningCid(value);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Converts one optional on-chain metadata URL into queue-safe CID metadata.
+ * Invalid optional metadata is omitted so it cannot suppress the deployment
+ * artifact job.
+ */
+export function optionalPinningMetadataCids(value: unknown): string[] | undefined {
+  const cid = tryNormalizePinningCid(value);
+  return cid ? [cid] : undefined;
 }
 
 export function validatePinningJobData(data: PinningJobData): ValidatedPinningJobData {
@@ -55,10 +76,10 @@ export function validatePinningJobData(data: PinningJobData): ValidatedPinningJo
     throw new Error(`metadataCids exceeds the ${MAX_METADATA_CIDS} item limit`);
   }
 
-  const metadataCids = data.metadataCids ? [...new Set(data.metadataCids.map(extractLegacyCannonCid))].sort() : undefined;
+  const metadataCids = data.metadataCids ? [...new Set(data.metadataCids.map(normalizePinningCid))].sort() : undefined;
 
   return {
-    cid: extractLegacyCannonCid(data.cid),
+    cid: normalizePinningCid(data.cid),
     contractVersion: PINNING_JOB_CONTRACT_VERSION,
     ...(metadataCids?.length ? { metadataCids } : {}),
   };

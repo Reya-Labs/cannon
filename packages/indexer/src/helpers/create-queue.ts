@@ -14,6 +14,10 @@ export interface WorkerOptions {
   concurrency: number;
 }
 
+function safeJobId(value: string | undefined): string {
+  return value && value.length <= 128 && /^[A-Za-z0-9:_-]+$/.test(value) ? value : 'redacted';
+}
+
 export interface DefaultJobContext<JobName extends string, JobData = any> {
   queue: BullQueue<JobData, void, JobName>;
   add: (name: JobName, data: JobData) => Promise<BullJob<JobData, void, JobName>>;
@@ -158,14 +162,16 @@ export function createQueue<T extends ParsedJobActions<string, any, DefaultJobCo
       console.error(`[worker][${queueOpts.queueName}] Redis connection error`);
     });
 
-    worker.on('completed', () => {
+    worker.on('completed', (job) => {
       // eslint-disable-next-line no-console
-      console.log(`[worker][${queueOpts.queueName}] completed queue job`);
+      console.log(`[worker][${queueOpts.queueName}] completed queue job ${safeJobId(job?.id)}`);
     });
 
-    worker.on('failed', () => {
+    worker.on('failed', (job) => {
       // eslint-disable-next-line no-console
-      console.error(`[worker][${queueOpts.queueName}] failed queue job`);
+      console.error(
+        `[worker][${queueOpts.queueName}] failed queue job ${safeJobId(job?.id)} (attempt ${job?.attemptsMade ?? 0})`
+      );
     });
 
     return worker;
