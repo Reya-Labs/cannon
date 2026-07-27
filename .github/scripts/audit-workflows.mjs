@@ -140,7 +140,7 @@ const exactPolicyFileDigests = new Map([
   ],
   [
     '.github/scripts/scan-runtime-image.sh',
-    'ff5eee3cd4763b85ffca796a6a937d4273cfb6d1c9932168799a207d9f9009e4',
+    'f2123f4d975f3136450ef4539a184afe0e34ee5bcd30384ce6f21231898118a7',
   ],
   [
     '.github/scripts/verify-runtime-image.sh',

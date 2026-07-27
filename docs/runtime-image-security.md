@@ -89,6 +89,12 @@ mounted; the separate scan containers then receive read-only SBOM evidence with
 networking disabled and automatic database updates disabled. All scanners
 receive generated minimal configuration from an isolated temporary directory,
 so a repository-level ignore or scanner configuration cannot suppress findings.
+Each scanner process is explicitly mapped to the invoking unprivileged host
+uid/gid. This lets it traverse the private `mktemp` directory and write only its
+owned cache without making scan inputs or evidence world-writable; the script
+refuses to run when launched by uid 0. Scanner `/tmp` filesystems are separately
+uid/gid-scoped, size-bounded, `noexec`, and `nosuid`. The live matrix scan is the
+Linux permission regression test for this bind-mount contract.
 The workflow runs for relevant pull requests and protected-branch changes, and
 recurs each Monday at 06:23 UTC. PR #15's Dependabot policy independently
 proposes bounded weekly Docker-base updates for `/docker` and

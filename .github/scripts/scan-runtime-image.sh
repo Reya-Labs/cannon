@@ -14,6 +14,16 @@ readonly component_version=$4
 readonly requested_output_directory=$5
 readonly syft_image='docker.io/anchore/syft@sha256:b4f1df79f97b817682d8b5ff941eb6bfe74f6172553a5e312c75bbc2eabc405c'
 readonly grype_image='docker.io/anchore/grype@sha256:fd4ab4d1042b522c896e73bdf09ab8bf384fa417df99d6dd0d6e1008c7e7c821'
+scanner_uid=$(id -u)
+scanner_gid=$(id -g)
+readonly scanner_uid
+readonly scanner_gid
+readonly scanner_user="${scanner_uid}:${scanner_gid}"
+
+if ((scanner_uid == 0)); then
+  echo "runtime image scans must be launched by an unprivileged host user" >&2
+  exit 2
+fi
 
 case "$runtime_kind" in
   repo|indexer|api|safe-app-backend) ;;
@@ -52,12 +62,13 @@ docker image save "$image_ref" --output "${scan_directory}/image.tar"
 # The scanner receives only a read-only image archive and has no Docker socket
 # or network access. Its executable is selected by an exact OCI index digest.
 docker run --rm \
+  --user "$scanner_user" \
   --network none \
   --read-only \
   --cap-drop ALL \
   --security-opt no-new-privileges \
   --pids-limit 64 \
-  --tmpfs /tmp:rw,noexec,nosuid,size=1g \
+  --tmpfs "/tmp:rw,noexec,nosuid,size=1g,uid=${scanner_uid},gid=${scanner_gid},mode=1770" \
   --volume "${scan_directory}/syft-cache:/.cache/syft" \
   --volume "${scan_directory}:/scan:ro" \
   "$syft_image" \
@@ -154,11 +165,12 @@ mkdir "${scan_directory}/grype-cache"
 # Refresh and validate the database before any SBOM is mounted into the
 # networked scanner container. The actual scans below run with no network.
 docker run --rm \
+  --user "$scanner_user" \
   --read-only \
   --cap-drop ALL \
   --security-opt no-new-privileges \
   --pids-limit 64 \
-  --tmpfs /tmp:rw,noexec,nosuid,size=256m \
+  --tmpfs "/tmp:rw,noexec,nosuid,size=256m,uid=${scanner_uid},gid=${scanner_gid},mode=1770" \
   --volume "${scan_directory}/grype-cache:/.cache/grype" \
   --volume "${scan_directory}:/scan:ro" \
   "$grype_image" \
@@ -172,12 +184,13 @@ scan_sbom() {
   # The evidence is mounted read-only and scanned offline. The scanner root
   # filesystem is immutable; its DB cache is deleted after this invocation.
   docker run --rm \
+    --user "$scanner_user" \
     --network none \
     --read-only \
     --cap-drop ALL \
     --security-opt no-new-privileges \
     --pids-limit 64 \
-    --tmpfs /tmp:rw,noexec,nosuid,size=256m \
+    --tmpfs "/tmp:rw,noexec,nosuid,size=256m,uid=${scanner_uid},gid=${scanner_gid},mode=1770" \
     --volume "${scan_directory}/grype-cache:/.cache/grype" \
     --volume "${scan_directory}:/scan:ro" \
     --volume "${output_directory}:/evidence:ro" \
