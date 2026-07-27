@@ -48,7 +48,7 @@ RUN pnpm --filter @usecannon/indexer list --prod --no-optional --depth Infinity 
     && node /usr/local/lib/generate-bundle-input-sbom.mjs \
       /usr/app \
       /tmp/bundle-input-dependencies.json \
-      /usr/app/packages/indexer/dist/bundle-input-dependencies.cdx.json \
+      /usr/app/bundle-input-dependencies.cdx.json \
       @usecannon/indexer \
       "$(node -p "require('./packages/indexer/package.json').version")"
 
@@ -90,6 +90,7 @@ ENV PORT=8080
 ENV BUILD_REVISION=${BUILD_REVISION}
 
 COPY --from=build /usr/app/packages/indexer/dist ./dist
+COPY --from=build /usr/app/bundle-input-dependencies.cdx.json ./bundle-input-dependencies.cdx.json
 
 USER node
 

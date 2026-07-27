@@ -16,7 +16,10 @@ const runtimeImagePaths = [
   '.github/scripts/generate-bundle-input-sbom.mjs',
   '.github/scripts/generate-bundle-input-sbom.test.mjs',
   '.github/scripts/scan-runtime-image.sh',
+  '.github/scripts/validate-runtime-image-inventory.mjs',
+  '.github/scripts/validate-runtime-image-inventory.test.mjs',
   '.github/scripts/verify-runtime-image.sh',
+  '.github/runtime-image-inventory.json',
   '.github/workflows/runtime-image-security.yml',
   'docker/api.Dockerfile',
   'docker/indexer.Dockerfile',
@@ -80,7 +83,7 @@ const workflowPolicies = new Map([
           runtime: {
             description: 'Image whose already-pushed digest should be scanned',
             required: false,
-            default: 'repo',
+            default: 'safe-app-backend',
             type: 'choice',
             options: ['repo', 'indexer', 'api', 'safe-app-backend'],
           },
@@ -129,11 +132,15 @@ const workflowPolicies = new Map([
 const exactWorkflowDigests = new Map([
   [
     'runtime-image-security.yml',
-    '5452b3639233655691185f3ea7495c46f626145b7f205eceaba9e1fa632d42f7',
+    '2b647d2d73de6c7880c62ece5ca4761caa04a9e6fc96ea1962689dd29696bbaf',
   ],
 ]);
 
 const exactPolicyFileDigests = new Map([
+  [
+    '.github/runtime-image-inventory.json',
+    '7cf7e511a0a1d13dfeb3651de63b273518dc10071e1f5bb8a75cf560a8f80664',
+  ],
   [
     '.github/scripts/generate-bundle-input-sbom.mjs',
     'ee941346cf3fc93d1acdd9a17310898ab23ef16f9a3da87065dad45ed386230e',
@@ -143,8 +150,12 @@ const exactPolicyFileDigests = new Map([
     'f2123f4d975f3136450ef4539a184afe0e34ee5bcd30384ce6f21231898118a7',
   ],
   [
+    '.github/scripts/validate-runtime-image-inventory.mjs',
+    '2856a2ecef20e4f9a2826a732fe778f55ad77caae38ef2e6b927dd337532f700',
+  ],
+  [
     '.github/scripts/verify-runtime-image.sh',
-    '149ed11e9ef1eca9152e9ecc7bab621b7813c565a4fb357b9487e9e31b9a5da6',
+    'a404556e068c67c0b322a67b092e7d5eb3a32e110b94c5acb94e5823ba4ee8f4',
   ],
 ]);
 
@@ -728,6 +739,55 @@ const auditSafeAppBackendPublisher = (repositoryRoot, workflowPath, errors) => {
   }
 };
 
+const auditRuntimeImageEvidenceContract = (repositoryRoot, errors) => {
+  const evidenceName = 'bundle-input-dependencies.cdx.json';
+  const generatorOutput = `/usr/app/${evidenceName}`;
+  const finalCopy =
+    `COPY --from=build ${generatorOutput} ` + `./${evidenceName}`;
+
+  for (const dockerfile of [
+    'docker/repo.Dockerfile',
+    'docker/indexer.Dockerfile',
+    'docker/api.Dockerfile',
+  ]) {
+    const path = join(repositoryRoot, dockerfile);
+    if (!existsSync(path)) {
+      errors.push(`${dockerfile}: required runtime Dockerfile is missing`);
+      continue;
+    }
+    const source = readFileSync(path, 'utf8');
+    const evidenceMentions = source.split(evidenceName).length - 1;
+    const rootEvidenceMentions = source.split(generatorOutput).length - 1;
+    if (
+      evidenceMentions !== 3 ||
+      rootEvidenceMentions !== 2 ||
+      !source.includes(finalCopy)
+    ) {
+      errors.push(
+        `${dockerfile}: bundle-input evidence must be generated once at ${generatorOutput} and copied once to the identical final-image path`
+      );
+    }
+  }
+
+  const scannerPath = join(
+    repositoryRoot,
+    '.github/scripts/scan-runtime-image.sh'
+  );
+  if (existsSync(scannerPath)) {
+    const scannerSource = readFileSync(scannerPath, 'utf8');
+    const exactContainerPath =
+      '${container_id}:/usr/app/bundle-input-dependencies.cdx.json';
+    if (
+      scannerSource.split(exactContainerPath).length - 1 !== 1 ||
+      scannerSource.includes('find /usr/app')
+    ) {
+      errors.push(
+        '.github/scripts/scan-runtime-image.sh: scanner must read the single stable root bundle-input evidence path without fallback lookup'
+      );
+    }
+  }
+};
+
 export const auditRepository = (repositoryRoot = defaultRepositoryRoot) => {
   const root = resolve(repositoryRoot);
   const workflowPath = join(root, '.github/workflows');
@@ -784,6 +844,8 @@ export const auditRepository = (repositoryRoot = defaultRepositoryRoot) => {
       );
     }
   }
+
+  auditRuntimeImageEvidenceContract(root, errors);
 
   return errors.sort();
 };

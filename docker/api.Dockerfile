@@ -39,7 +39,7 @@ RUN pnpm --filter @usecannon/api list --prod --no-optional --depth Infinity --js
     && node /usr/local/lib/generate-bundle-input-sbom.mjs \
       /usr/app \
       /tmp/bundle-input-dependencies.json \
-      /usr/app/packages/api/dist/bundle-input-dependencies.cdx.json \
+      /usr/app/bundle-input-dependencies.cdx.json \
       @usecannon/api \
       "$(node -p "require('./packages/api/package.json').version")"
 
@@ -81,6 +81,7 @@ ENV PORT=8080
 ENV BUILD_REVISION=${BUILD_REVISION}
 
 COPY --from=build /usr/app/packages/api/dist .
+COPY --from=build /usr/app/bundle-input-dependencies.cdx.json ./bundle-input-dependencies.cdx.json
 
 USER node
 

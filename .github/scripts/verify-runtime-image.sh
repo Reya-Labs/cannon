@@ -2,17 +2,31 @@
 
 set -euo pipefail
 
-if [[ $# -lt 5 || $# -gt 6 ]]; then
-  echo "usage: $0 IMAGE EXPECTED_SOURCE EXPECTED_REVISION EXPECTED_VERSION EXPECTED_CMD_JSON [EXPECTED_CREATED]" >&2
+if [[ $# -lt 6 || $# -gt 7 ]]; then
+  echo "usage: $0 IMAGE RUNTIME EXPECTED_SOURCE EXPECTED_REVISION EXPECTED_VERSION EXPECTED_CMD_JSON [EXPECTED_CREATED]" >&2
   exit 2
 fi
 
 image_ref=$1
-expected_source=$2
-expected_revision=$3
-expected_version=$4
-expected_command=$5
-expected_created=${6:-}
+runtime_kind=$2
+expected_source=$3
+expected_revision=$4
+expected_version=$5
+expected_command=$6
+expected_created=${7:-}
+
+case "$runtime_kind" in
+  repo|indexer|api)
+    expected_bundle_input=present
+    ;;
+  safe-app-backend)
+    expected_bundle_input=absent
+    ;;
+  *)
+    echo "unsupported runtime kind: $runtime_kind" >&2
+    exit 2
+    ;;
+esac
 
 expected_entry_file=$(
   jq -er '
@@ -100,6 +114,7 @@ docker run --rm \
   --cap-drop ALL \
   --security-opt no-new-privileges \
   --pids-limit 64 \
+  --env "EXPECTED_BUNDLE_INPUT=${expected_bundle_input}" \
   --env "EXPECTED_ENTRY_FILE=${expected_entry_file}" \
   --entrypoint /bin/sh \
   "$image_ref" -euc '
@@ -110,6 +125,23 @@ docker run --rm \
   test -f "/usr/app/${EXPECTED_ENTRY_FILE}"
   test -r "/usr/app/${EXPECTED_ENTRY_FILE}"
   node --check "/usr/app/${EXPECTED_ENTRY_FILE}"
+  bundle_input_path=/usr/app/bundle-input-dependencies.cdx.json
+  bundle_input_paths="$(find /usr/app -xdev -name bundle-input-dependencies.cdx.json -print)"
+  case "$EXPECTED_BUNDLE_INPUT" in
+    present)
+      test -f "$bundle_input_path"
+      test -r "$bundle_input_path"
+      test ! -L "$bundle_input_path"
+      test "$bundle_input_paths" = "$bundle_input_path"
+      ;;
+    absent)
+      test ! -e "$bundle_input_path"
+      test -z "$bundle_input_paths"
+      ;;
+    *)
+      exit 2
+      ;;
+  esac
   for tool in npm npx pnpm corepack yarn yarnpkg; do
     ! command -v "$tool" >/dev/null 2>&1
   done

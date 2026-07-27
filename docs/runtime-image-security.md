@@ -67,7 +67,10 @@ exact source revision:
    Alpine packages, and requires installed npm packages for the Safe backend;
 5. for the three NCC-bundled services, extracts and validates the embedded
    CycloneDX inventory of the exact resolved production, non-optional dependency
-   graph supplied to the bundle; and
+   graph supplied to the bundle, and requires exactly one readable inventory at
+   `/usr/app/bundle-input-dependencies.cdx.json` with no alternate-path lookup;
+   the Safe backend must contain no file at that path because its installed
+   `node_modules` are inventoried directly; and
 6. scans both evidence layers with Grype and fails on every HIGH or CRITICAL
    match.
 
@@ -96,8 +99,13 @@ refuses to run when launched by uid 0. Scanner `/tmp` filesystems are separately
 uid/gid-scoped, size-bounded, `noexec`, and `nosuid`. The live matrix scan is the
 Linux permission regression test for this bind-mount contract.
 The workflow runs for relevant pull requests and protected-branch changes, and
-recurs each Monday at 06:23 UTC. PR #15's Dependabot policy independently
-proposes bounded weekly Docker-base updates for `/docker` and
+recurs each Monday at 06:23 UTC. The Monday run both rebuilds current `dev`
+sources against the current vulnerability database and validates the protected
+`.github/runtime-image-inventory.json`. Every active and accepted rollback
+digest in that inventory is then pulled, provenance-checked, runtime-checked,
+and rescanned. An all-inactive inventory produces an explicitly gated empty
+digest matrix rather than a malformed matrix job. PR #15's Dependabot policy
+independently proposes bounded weekly Docker-base updates for `/docker` and
 `/packages/safe-app-backend`; scanner-image refresh remains an explicit reviewed
 policy change.
 
@@ -121,15 +129,17 @@ immutable digest before activation:
 gh workflow run runtime-image-security.yml \
   --repo Reya-Labs/cannon \
   --ref dev \
-  -f runtime=repo \
-  -f image_ref=ghcr.io/reya-labs/repo@sha256:<64-hex-digest> \
+  -f runtime=safe-app-backend \
+  -f image_ref=ghcr.io/reya-labs/safe-app-backend@sha256:<64-hex-digest> \
   -f expected_revision=<40-hex-source-commit>
 ```
 
-Select the matching runtime for the other images. The job accepts only the
-selected `ghcr.io/reya-labs/<runtime>@sha256:<digest>` form, checks out the
-declared source revision, derives its package version and commit timestamp, and
-then verifies and scans the pulled `linux/amd64` manifest.
+The job accepts only the selected
+`ghcr.io/reya-labs/<runtime>@sha256:<digest>` form, checks out the declared
+source revision, derives its package version and commit timestamp, and then
+verifies and scans the pulled `linux/amd64` manifest. Manual requests for
+`repo`, `indexer`, or `api` are rejected before registry authentication until
+their approved publishers exist.
 
 The repository currently contains a protected publisher only for
 `safe-app-backend`. The retired generic Docker workflow must not be restored.
@@ -156,8 +166,14 @@ The digest-scan job has only `attestations: read`, `contents: read`, and
 `packages: read`. It authenticates to GHCR with the job-scoped `github.token`;
 it does not consume a repository secret. Before pulling or trusting labels, it
 uses GitHub's attestation verifier to require SLSA provenance for the exact OCI
-digest, exact declared source commit, protected `refs/heads/dev` source ref, and
-a GitHub-hosted runner. A matching label without that attestation is rejected.
+digest, exact declared source commit, protected `refs/heads/dev` source ref, a
+GitHub-hosted runner, the reviewed publisher workflow path, and that publisher
+workflow's exact source digest. For the currently approved Safe publisher, both
+the source and signer digest must equal the declared image source revision and
+the signer workflow must be
+`Reya-Labs/cannon/.github/workflows/safe-app-backend-publish.yml`. An
+attestation from another workflow in the same repository is rejected. A
+matching label without that exact attestation is also rejected.
 
 The trusted verification policy and the declared image source are checked out
 into separate directories. Metadata is read from the declared source, but no
@@ -183,6 +199,35 @@ Activation requires:
 - an independently approved, manual DevOps digest change.
 
 No floating production tag is permitted.
+
+## Protected active and rollback inventory
+
+`.github/runtime-image-inventory.json` is the canonical scan inventory, not a
+deployment mechanism. Its schema and exact reviewed contents are digest-locked
+by workflow policy. It must name all four runtimes explicitly. An inactive
+runtime must have `active: null` and no rollback entries. An active runtime must
+have one immutable active digest, one or two accepted immutable rollback
+digests, a 40-character source revision for each image, and a reviewed publisher
+mapping in the validator. Duplicate digests, mutable tags, wrong registry
+destinations, missing revisions, unknown fields, and runtimes without approved
+publishers fail closed.
+
+All four entries are initially inactive because no Cannon runtime is activated
+through this mechanism yet. In particular, the historical repository digest
+below is not accepted merely because it is present in an inert DevOps change.
+
+PRO-748 and every later activation must use this order:
+
+1. publish the candidate and rollback through the approved protected workflow;
+2. pass the manual exact-digest gate for both images;
+3. merge a protected Cannon inventory change recording both accepted digests
+   and source revisions;
+4. verify the scheduled-inventory path resolves those exact entries; and
+5. only then approve the DevOps digest repin and manual sync.
+
+An activation whose runtime remains `inactive`, whose active digest differs from
+the inventory, or whose rollback is absent is outside the reviewed contract and
+must not proceed.
 
 ## Rollback quarantine
 

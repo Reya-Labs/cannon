@@ -55,6 +55,10 @@ weekly npm, GitHub Actions, and runtime-base updates against `dev`; human review
 PRO-729 supplies the recurring exact-image, SBOM and vulnerability evidence for the repo, indexer and API runtimes
 and the shared runtime-base evidence consumed by the Safe backend. The exact source, pushed-digest scan, provenance,
 activation, and rollback contract is recorded in [`docs/runtime-image-security.md`](../docs/runtime-image-security.md).
+The protected runtime inventory starts with every service explicitly inactive. Once a publisher is approved, each
+active and rollback entry must name an immutable Reya GHCR digest and its protected-dev source revision. The weekly
+workflow rescans those exact digests and binds each attestation to the runtime's reviewed publisher workflow and the
+same signer/source revision; another same-repository workflow cannot satisfy that gate.
 
 The in-repository `workflow-policy` job is advisory: a pull request can replace a required job with a no-op while
 preserving its check name. After merge, PRO-731 must install an organization or enterprise ruleset-required workflow
