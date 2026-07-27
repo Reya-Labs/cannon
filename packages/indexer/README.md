@@ -19,6 +19,14 @@ The eventual integration must use a fresh versioned Redis namespace. Before scan
 
 The legacy `PackagePublish` event did not contain fee data. Its V1 envelope therefore uses `feePaid: null`; consumers must preserve that as unknown rather than treating it as a zero payment.
 
+### Durable V2 registry inbox (not active)
+
+`registry-scan-batch.ts` and `registry-inbox.ts` add a dormant, per-chain Redis Streams ingest boundary on top of the V1 envelope and checkpoint contracts. No runtime entrypoint imports these modules. The fresh `cannon:registry:v2:{cannon-registry-v2:<chainId>}:*` namespace never reads or converts `reg:lastBlock`, `reg:laterEvent`, or `reg:retryPackage`.
+
+Each bounded scan batch uses deterministic `<blockNumber>-<logIndex>` stream IDs. Its commit verifies the exact predecessor state, accepts only a byte-identical partial prefix or replay, writes every missing envelope before advancing the versioned checkpoint state, and fails closed on conflicting payloads, ordering drift, stale writers, malformed state, replay corruption, or input bounds. A Redis command failure may leave only an identical prefix with the old checkpoint; replay verifies and completes that prefix safely.
+
+This primitive deliberately does not create a consumer group, project events, acknowledge retries, reconcile reorgs, or activate the registry loop. Before integration, the caller must verify the stored checkpoint block hash against RPC. Runtime activation still requires an idempotent projection/outbox, a consumed retry and dead-letter state machine, deterministic cross-chain scheduling, and a bounded reorg recovery or generation-rebuild procedure.
+
 ## Optional 4byte enrichment
 
 Enrichment is disabled by default. Running the worker without `FOURBYTE_ENABLED=true` exits successfully without connecting to Redis or making a network request.
