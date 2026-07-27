@@ -35,6 +35,17 @@ function assertPinnedRemoteActions(source, workflowName) {
   }
 }
 
+function assertExactRemoteActions(source, workflowName, expectedActions) {
+  const actualActions = [...source.matchAll(/^\s*(?:-\s+)?uses:\s+([^\s#]+)/gm)]
+    .map((match) => match[1])
+    .filter((action) => !action.startsWith('./'))
+    .sort();
+  invariant(
+    actualActions.join('\n') === [...expectedActions].sort().join('\n'),
+    `${workflowName} remote action set has changed`
+  );
+}
+
 export function verifySafeAppBackendWorkflows({ ciSource, publishSource }) {
   const expectedCiTriggers = `on:
   pull_request:
@@ -87,6 +98,29 @@ export function verifySafeAppBackendWorkflows({ ciSource, publishSource }) {
       'permissions:\n  contents: read',
     'Publisher workflow permissions must default to read-only'
   );
+  const expectedReusableJob = `  safe-app-backend:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/safe-app-backend.yml`;
+  invariant(
+    publishSource.includes(expectedReusableJob),
+    'Publisher validation job must remain an exact read-only reusable-workflow call'
+  );
+  const expectedPublisherPermissions = `    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write`;
+  const jobPermissionBlocks = [
+    ...publishSource.matchAll(/^    permissions:\n(?:      [^\n]*\n?)*/gm),
+  ].map((match) => match[0].trimEnd());
+  invariant(
+    jobPermissionBlocks.length === 2 &&
+      jobPermissionBlocks[0] === '    permissions:\n      contents: read' &&
+      jobPermissionBlocks[1] === expectedPublisherPermissions,
+    'Publisher job permissions have changed'
+  );
   invariant(
     !/\bworkflow_dispatch\b/.test(publishSource),
     'Manual image publication must remain disabled'
@@ -121,6 +155,27 @@ export function verifySafeAppBackendWorkflows({ ciSource, publishSource }) {
     'Publisher must not consume repository or environment secrets'
   );
   invariant(
+    !/\b(?:github|secrets)\s*\[/.test(publishSource),
+    'Publisher must not use computed GitHub or secret references'
+  );
+  const allowedGitHubContexts = new Set([
+    'github.actor',
+    'github.event_name',
+    'github.ref',
+    'github.ref_protected',
+    'github.repository',
+    'github.sha',
+  ]);
+  const githubContexts = [
+    ...publishSource.matchAll(/\bgithub(?:\.[A-Za-z0-9_]+)+/g),
+  ]
+    .map((match) => match[0])
+    .filter((context) => context !== 'github.com');
+  invariant(
+    githubContexts.every((context) => allowedGitHubContexts.has(context)),
+    'Publisher uses an unreviewed GitHub context'
+  );
+  invariant(
     (publishSource.match(/^\s+push:\s+true\s*$/gm) ?? []).length === 1,
     'Publisher must contain exactly one image push'
   );
@@ -128,9 +183,32 @@ export function verifySafeAppBackendWorkflows({ ciSource, publishSource }) {
     publishSource.includes('          persist-credentials: false'),
     'Publisher checkout must not persist GitHub credentials'
   );
+  invariant(
+    publishSource.includes(
+      '          tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}'
+    ),
+    'Publisher image tag must remain source-SHA addressed'
+  );
+  invariant(
+    publishSource.includes('          platforms: linux/amd64') &&
+      publishSource.includes('          provenance: mode=max') &&
+      publishSource.includes('          sbom: true'),
+    'Publisher platform, provenance, or SBOM contract has changed'
+  );
 
   assertPinnedRemoteActions(ciSource, 'Safe backend CI');
   assertPinnedRemoteActions(publishSource, 'Safe backend publisher');
+  assertExactRemoteActions(
+    publishSource,
+    'Safe backend publisher',
+    new Set([
+      'actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6',
+      'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+      'docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a',
+      'docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7',
+      'docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c',
+    ])
+  );
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

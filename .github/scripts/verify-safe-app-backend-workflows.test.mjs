@@ -70,3 +70,47 @@ test('rejects write access in pull request CI', () => {
     )
   );
 });
+
+test('rejects additional publisher permissions', () => {
+  assert.throws(() =>
+    verify((source) =>
+      source.replace(
+        '      packages: write\n',
+        '      packages: write\n      issues: write\n'
+      )
+    )
+  );
+});
+
+test('rejects computed GitHub contexts in the publisher', () => {
+  assert.throws(() =>
+    verify((source) =>
+      source.replace(
+        '${{ env.IMAGE_NAME }}:${{ github.sha }}',
+        "${{ env.IMAGE_NAME }}:${{ github['sha'] }}"
+      )
+    )
+  );
+});
+
+test('rejects a different pinned publisher action', () => {
+  assert.throws(() =>
+    verify((source) =>
+      source.replace(
+        'docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c',
+        'docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130'
+      )
+    )
+  );
+});
+
+test('rejects a mutable publisher image tag', () => {
+  assert.throws(() =>
+    verify((source) =>
+      source.replace(
+        '${{ env.IMAGE_NAME }}:${{ github.sha }}',
+        '${{ env.IMAGE_NAME }}:latest'
+      )
+    )
+  );
+});
