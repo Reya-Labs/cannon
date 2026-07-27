@@ -1,6 +1,5 @@
 import _ from 'lodash';
-import { DeploymentInfo } from '@usecannon/builder';
-import { deleteIpfs, readIpfs } from '@usecannon/builder/dist/src/ipfs';
+import { uncompress } from '@usecannon/artifact-codec';
 import {
   getDb,
   RKEY_FRESH_UPLOAD_HASHES,
@@ -9,6 +8,33 @@ import {
   RKEY_LAST_UPDATED,
   RKEY_FEES_PAID,
 } from './db';
+import type { CannonPackageArtifact } from './types';
+
+async function readIpfs(ipfsUrl: string, cid: string, timeout: number): Promise<CannonPackageArtifact> {
+  const url = new URL(`/api/v0/cat?arg=${encodeURIComponent(cid)}`, ipfsUrl.replace('+ipfs', ''));
+  const response = await fetch(url, {
+    method: 'POST',
+    signal: AbortSignal.timeout(timeout),
+  });
+
+  if (!response.ok) {
+    throw new Error(`failed to read "${cid}" from the legacy IPFS endpoint: HTTP ${response.status}`);
+  }
+
+  return JSON.parse(uncompress(new Uint8Array(await response.arrayBuffer()))) as CannonPackageArtifact;
+}
+
+async function deleteIpfs(ipfsUrl: string, cid: string, timeout: number): Promise<void> {
+  const url = new URL(`/api/v0/pin/rm?arg=${encodeURIComponent(cid)}`, ipfsUrl.replace('+ipfs', ''));
+  const response = await fetch(url, {
+    method: 'POST',
+    signal: AbortSignal.timeout(timeout),
+  });
+
+  if (!response.ok) {
+    throw new Error(`failed to remove "${cid}" from the legacy IPFS endpoint: HTTP ${response.status}`);
+  }
+}
 
 export async function cleanUnregisteredIpfs(
   redisUrl: string,
@@ -41,7 +67,7 @@ export async function cleanUnregisteredIpfs(
       console.log(`[keep] ${artifact.value}`);
       try {
         // TODO: also keep the misc url
-        const miscUrl = (JSON.parse(await readIpfs(ipfsUrl, ipfsHash, {}, false, 10000, 0)) as DeploymentInfo).miscUrl;
+        const miscUrl = (await readIpfs(ipfsUrl, ipfsHash, 10000)).miscUrl;
         const miscIpfsHash = _.last(miscUrl.split('://'))!;
 
         const batch = rdb.multi();
@@ -55,7 +81,7 @@ export async function cleanUnregisteredIpfs(
     } else {
       console.log(`[wipe] ${artifact.value}`);
       try {
-        await deleteIpfs(ipfsUrl, ipfsHash, {}, false, 10000);
+        await deleteIpfs(ipfsUrl, ipfsHash, 10000);
       } catch (err) {
         console.log(`[fail] did not delete upload hash: ${err}`);
         continue;

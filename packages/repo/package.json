@@ -28,7 +28,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.701.0",
     "@google-cloud/storage": "^7.21.0",
-    "@usecannon/builder": "workspace:*",
+    "@usecannon/artifact-codec": "workspace:*",
     "connect-busboy": "^1.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",

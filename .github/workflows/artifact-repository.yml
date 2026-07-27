@@ -38,8 +38,11 @@ jobs:
           node-version: 22.23.1
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @usecannon/artifact-codec build
+      - run: pnpm --filter @usecannon/artifact-codec test
+      - run: pnpm --filter @usecannon/artifact-codec test:browser-bundle
       - run: pnpm --filter @usecannon/builder build
-      - run: pnpm exec eslint 'packages/{cli,repo}/**/*.{js,ts}'
+      - run: pnpm exec eslint 'packages/{artifact-codec,cli,repo}/**/*.{js,ts}'
       - run: pnpm --filter @usecannon/cli build
       - run: pnpm --filter @usecannon/cli exec jest src/settings.test.ts src/loader.test.ts src/helpers.test.ts --runInBand
       - run: pnpm --filter @usecannon/repo build

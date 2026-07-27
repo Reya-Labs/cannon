@@ -1,0 +1,49 @@
+{
+  "name": "@usecannon/artifact-codec",
+  "version": "2.26.1",
+  "description": "Kubo-compatible content addressing for Cannon artifacts.",
+  "main": "dist/index.js",
+  "browser": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:browser-bundle": "node scripts/verify-browser-bundle.mjs",
+    "test:kubo-oracle": "pnpm run build && node scripts/verify-kubo-oracle.mjs",
+    "build": "pnpm run clean && tsc -p tsconfig.json && rollup -c && rm -rf ./.build",
+    "clean": "rm -rf ./dist ./.build",
+    "prepack": "pnpm run build"
+  },
+  "keywords": [
+    "cannon",
+    "cid",
+    "ipfs"
+  ],
+  "author": "Cannon",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/usecannon/cannon.git",
+    "directory": "packages/artifact-codec"
+  },
+  "dependencies": {
+    "ipfs-unixfs-importer": "17.0.1",
+    "pako": "2.1.0"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "26.0.3",
+    "@rollup/plugin-node-resolve": "15.3.1",
+    "@types/node": "22.14.0",
+    "@types/pako": "2.0.3",
+    "rollup": "npm:@rollup/wasm-node@4.39.0",
+    "typestub-ipfs-only-hash": "4.0.0",
+    "vitest": "2.1.8"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "engineStrict": true
+}

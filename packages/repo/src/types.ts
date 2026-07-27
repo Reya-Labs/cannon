@@ -32,5 +32,10 @@ export interface CatContext {
   objectStoreRead: ObjectStoreReadClient;
 }
 
+export interface CannonPackageArtifact {
+  miscUrl: string;
+  [key: string]: unknown;
+}
+
 export type HealthContext = Pick<RepoContext, 'rdb' | 'objectStoreRead' | 'objectStoreWrite'>;
 export type AuthenticationContext = Pick<RepoContext, 'config'>;

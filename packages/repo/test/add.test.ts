@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { getIpfsCid, uncompress } from '../../builder/src/ipfs';
+import { getIpfsCid, uncompress } from '@usecannon/artifact-codec';
 import { bootstrap } from './helpers/bootstrap';
 import { loadFixture } from './helpers/fixtures';
 import { RKEY_FRESH_UPLOAD_HASHES } from '../src/db';
@@ -86,6 +86,7 @@ describe('POST /api/v0/add', function () {
     expect(afterExists).toBe(true);
 
     const saved = await ctx.objectStoreWrite.getObject(pkg.cid);
+    expect(Buffer.from(saved)).toEqual(pkg.data);
     const parsed = JSON.parse(uncompress(saved));
     expect(parsed).toEqual(pkg.content);
 

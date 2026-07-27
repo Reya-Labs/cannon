@@ -1,5 +1,5 @@
 import { Response as ExpressResponse, Router } from 'express';
-import { getContentCID, parseIpfsCid } from '@usecannon/builder/dist/src/ipfs';
+import { getContentCID, parseIpfsCid } from '@usecannon/artifact-codec';
 import { CatContext } from '../types';
 
 async function readStoredArtifact(ctx: CatContext, cid: string) {

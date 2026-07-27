@@ -22,6 +22,7 @@ RUN rm -rf /usr/local/lib/node_modules/npm \
     && pnpm add --global --ignore-scripts --offline /tmp/ncc.tgz \
     && rm /tmp/ncc.tgz
 COPY ./pnpm-workspace.yaml ./package.json ./pnpm-lock.yaml ./
+COPY ./packages/artifact-codec/package.json ./packages/artifact-codec/tsconfig.json ./packages/artifact-codec/rollup.config.mjs ./packages/artifact-codec/
 COPY ./packages/builder/package.json ./packages/builder/tsconfig.json ./packages/builder/tsconfig.build.json ./packages/builder/
 # The indexer still declares this workspace dependency even though its current
 # bundle entry point does not import it. Keep the real workspace metadata
@@ -33,11 +34,13 @@ COPY ./packages/indexer/package.json ./packages/indexer/tsconfig.build.json ./pa
 # Install every declared production workspace in the indexer closure. The CLI
 # sources are not bundled, but its materialized dependency graph is required so
 # the conservative SBOM can resolve and attest the full package closure.
-RUN pnpm i --frozen-lockfile --ignore-scripts --no-optional -r --filter @usecannon/builder --filter @usecannon/cli --filter @usecannon/repo --filter @usecannon/indexer
+RUN pnpm i --frozen-lockfile --ignore-scripts --no-optional -r --filter @usecannon/artifact-codec --filter @usecannon/builder --filter @usecannon/cli --filter @usecannon/repo --filter @usecannon/indexer
+COPY ./packages/artifact-codec/ ./packages/artifact-codec/
 COPY ./packages/builder/ ./packages/builder/
 COPY ./packages/repo/ ./packages/repo/
 COPY ./packages/indexer/ ./packages/indexer/
 
+RUN pnpm run -r --filter @usecannon/artifact-codec build
 RUN pnpm run -r --filter @usecannon/builder build:node
 RUN pnpm run -r --filter @usecannon/repo build
 RUN ncc build ./packages/indexer/src/index.ts -o ./packages/indexer/dist/registry

@@ -1,12 +1,11 @@
 import { Router } from 'express';
 import connectBusboy from 'connect-busboy';
-import { getContentCID, getIpfsCid, uncompress } from '@usecannon/builder/dist/src/ipfs';
+import { getContentCID, getIpfsCid, uncompress } from '@usecannon/artifact-codec';
 import { RKEY_FRESH_UPLOAD_HASHES, RKEY_PKG_HASHES } from '../db';
 import { InvalidUploadError, readRequestFile, UploadTooLargeError } from '../helpers/read-request-file';
-import { DeploymentInfo } from '@usecannon/builder';
 import { Response } from 'express';
 
-import type { AddContext, RepoRequest } from '../types';
+import type { AddContext, CannonPackageArtifact, RepoRequest } from '../types';
 import { validateBearerToken } from '../helpers/validateBearerToken';
 
 const RKEY_FRESH_GRACE_PERIOD = 5 * 60; // 5 minutes, or else we delete any uploaded artifacts from fresh
@@ -67,7 +66,7 @@ async function handleFileUpload(req: RepoRequest, res: Response, ctx: AddContext
   // if IPFS hash is not already allowed, lets see if this is a cannon package
   if (!isSavable) {
     try {
-      const pkgData: DeploymentInfo = JSON.parse(uncompress(file));
+      const pkgData = JSON.parse(uncompress(file)) as CannonPackageArtifact;
 
       const miscIpfsHash = getIpfsCid(pkgData.miscUrl);
 
