@@ -16,6 +16,7 @@ const TOP_LEVEL_KEYS = Object.freeze([
   'deadlines',
   'fetchImpl',
   'serviceOrigin',
+  'verifyAbiSelector',
   'verifyArtifactCid',
 ]);
 const DEADLINE_KEYS = Object.freeze(['artifactDeadlineMs', 'queryDeadlineMs']);
@@ -79,11 +80,15 @@ function validateDeadline(value, maximum) {
 export function validateReadClientOptions(options) {
   assertAllowedKeys(options, TOP_LEVEL_KEYS, [
     'serviceOrigin',
+    'verifyAbiSelector',
     'verifyArtifactCid',
   ]);
 
   const serviceOrigin = validateOrigin(options.serviceOrigin);
-  if (typeof options.verifyArtifactCid !== 'function') {
+  if (
+    typeof options.verifyAbiSelector !== 'function' ||
+    typeof options.verifyArtifactCid !== 'function'
+  ) {
     fail('INVALID_CONFIGURATION');
   }
 
@@ -117,6 +122,7 @@ export function validateReadClientOptions(options) {
     fetchImpl,
     queryDeadlineMs,
     serviceOrigin,
+    verifyAbiSelector: options.verifyAbiSelector,
     verifyArtifactCid: options.verifyArtifactCid,
   });
 }

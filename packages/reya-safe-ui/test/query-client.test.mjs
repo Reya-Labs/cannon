@@ -8,6 +8,10 @@ import {
   ReyaReadClientError,
 } from '../src/clients/index.mjs';
 import {
+  ABI_SIGNATURE_CONFORMANCE_VECTORS,
+  isCanonicalAbiSignature,
+} from '../src/clients/schema.mjs';
+import {
   clientWith,
   DEPLOY_CID,
   jsonResponse,
@@ -143,12 +147,6 @@ test('accepts every finite PR13 document variant for chain 1729', async () => {
       selector: '0x82b42900',
       type: 'error',
     },
-    {
-      name: 'OwnershipTransferred(address,address)',
-      selector:
-        '0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0',
-      type: 'event',
-    },
   ];
   const response = searchResponse({
     data: documents,
@@ -161,10 +159,31 @@ test('accepts every finite PR13 document variant for chain 1729', async () => {
 
   assert.deepEqual(
     result.data.map(({ type }) => type),
-    ['namespace', 'package', 'contract', 'function', 'error', 'event']
+    ['namespace', 'package', 'contract', 'function', 'error']
   );
   assert.ok(Object.isFrozen(result.data));
   assert.ok(Object.isFrozen(result.data[0]));
+});
+
+test('enforces the bounded canonical ABI signature conformance vectors', () => {
+  assert.ok(Object.isFrozen(ABI_SIGNATURE_CONFORMANCE_VECTORS));
+  assert.ok(Object.isFrozen(ABI_SIGNATURE_CONFORMANCE_VECTORS.accepted));
+  assert.ok(Object.isFrozen(ABI_SIGNATURE_CONFORMANCE_VECTORS.rejected));
+
+  for (const signature of ABI_SIGNATURE_CONFORMANCE_VECTORS.accepted) {
+    assert.equal(
+      isCanonicalAbiSignature(signature),
+      true,
+      `expected accepted signature: ${signature}`
+    );
+  }
+  for (const signature of ABI_SIGNATURE_CONFORMANCE_VECTORS.rejected) {
+    assert.equal(
+      isCanonicalAbiSignature(signature),
+      false,
+      `expected rejected signature: ${signature}`
+    );
+  }
 });
 
 test('binds package, search, and selector responses to the exact request', async () => {
@@ -195,6 +214,16 @@ test('binds package, search, and selector responses to the exact request', async
     [
       (client) => client.query.search({ query: 'reya-omnibus' }),
       searchResponse({ isHex: true }),
+    ],
+    [
+      (client) => client.query.search({ query: 'reya-omnibus' }),
+      searchResponse({
+        data: [
+          selectorDocument({
+            name: 'transfer(address,uint256)',
+          }),
+        ],
+      }),
     ],
     [
       (client) =>
@@ -234,6 +263,19 @@ test('binds package, search, and selector responses to the exact request', async
         status: 200,
       },
     ],
+    [
+      (client) => client.query.selector({ selectors: [SELECTOR] }),
+      {
+        results: {
+          [SELECTOR]: [
+            selectorDocument({
+              name: 'transfer(address,uint256)',
+            }),
+          ],
+        },
+        status: 200,
+      },
+    ],
   ];
 
   for (const [invoke, response] of cases) {
@@ -241,6 +283,39 @@ test('binds package, search, and selector responses to the exact request', async
     await assert.rejects(
       () => invoke(client),
       assertClientError('RESPONSE_REJECTED')
+    );
+  }
+});
+
+test('fails closed when ABI selector integrity verification does not return true', async () => {
+  for (const verifyAbiSelector of [
+    () => false,
+    () => 'true',
+    async () => false,
+    async () => {
+      throw new Error('private verifier details');
+    },
+  ]) {
+    const client = clientWith(
+      async () =>
+        jsonResponse({
+          results: { [SELECTOR]: [selectorDocument()] },
+          status: 200,
+        }),
+      { verifyAbiSelector }
+    );
+
+    await assert.rejects(
+      () =>
+        client.query.selector({
+          selectors: [SELECTOR],
+          type: 'function',
+        }),
+      (error) => {
+        assertClientError('RESPONSE_REJECTED')(error);
+        assert.doesNotMatch(error.message, /verifier|private/i);
+        return true;
+      }
     );
   }
 });
@@ -286,6 +361,7 @@ test('rejects every query input outside the reviewed contract', async () => {
         types: ['package', 'package'],
       }),
     () => client.query.search({ query: 'reya', types: ['unsupported'] }),
+    () => client.query.search({ query: 'reya', types: ['event'] }),
     () => client.query.search({ query: 'reya' }, {}),
     () =>
       client.query.search({
@@ -322,6 +398,7 @@ test('rejects every query input outside the reviewed contract', async () => {
       ),
     () => client.query.selector({ selectors: [] }),
     () => client.query.selector({ selectors: ['0x8DA5CB5B'] }),
+    () => client.query.selector({ selectors: [`0x${'ab'.repeat(32)}`] }),
     () => client.query.selector({ selectors: [SELECTOR, SELECTOR] }),
     () =>
       client.query.selector({
@@ -334,6 +411,11 @@ test('rejects every query input outside the reviewed contract', async () => {
       client.query.selector({
         selectors: [SELECTOR],
         type: 'constructor',
+      }),
+    () =>
+      client.query.selector({
+        selectors: [SELECTOR],
+        type: 'event',
       }),
     () =>
       client.query.selector({
@@ -397,6 +479,13 @@ test('recomputes deterministic search classification flags', async () => {
       },
     ],
     [
+      `valid-package:${'v'.repeat(33)}@main`,
+      {
+        isPackageRef: false,
+        query: `valid-package${'v'.repeat(33)}main`,
+      },
+    ],
+    [
       'CoreProxy',
       {
         isContractName: true,
@@ -456,6 +545,33 @@ test('fails closed on malformed or cross-chain response schemas', async () => {
           selector: SELECTOR,
           type: 'function',
           address: '0x0000000000000000000000000000000000000001',
+        },
+      ],
+    }),
+    searchResponse({
+      data: [
+        {
+          name: 'foo((uint256)',
+          selector: '0x12345678',
+          type: 'function',
+        },
+      ],
+    }),
+    searchResponse({
+      data: [
+        {
+          name: 'foo(uint)',
+          selector: '0x12345678',
+          type: 'function',
+        },
+      ],
+    }),
+    searchResponse({
+      data: [
+        {
+          name: 'OwnershipTransferred(address,address)',
+          selector: '0x8be0079c',
+          type: 'event',
         },
       ],
     }),

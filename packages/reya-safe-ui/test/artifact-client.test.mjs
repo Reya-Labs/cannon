@@ -12,6 +12,7 @@ import {
   DEPLOY_CID,
   SERVICE_ORIGIN,
   streamResponse,
+  verifyAbiSelector,
 } from '../test-support/client-fixtures.mjs';
 
 function assertClientError(code) {
@@ -32,6 +33,7 @@ test('reads only Kubo cat through the consolidated origin and verifies content C
       return byteResponse(artifact);
     },
     serviceOrigin: SERVICE_ORIGIN,
+    verifyAbiSelector,
     verifyArtifactCid: async (bytes) => {
       verifierBytes = bytes;
       return DEPLOY_CID;
@@ -108,6 +110,7 @@ test('fails closed when the verifier rejects, throws, or returns a malformed CID
     const client = createReyaReadOnlyClients({
       fetchImpl: async () => byteResponse(new Uint8Array([1, 2, 3])),
       serviceOrigin: SERVICE_ORIGIN,
+      verifyAbiSelector,
       verifyArtifactCid,
     });
     await assert.rejects(
@@ -127,6 +130,7 @@ test('does not let the injected verifier mutate returned artifact bytes', async 
   const client = createReyaReadOnlyClients({
     fetchImpl: async () => byteResponse(artifact),
     serviceOrigin: SERVICE_ORIGIN,
+    verifyAbiSelector,
     verifyArtifactCid: async (bytes) => {
       bytes.fill(0);
       return DEPLOY_CID;
@@ -171,6 +175,7 @@ test('accepts a bounded chunked artifact without Content-Length', async () => {
   const client = createReyaReadOnlyClients({
     fetchImpl: async () => streamResponse(chunks),
     serviceOrigin: SERVICE_ORIGIN,
+    verifyAbiSelector,
     verifyArtifactCid: async (bytes) => {
       assert.deepEqual(bytes, new Uint8Array([1, 2, 3, 4, 5]));
       return DEPLOY_CID;
@@ -280,6 +285,7 @@ test('applies the artifact deadline through a stalled response stream', async ()
       });
     },
     serviceOrigin: SERVICE_ORIGIN,
+    verifyAbiSelector,
     verifyArtifactCid: async () => DEPLOY_CID,
   });
 

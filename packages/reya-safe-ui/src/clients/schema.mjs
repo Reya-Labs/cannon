@@ -11,22 +11,54 @@ const CONTRACT_NAME_PATTERN = /^[A-Z][A-Za-z0-9_]{0,127}$/;
 const PACKAGE_NAME_PATTERN = /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]$/;
 const PACKAGE_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,31}$/;
 const PACKAGE_PRESET_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,23}$/;
-const SELECTOR_PATTERN = /^0x(?:[0-9a-f]{8}|[0-9a-f]{64})$/;
-const SELECTOR_NAME_PATTERN =
-  /^[A-Za-z_][A-Za-z0-9_]*\([A-Za-z0-9_(),[\]]*\)$/;
+const SELECTOR_PATTERN = /^0x[0-9a-f]{8}$/;
 const MAX_RESPONSE_TOTAL = 1_000_000;
 const MAX_SEARCH_RESULTS = 500;
 const MAX_PACKAGE_RESULTS = 500;
 const MAX_SELECTOR_RESULTS = 10;
+const MAX_ABI_FIXED_ARRAY_LENGTH = 0xffff_ffff;
 const DOCUMENT_TYPES = new Set([
   'contract',
   'error',
-  'event',
   'function',
   'namespace',
   'package',
 ]);
-const SELECTOR_TYPES = new Set(['error', 'event', 'function']);
+const SELECTOR_TYPES = new Set(['error', 'function']);
+
+export const ABI_SIGNATURE_CONFORMANCE_VECTORS = Object.freeze({
+  accepted: Object.freeze([
+    '$owner()',
+    'owner$()',
+    'owner()',
+    'setConfig((uint256,bool),bytes32[])',
+    'setNested((uint256,(address,bool)[]),bytes32[2][])',
+    'withBounds(bytes1,bytes32,int8,int256,uint8,uint256)',
+    'withFunction(function)',
+    'withMaximumArray(uint256[4294967295])',
+  ]),
+  rejected: Object.freeze([
+    '',
+    '<img>()',
+    'foo(())',
+    'foo((uint256)',
+    'foo((uint256,))',
+    'foo(,)',
+    'foo(address payable)',
+    'foo(bytes0)',
+    'foo(bytes33)',
+    'foo(fixed128x18)',
+    'foo(int)',
+    'foo(ufixed128x18)',
+    'foo(uint)',
+    'foo(uint256[0])',
+    'foo(uint256[01])',
+    'foo(uint256[4294967296])',
+    'owner',
+    'owner ()',
+    `owner(${String.fromCharCode(0x202e)}address)`,
+  ]),
+});
 
 function reject() {
   fail('RESPONSE_REJECTED');
@@ -163,6 +195,126 @@ function assertPackagePreset(value) {
   return assertString(value, 24, PACKAGE_PRESET_PATTERN);
 }
 
+function isCanonicalPartialPackageRef(value) {
+  if (typeof value !== 'string' || value.length > 256) return false;
+  const match =
+    /^(?<name>[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]):(?<version>[^@]+)(?:@(?<preset>[^\s]+))?$/.exec(
+      value
+    );
+  return Boolean(
+    match?.groups &&
+      (match.groups.name === 'ipfs' || match.groups.version.length <= 32) &&
+      (match.groups.preset === undefined || match.groups.preset.length <= 24)
+  );
+}
+
+function isCanonicalAbiBaseType(value) {
+  if (
+    value === 'address' ||
+    value === 'bool' ||
+    value === 'bytes' ||
+    value === 'function' ||
+    value === 'string'
+  ) {
+    return true;
+  }
+
+  const bytes = /^bytes(?<size>[0-9]+)$/.exec(value);
+  if (bytes?.groups) {
+    const size = Number(bytes.groups.size);
+    return String(size) === bytes.groups.size && size >= 1 && size <= 32;
+  }
+
+  const integer = /^(?:u?int)(?<size>[0-9]+)$/.exec(value);
+  if (integer?.groups) {
+    const size = Number(integer.groups.size);
+    return (
+      String(size) === integer.groups.size &&
+      size >= 8 &&
+      size <= 256 &&
+      size % 8 === 0
+    );
+  }
+
+  return false;
+}
+
+export function isCanonicalAbiSignature(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 512) {
+    return false;
+  }
+
+  let offset = 0;
+  const isIdentifierStart = (character) =>
+    typeof character === 'string' && /[A-Za-z_$]/.test(character);
+  const isIdentifierPart = (character) =>
+    typeof character === 'string' && /[A-Za-z0-9_$]/.test(character);
+
+  const parseParameterList = (allowEmpty) => {
+    if (value[offset] !== '(') return false;
+    offset += 1;
+    if (value[offset] === ')') {
+      if (!allowEmpty) return false;
+      offset += 1;
+      return true;
+    }
+
+    while (offset < value.length) {
+      if (!parseType()) return false;
+      if (value[offset] === ')') {
+        offset += 1;
+        return true;
+      }
+      if (value[offset] !== ',') return false;
+      offset += 1;
+    }
+    return false;
+  };
+
+  const parseType = () => {
+    if (value[offset] === '(') {
+      if (!parseParameterList(false)) return false;
+    } else {
+      const start = offset;
+      while (
+        offset < value.length &&
+        /[A-Za-z0-9]/.test(value[offset])
+      ) {
+        offset += 1;
+      }
+      if (
+        offset === start ||
+        !isCanonicalAbiBaseType(value.slice(start, offset))
+      ) {
+        return false;
+      }
+    }
+
+    while (value[offset] === '[') {
+      offset += 1;
+      const start = offset;
+      while (/[0-9]/.test(value[offset] ?? '')) offset += 1;
+      const length = value.slice(start, offset);
+      if (
+        length &&
+        (!/^[1-9][0-9]*$/.test(length) ||
+          length.length > 10 ||
+          Number(length) > MAX_ABI_FIXED_ARRAY_LENGTH)
+      ) {
+        return false;
+      }
+      if (value[offset] !== ']') return false;
+      offset += 1;
+    }
+    return true;
+  };
+
+  if (!isIdentifierStart(value[offset])) return false;
+  offset += 1;
+  while (isIdentifierPart(value[offset])) offset += 1;
+  return parseParameterList(true) && offset === value.length;
+}
+
 function assertPackage(document) {
   const value = assertExactKeys(
     document,
@@ -220,7 +372,7 @@ function assertContract(document) {
   return value;
 }
 
-function assertSelector(document) {
+async function assertSelector(document, verifyAbiSelector) {
   const optional = [
     'address',
     'chainId',
@@ -235,8 +387,8 @@ function assertSelector(document) {
     optional
   );
   if (!SELECTOR_TYPES.has(value.type)) reject();
-  assertString(value.name, 512, SELECTOR_NAME_PATTERN);
-  assertString(value.selector, 66, SELECTOR_PATTERN);
+  if (!isCanonicalAbiSignature(value.name)) reject();
+  assertString(value.selector, 10, SELECTOR_PATTERN);
 
   if (Object.hasOwn(value, 'address')) assertAddress(value.address);
   if (Object.hasOwn(value, 'chainId')) assertChainId(value.chainId);
@@ -269,10 +421,18 @@ function assertSelector(document) {
   ) {
     reject();
   }
+
+  let verified;
+  try {
+    verified = await verifyAbiSelector(value.name, value.selector);
+  } catch {
+    reject();
+  }
+  if (verified !== true) reject();
   return value;
 }
 
-function assertDocument(document) {
+async function assertDocument(document, verifyAbiSelector) {
   const value = assertObject(document);
   if (!DOCUMENT_TYPES.has(value.type)) reject();
   switch (value.type) {
@@ -283,9 +443,8 @@ function assertDocument(document) {
     case 'package':
       return assertPackage(value);
     case 'error':
-    case 'event':
     case 'function':
-      return assertSelector(value);
+      return assertSelector(value, verifyAbiSelector);
     default:
       reject();
   }
@@ -355,11 +514,12 @@ export function validatePackageResponse(response, expectedPackage) {
   return deepFreeze(value);
 }
 
-export function validateSearchResponse(
+export async function validateSearchResponse(
   response,
   expectedQuery,
   expectedTypes,
-  rawQuery
+  rawQuery,
+  verifyAbiSelector
 ) {
   const value = assertExactKeys(response, [
     'data',
@@ -392,11 +552,7 @@ export function validateSearchResponse(
     isContractName: /^[A-Z][A-Za-z0-9_]*$/.test(rawQuery),
     isFunctionSelector: /^0x[0-9a-f]{8}$/.test(rawQuery),
     isHex: !isTx && /^0x[0-9a-f]*$/.test(rawQuery),
-    isPackageRef:
-      rawQuery.length <= 256 &&
-      /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]:[^@]+(?:@[^\s]+)?$/.test(
-        rawQuery
-      ),
+    isPackageRef: isCanonicalPartialPackageRef(rawQuery),
     isTx,
   };
   for (const [key, expected] of Object.entries(expectedFlags)) {
@@ -405,7 +561,7 @@ export function validateSearchResponse(
   assertNonNegativeInteger(value.total, MAX_RESPONSE_TOTAL);
   const data = assertArray(value.data, MAX_SEARCH_RESULTS);
   for (const document of data) {
-    const validated = assertDocument(document);
+    const validated = await assertDocument(document, verifyAbiSelector);
     if (expectedTypes.length > 0 && !expectedTypes.includes(validated.type)) {
       reject();
     }
@@ -414,10 +570,11 @@ export function validateSearchResponse(
   return deepFreeze(value);
 }
 
-export function validateSelectorResponse(
+export async function validateSelectorResponse(
   response,
   requestedSelectors,
-  requestedType
+  requestedType,
+  verifyAbiSelector
 ) {
   const value = assertExactKeys(response, ['results', 'status']);
   assertStatus(value.status);
@@ -429,7 +586,7 @@ export function validateSelectorResponse(
   for (const selector of expected) {
     const entries = assertArray(results[selector], MAX_SELECTOR_RESULTS);
     for (const entry of entries) {
-      const validated = assertSelector(entry);
+      const validated = await assertSelector(entry, verifyAbiSelector);
       if (
         validated.selector !== selector ||
         (requestedType !== undefined && validated.type !== requestedType)

@@ -9,6 +9,7 @@ import {
 import {
   DEPLOY_CID,
   SERVICE_ORIGIN,
+  verifyAbiSelector,
 } from '../test-support/client-fixtures.mjs';
 
 function validOptions() {
@@ -17,6 +18,7 @@ function validOptions() {
       throw new Error('unused');
     },
     serviceOrigin: SERVICE_ORIGIN,
+    verifyAbiSelector,
     verifyArtifactCid: async () => DEPLOY_CID,
   };
 }
@@ -78,14 +80,23 @@ for (const serviceOrigin of [
 }
 
 test('rejects missing integrity verification and transport dependencies', () => {
-  const noVerifier = validOptions();
-  delete noVerifier.verifyArtifactCid;
-  assertConfigurationRejected(() => createReyaReadOnlyClients(noVerifier));
+  for (const verifier of ['verifyAbiSelector', 'verifyArtifactCid']) {
+    const options = validOptions();
+    delete options[verifier];
+    assertConfigurationRejected(() => createReyaReadOnlyClients(options));
+  }
 
   assertConfigurationRejected(() =>
     createReyaReadOnlyClients({
       ...validOptions(),
       fetchImpl: 'fetch',
+    })
+  );
+
+  assertConfigurationRejected(() =>
+    createReyaReadOnlyClients({
+      ...validOptions(),
+      verifyAbiSelector: 'verify',
     })
   );
 });

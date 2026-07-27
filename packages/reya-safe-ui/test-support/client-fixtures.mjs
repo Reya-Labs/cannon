@@ -6,11 +6,21 @@ import {
 export const SERVICE_ORIGIN = 'https://cannon-api.reya-tailnet.ts.net';
 export const DEPLOY_CID = 'QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn';
 export const META_CID = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+const ABI_SELECTORS = new Map([
+  ['owner()', '0x8da5cb5b'],
+  ['transfer(address,uint256)', '0xa9059cbb'],
+  ['Unauthorized()', '0x82b42900'],
+]);
+
+export function verifyAbiSelector(name, selector) {
+  return ABI_SELECTORS.get(name) === selector;
+}
 
 export function clientWith(fetchImpl, overrides = {}) {
   return createReyaReadOnlyClients({
     fetchImpl,
     serviceOrigin: SERVICE_ORIGIN,
+    verifyAbiSelector,
     verifyArtifactCid: async () => DEPLOY_CID,
     ...overrides,
   });

@@ -84,7 +84,8 @@ export function createQueryClient(config) {
         await getJson(config, url),
         normalizedQuery,
         types,
-        query
+        query,
+        config.verifyAbiSelector
       );
     },
 
@@ -99,7 +100,8 @@ export function createQueryClient(config) {
       return validateSelectorResponse(
         await getJson(config, url),
         selectors,
-        type
+        type,
+        config.verifyAbiSelector
       );
     },
   });

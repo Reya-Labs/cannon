@@ -46,7 +46,12 @@ The client factory accepts one exact HTTPS Tailscale service origin such as
 `https://cannon-api.<tailnet>.ts.net`. It rejects credentials, ports, paths,
 query strings, fragments, non-Tailscale hosts, unknown options, and any bearer
 token configuration. Chain selection is not configurable: every applicable
-query is fixed to Reya chain `1729`.
+query is fixed to Reya chain `1729`. The caller must inject both
+`verifyArtifactCid(bytes)` and `verifyAbiSelector(signature, selector)`
+integrity implementations. Selector documents are returned only when the
+second verifier returns exactly `true`; a false, malformed, or rejected result
+fails the entire response closed. The injected selector implementation must
+derive Ethereum Keccak-256 selectors rather than standardized SHA3-256.
 
 The reviewed read surface is finite:
 
@@ -62,6 +67,14 @@ header, and requires the caller to inject a content-CID implementation. The
 client compares that implementation's computed canonical CIDv0 with the
 requested CID before returning bytes. There is no default verifier and no
 browser upload method.
+
+Function and error documents use a dependency-free, bounded canonical ABI
+signature subset: explicit integer widths; standard `address`, `bool`, `bytes`,
+`function`, and `string` types; non-empty tuples; dynamic arrays; and fixed
+arrays whose canonical positive decimal length is at most `4294967295`.
+Aliases, fixed-point types, zero or leading-zero array lengths, control
+characters, and non-canonical syntax are rejected. The query API must enforce
+the same conformance vectors before these dormant clients can be activated.
 
 These modules are not activation-ready infrastructure. The consolidated
 Tailscale ingress and its `/query` and `/artifacts` routes do not yet exist.
