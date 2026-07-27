@@ -4,7 +4,7 @@ import { BadRequestError, ServerError } from './errors';
 import { ApiDocumentType, RedisPackage, RedisTag } from './types';
 
 const packageNameRegex = /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]$/;
-/** Returns whether a value is a 3–32 character canonical Cannon package name. */
+/** Returns whether a value is a 3–31 character Cannon package name accepted by ChainDefinition. */
 export function isPackageName(packageName: unknown): packageName is string {
   return typeof packageName === 'string' && packageNameRegex.test(packageName);
 }
