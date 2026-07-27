@@ -37,6 +37,7 @@ describe('query validation', () => {
 
   it('accepts bounded, valid selector lists and strict selector types', () => {
     assert.deepEqual(parseSelectors('0x12345678,0x12345678'), ['0x12345678']);
+    assert.deepEqual(parseSelectors(Array.from({ length: 20 }, () => '0x12345678').join(',')), ['0x12345678']);
     assert.equal(parseSelectorType('error'), 'error');
     assert.throws(() => parseSelectors(`0x${'ab'.repeat(32)}`), /valid 4-byte selectors/);
     assert.throws(() => parseSelectors('0x1234'), /valid 4-byte selectors/);

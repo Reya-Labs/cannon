@@ -121,7 +121,7 @@ export function createPackageQueryExecutor(getRedis: () => Promise<RedisClientTy
     }
 
     return {
-      total: (packagesResults?.total || 0) + (namespacesResults?.total || 0),
+      total: data.length,
       data,
     } satisfies {
       total: number;

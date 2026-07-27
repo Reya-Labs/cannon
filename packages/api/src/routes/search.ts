@@ -17,6 +17,7 @@ import { ApiDocument } from '../types';
 
 const MAX_TYPED_RESULTS = 100;
 const SELECTOR_TYPES = new Set(['error', 'function']);
+/** Injectable query operations used by the search router and its focused tests. */
 export type SearchDependencies = {
   findContractsByAddress: typeof findContractsByAddress;
   findPackagesByPartialRef: typeof findPackagesByPartialRef;
@@ -52,6 +53,10 @@ function _pushResults(response: SearchResponse, result: { total: number; data: A
   response.data.push(...result.data);
 }
 
+/**
+ * Creates the public search router, shallowly replacing any supplied query
+ * dependencies while retaining the production defaults for omitted keys.
+ */
 export function createSearchRouter(overrides: Partial<SearchDependencies> = {}): Router {
   const dependencies = { ...DEFAULT_SEARCH_DEPENDENCIES, ...overrides };
   const search = Router();

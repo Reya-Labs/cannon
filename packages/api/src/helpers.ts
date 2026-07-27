@@ -247,6 +247,7 @@ export function parseQueryTypes(type: unknown): ApiDocumentType[] {
 
 const selectorRegex = /^0x[0-9a-fA-F]{8}$/;
 const MAX_SELECTORS = 20;
+const MAX_SELECTOR_QUERY_LENGTH = MAX_SELECTORS * '0x00000000'.length + (MAX_SELECTORS - 1);
 /**
  * Parses, lowercases, and deduplicates at most 20 comma-separated four-byte selectors.
  * Throws BadRequestError for an absent, malformed, or oversized value.
@@ -255,7 +256,7 @@ export function parseSelectors(value: unknown): viem.Hex[] {
   if (typeof value !== 'string' || !value) throw new BadRequestError('Query selector not specified');
   const selectors = value.split(',');
   if (
-    value.length > MAX_SELECTORS * 67 ||
+    value.length > MAX_SELECTOR_QUERY_LENGTH ||
     selectors.length > MAX_SELECTORS ||
     selectors.some((selector) => !selectorRegex.test(selector))
   ) {

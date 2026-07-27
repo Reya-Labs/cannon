@@ -79,7 +79,7 @@ describe('bounded aggregate query factories', () => {
     let aggregateOptions: { STEPS?: { from?: number; size?: number; type?: string }[] } | undefined;
     const batch = {
       exec: async () => [
-        { documents: [], total: 0 },
+        { documents: [], total: 7 },
         {
           results: Array.from({ length: MAX_NAMESPACE_RESULTS + 20 }, (_, index) => ({
             count: String(index + 1),
@@ -102,6 +102,7 @@ describe('bounded aggregate query factories', () => {
     const result = await queryPackages({ includeNamespaces: true, limit: 500, query: '*' });
 
     assert.equal(result.data.length, MAX_NAMESPACE_RESULTS);
+    assert.equal(result.total, MAX_NAMESPACE_RESULTS);
     assert.equal(result.data[0]?.type, 'namespace');
     assert.equal(result.data[0]?.count, 1);
     assert.equal(typeof result.data[0]?.count, 'number');
@@ -170,6 +171,7 @@ describe('bounded aggregate query factories', () => {
     });
 
     assert.deepEqual(result.data, [{ count: 2, name: 'valid', type: 'namespace' }]);
+    assert.equal(result.total, 1);
     assert.deepEqual(
       warnings,
       Array.from({ length: 5 }, () => ['query API skipped malformed Redis document', { kind: 'namespace' }])
