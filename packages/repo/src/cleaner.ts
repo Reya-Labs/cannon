@@ -10,26 +10,46 @@ import {
 } from './db';
 import type { CannonPackageArtifact } from './types';
 
-async function readIpfs(ipfsUrl: string, cid: string, timeout: number): Promise<CannonPackageArtifact> {
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export async function readLegacyIpfsArtifact(ipfsUrl: string, cid: string, timeout: number): Promise<CannonPackageArtifact> {
   const url = new URL(`/api/v0/cat?arg=${encodeURIComponent(cid)}`, ipfsUrl.replace('+ipfs', ''));
-  const response = await fetch(url, {
-    method: 'POST',
-    signal: AbortSignal.timeout(timeout),
-  });
+  let response: globalThis.Response;
+
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      signal: AbortSignal.timeout(timeout),
+    });
+  } catch (error) {
+    throw new Error(`failed to read "${cid}" from the legacy IPFS endpoint: ${errorMessage(error)}`);
+  }
 
   if (!response.ok) {
     throw new Error(`failed to read "${cid}" from the legacy IPFS endpoint: HTTP ${response.status}`);
   }
 
-  return JSON.parse(uncompress(new Uint8Array(await response.arrayBuffer()))) as CannonPackageArtifact;
+  try {
+    return JSON.parse(uncompress(new Uint8Array(await response.arrayBuffer()))) as CannonPackageArtifact;
+  } catch (error) {
+    throw new Error(`failed to decode "${cid}" from the legacy IPFS endpoint: ${errorMessage(error)}`);
+  }
 }
 
-async function deleteIpfs(ipfsUrl: string, cid: string, timeout: number): Promise<void> {
+export async function deleteLegacyIpfsPin(ipfsUrl: string, cid: string, timeout: number): Promise<void> {
   const url = new URL(`/api/v0/pin/rm?arg=${encodeURIComponent(cid)}`, ipfsUrl.replace('+ipfs', ''));
-  const response = await fetch(url, {
-    method: 'POST',
-    signal: AbortSignal.timeout(timeout),
-  });
+  let response: globalThis.Response;
+
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      signal: AbortSignal.timeout(timeout),
+    });
+  } catch (error) {
+    throw new Error(`failed to remove "${cid}" from the legacy IPFS endpoint: ${errorMessage(error)}`);
+  }
 
   if (!response.ok) {
     throw new Error(`failed to remove "${cid}" from the legacy IPFS endpoint: HTTP ${response.status}`);
@@ -67,7 +87,7 @@ export async function cleanUnregisteredIpfs(
       console.log(`[keep] ${artifact.value}`);
       try {
         // TODO: also keep the misc url
-        const miscUrl = (await readIpfs(ipfsUrl, ipfsHash, 10000)).miscUrl;
+        const miscUrl = (await readLegacyIpfsArtifact(ipfsUrl, ipfsHash, 10000)).miscUrl;
         const miscIpfsHash = _.last(miscUrl.split('://'))!;
 
         const batch = rdb.multi();
@@ -81,7 +101,7 @@ export async function cleanUnregisteredIpfs(
     } else {
       console.log(`[wipe] ${artifact.value}`);
       try {
-        await deleteIpfs(ipfsUrl, ipfsHash, 10000);
+        await deleteLegacyIpfsPin(ipfsUrl, ipfsHash, 10000);
       } catch (err) {
         console.log(`[fail] did not delete upload hash: ${err}`);
         continue;
