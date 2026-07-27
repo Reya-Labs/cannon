@@ -1,17 +1,8 @@
 import { createServer, type Server } from 'node:http';
 import { createApp } from './app';
 import { config, type ApiConfig } from './config';
+import { errorIdentity } from './logging';
 import { checkRedisReadiness, connectRedis as connectRedisClient, disconnectRedis as disconnectRedisClient } from './redis';
-
-function errorIdentity(error: unknown): { code: string; name: string } {
-  return {
-    code:
-      typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
-        ? error.code
-        : 'unexpected',
-    name: error instanceof Error ? error.name : 'unknown',
-  };
-}
 
 type StartServerDependencies = {
   checkReadiness?: (signal: AbortSignal) => Promise<void>;

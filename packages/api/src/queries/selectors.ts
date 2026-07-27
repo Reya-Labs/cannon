@@ -1,6 +1,7 @@
 import * as viem from 'viem';
 import * as keys from '../db/keys';
 import { transformFunction } from '../db/transformers';
+import { warnMalformedDocument } from '../logging';
 import { useRedis } from '../redis';
 import { ApiSelectorResult, RedisFunction } from '../types';
 
@@ -22,14 +23,7 @@ async function _querySelectors(params: { query: string; limit?: number }) {
     const parsed = transformFunction(value);
 
     if (!parsed) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        new Error(
-          `Could not parse "${value && JSON.stringify(value)}" on query "FT.SEARCH ${keys.RKEY_ABI_SEARCHABLE} ${
-            params.query
-          }"`
-        )
-      );
+      warnMalformedDocument('selector');
       continue;
     }
 

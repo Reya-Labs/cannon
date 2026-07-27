@@ -2,6 +2,7 @@ import { commandOptions, createClient, RedisClientType } from 'redis';
 import { config } from './config';
 import * as keys from './db/keys';
 import { ServiceUnavailableError } from './errors';
+import { errorIdentity } from './logging';
 
 const client: RedisClientType = createClient({
   commandsQueueMaxLength: 100,
@@ -21,13 +22,7 @@ client.on('ready', () => {
 
 client.on('error', (error) => {
   // eslint-disable-next-line no-console
-  console.error('Redis connection error', {
-    code:
-      typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
-        ? error.code
-        : 'unexpected',
-    name: error instanceof Error ? error.name : 'unknown',
-  });
+  console.error('Redis connection error', errorIdentity(error));
 });
 
 let connection: Promise<void> | undefined;

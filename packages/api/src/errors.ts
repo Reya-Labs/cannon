@@ -1,4 +1,5 @@
 import { ErrorRequestHandler } from 'express';
+import { errorIdentity } from './logging';
 
 export class ServerError extends Error {
   status: number;
@@ -45,9 +46,7 @@ export const apiErrorHandler: ErrorRequestHandler = (err, req, res, next) => {
   if (!(error instanceof ServiceUnavailableError) && error.status >= 500) {
     // eslint-disable-next-line no-console
     console.error('query API request failed', {
-      code:
-        typeof err === 'object' && err !== null && 'code' in err && typeof err.code === 'string' ? err.code : 'unexpected',
-      name: err instanceof Error ? err.name : 'unknown',
+      ...errorIdentity(err),
       status: error.status,
     });
   }

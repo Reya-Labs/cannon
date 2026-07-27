@@ -3,6 +3,7 @@ import { AggregateGroupByReducers, AggregateSteps } from 'redis';
 import * as viem from 'viem';
 import * as keys from '../db/keys';
 import { isChainId, isContractName } from '../helpers';
+import { warnMalformedDocument } from '../logging';
 import { useRedis } from '../redis';
 import { ApiContract } from '../types';
 
@@ -49,12 +50,7 @@ async function _aggregateContracts(query: string, limit: number): Promise<Contra
     const parsed = _parseAggregateResult(doc);
 
     if (!parsed) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        new Error(
-          `Could not parse "${doc && JSON.stringify(doc)}" on query "FT.AGGREGATE ${keys.RKEY_ABI_SEARCHABLE} ${query}"`
-        )
-      );
+      warnMalformedDocument('contract');
       continue;
     }
 

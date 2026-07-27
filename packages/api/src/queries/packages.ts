@@ -5,6 +5,7 @@ import * as keys from '../db/keys';
 import { findPackageByTag, transformPackage, transformPackageWithTag } from '../db/transformers';
 import { NotFoundError, ServerError } from '../errors';
 import { isRedisTagOfPackage, parsePackageName, parseTextQuery } from '../helpers';
+import { warnMalformedDocument } from '../logging';
 import { useRedis } from '../redis';
 import { ApiDocument, ApiNamespace, ApiPackage, RedisDocument, RedisPackage, RedisTag } from '../types';
 import { getChainIds, MAX_CHAIN_RESULTS } from './chains';
@@ -77,8 +78,7 @@ export function createPackageQueryExecutor(getRedis: () => Promise<RedisClientTy
         const pkg = findPackageByTag(packagesResults.documents as any, item);
 
         if (!pkg) {
-          // eslint-disable-next-line no-console
-          console.warn(new Error(`Package not found for tag "${JSON.stringify(item)}"`));
+          warnMalformedDocument('tag');
           continue;
         }
 
