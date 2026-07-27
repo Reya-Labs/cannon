@@ -13,6 +13,18 @@ describe('GET /health', function () {
     });
   });
 
+  it('requires a valid writer token for the write-readiness endpoint', async function () {
+    await ctx.repo.get('/health/write').expect(401, { error: 'Authentication required' });
+    await ctx.repo
+      .get('/health/write')
+      .set('Authorization', 'Bearer invalid')
+      .expect(403, { error: 'Invalid or expired token' });
+    await ctx.repo
+      .get('/health/write')
+      .set('Authorization', `Bearer ${ctx.authToken}`)
+      .expect(200, { status: 'ok', version });
+  });
+
   it('should return 503 when read-only object storage access is unavailable', async function () {
     const healthCheck = vi
       .spyOn(ctx.objectStoreRead, 'healthCheck')

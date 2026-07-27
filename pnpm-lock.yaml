@@ -529,12 +529,6 @@ importers:
       '@usecannon/builder':
         specifier: workspace:*
         version: link:../builder
-      '@usecannon/cli':
-        specifier: workspace:*
-        version: link:../cli
-      '@usecannon/repo':
-        specifier: workspace:*
-        version: link:../repo
       bullmq:
         specifier: ^5.31.2
         version: 5.31.2
@@ -563,6 +557,9 @@ importers:
       '@types/morgan':
         specifier: ^1.9.9
         version: 1.9.9
+      '@vercel/ncc':
+        specifier: 0.44.1
+        version: 0.44.1
       ts-node:
         specifier: ^10.9.2
         version: 10.9.2(@types/node@22.14.0)(typescript@5.8.3)
@@ -7260,6 +7257,10 @@ packages:
         optional: true
       vue-router:
         optional: true
+
+  '@vercel/ncc@0.44.1':
+    resolution: {integrity: sha512-cUjIE5P2YY1n+Kt9rFIazMMpGoPn1Fic04rOmTkElMkiDP5oszGfERMpo2shVkFKDL7rVppdM2pqJKC59shQWQ==}
+    hasBin: true
 
   '@vitejs/plugin-react@4.3.4':
     resolution: {integrity: sha512-SCCPBJtYLdE8PX/7ZQAs1QAZ8Jqwih+0VBLum1EGqmCCQal+MIUqLCzj3ZUy8ufbC0cAM4LRlSTm7IQJwWT4ug==}
@@ -25484,6 +25485,8 @@ snapshots:
     optionalDependencies:
       next: 14.2.26(@babel/core@7.26.10)(@opentelemetry/api@1.9.0)(babel-plugin-macros@3.1.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.86.3)
       react: 18.3.1
+
+  '@vercel/ncc@0.44.1': {}
 
   '@vitejs/plugin-react@4.3.4(vite@5.4.17(@types/node@22.14.0)(sass@1.86.3)(terser@5.39.0))':
     dependencies:

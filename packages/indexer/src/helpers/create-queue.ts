@@ -62,7 +62,6 @@ export function createQueue<T extends ParsedJobActions<string, any, DefaultJobCo
 ) {
   type QueueJobName = T['jobs'][number]['name'];
   type QueueJobData = Parameters<T['jobs'][number]['action']>[0];
-  type QueueJob = BullJob<QueueJobData, void, QueueJobName>;
   type QueueContext = T['ctx'] & DefaultJobContext<QueueJobName, QueueJobData>;
 
   const connection = parseRedisUrl(queueOpts.redisUrl);
@@ -77,6 +76,11 @@ export function createQueue<T extends ParsedJobActions<string, any, DefaultJobCo
       },
     },
   });
+  queue.on('error', () => {
+    // BullMQ requires an error listener; keep connection details and job data out of logs.
+    // eslint-disable-next-line no-console
+    console.error(`[queue][${queueOpts.queueName}] Redis connection error`);
+  });
 
   const jobCtx = { ...jobs.ctx, queue, add, createBatch } as unknown as QueueContext;
 
@@ -84,7 +88,7 @@ export function createQueue<T extends ParsedJobActions<string, any, DefaultJobCo
     const actionCreator = jobs.jobs.find((j) => j.name === name)?.action;
     if (!actionCreator) throw new Error(`Unknown job name: ${name}`);
     const job = actionCreator(data, jobCtx);
-    if (!job) throw new Error(`Missing action response for job: ${name} ${data}`);
+    if (!job) throw new Error(`Missing action response for job: ${name}`);
     return job;
   }
 
@@ -143,14 +147,19 @@ export function createQueue<T extends ParsedJobActions<string, any, DefaultJobCo
 
     workers.push(worker);
 
-    worker.on('completed', (job: QueueJob) => {
+    worker.on('error', () => {
       // eslint-disable-next-line no-console
-      console.log(`[worker][${queueOpts.queueName}] completed: `, job.name, job.data.cid);
+      console.error(`[worker][${queueOpts.queueName}] Redis connection error`);
     });
 
-    worker.on('failed', (job: QueueJob | undefined, err: Error) => {
+    worker.on('completed', () => {
       // eslint-disable-next-line no-console
-      console.log(`[worker][${queueOpts.queueName}] failed: `, job?.name, job?.data.cid, err);
+      console.log(`[worker][${queueOpts.queueName}] completed queue job`);
+    });
+
+    worker.on('failed', () => {
+      // eslint-disable-next-line no-console
+      console.error(`[worker][${queueOpts.queueName}] failed queue job`);
     });
 
     return worker;

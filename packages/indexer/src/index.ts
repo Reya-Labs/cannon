@@ -1,13 +1,24 @@
-import { loadIndexerProcessConfig } from './process-config';
-import { runIndexerProcess } from './process-mode';
-
 export * from './db';
 
+import { loop } from './registry';
+import { listenForShutdown } from './shutdown';
+
+export async function runRegistryProcess() {
+  const shutdown = listenForShutdown();
+
+  try {
+    await loop({ signal: shutdown.signal });
+  } finally {
+    shutdown.dispose();
+  }
+}
+
 if (require.main === module) {
-  const { INDEXER_PROCESS_MODE } = loadIndexerProcessConfig(process.env);
-  void runIndexerProcess(INDEXER_PROCESS_MODE).catch((err) => {
+  void runRegistryProcess().catch((error: unknown) => {
+    // Keep errors free of configuration values and event payloads.
+    const message = error instanceof Error ? error.message : 'unknown failure';
     // eslint-disable-next-line no-console
-    console.error(`indexer ${INDEXER_PROCESS_MODE} process failed`, err);
-    process.exit(1);
+    console.error(`registry process failed: ${message}`);
+    process.exitCode = 1;
   });
 }

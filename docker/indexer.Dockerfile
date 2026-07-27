@@ -2,22 +2,21 @@ FROM node:22.11.0-alpine@sha256:b64ced2e7cd0a4816699fe308ce6e8a08ccba463c757c00c
 
 WORKDIR /usr/app
 
-RUN npm install --global pnpm@10.11.0 @vercel/ncc@0.44.1
+RUN npm install --global pnpm@10.11.0
 COPY ./pnpm-workspace.yaml ./package.json ./pnpm-lock.yaml ./
 COPY ./packages/builder/package.json ./packages/builder/tsconfig.json ./packages/builder/tsconfig.build.json ./packages/builder/
-COPY ./packages/repo/package.json ./packages/repo/tsconfig.json ./packages/repo/
 COPY ./packages/indexer/package.json ./packages/indexer/tsconfig.build.json ./packages/indexer/
 
-RUN pnpm i --frozen-lockfile --no-optional -r --filter @usecannon/builder --filter @usecannon/repo --filter @usecannon/indexer
+RUN pnpm i --frozen-lockfile --no-optional -r --filter @usecannon/builder --filter @usecannon/indexer
 COPY ./packages/builder/ ./packages/builder/
-COPY ./packages/repo/ ./packages/repo/
 COPY ./packages/indexer/ ./packages/indexer/
 
 RUN pnpm run -r --filter @usecannon/builder build:node
-RUN pnpm run -r --filter @usecannon/repo build
-RUN ncc build ./packages/indexer/src/index.ts -o ./packages/indexer/dist/registry
-RUN ncc build ./packages/indexer/src/worker.ts -o ./packages/indexer/dist/artifact-worker
-RUN ncc build ./packages/indexer/src/4byte-directory.ts -o ./packages/indexer/dist/4byte-directory
+RUN pnpm --filter @usecannon/indexer exec tsc -p tsconfig.build.json --noEmit
+RUN pnpm --filter @usecannon/indexer exec ncc build src/index.ts --transpile-only -o dist/registry \
+    && node ./packages/indexer/scripts/assert-registry-bundle.cjs ./packages/indexer/dist/registry
+RUN pnpm --filter @usecannon/indexer exec ncc build src/worker.ts --transpile-only -o dist/artifact-worker
+RUN pnpm --filter @usecannon/indexer exec ncc build src/4byte-directory.ts --transpile-only -o dist/4byte-directory
 
 FROM node:22.11.0-alpine@sha256:b64ced2e7cd0a4816699fe308ce6e8a08ccba463c757c00c14cd372e3d2c763e
 

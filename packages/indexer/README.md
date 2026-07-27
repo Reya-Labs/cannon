@@ -2,11 +2,11 @@
 
 The indexer image contains three independent entrypoints:
 
-- `node dist/registry/index.js` selects the registry/artifact-worker process mode.
-- `node dist/artifact-worker/index.js` starts only the privileged artifact worker.
+- `node dist/registry/index.js` runs only the credential-free registry producer.
+- `node dist/artifact-worker/index.js` runs only the artifact mirror worker.
 - `node dist/4byte-directory/index.js` is the optional, one-shot 4byte enrichment worker.
 
-The registry entrypoint never imports or starts the enrichment worker. A deployment can therefore deny 4byte egress without affecting registry progress.
+The registry bundle never imports or starts either worker. Worker startup or runtime failure therefore cannot stop registry scanning or enqueueing.
 
 ## Registry configuration
 
@@ -14,32 +14,43 @@ Production and staging require explicit `MAINNET_PROVIDER_URL` and `OPTIMISM_PRO
 
 ## Registry/artifact-worker isolation
 
-`INDEXER_PROCESS_MODE` controls `node dist/registry/index.js`:
+Deploy the registry and artifact worker as separately supervised workloads
+against the same `REDIS_URL` and `QUEUE_NAME`. Keep activation held until the
+worker health check passes against both facades and Redis.
 
-- `combined` is the compatibility default and preserves the prior behavior: the
-  artifact worker starts before the registry scan loop in one process. Missing
-  worker credentials therefore fail startup rather than silently disabling
-  pinning, and a process-level worker failure remains coupled to the registry.
-- `registry` starts only the canonical registry producer. This mode does not
-  load artifact-handler code and does not require S3 credentials.
-- `artifact-worker` starts only the privileged queue consumer. It requires the
-  existing `IPFS_URL`, `S3_*`, Redis and queue configuration.
+The worker has no S3 or GCS configuration. It requires:
 
-The dedicated `node dist/artifact-worker/index.js` entrypoint is equivalent to
-`artifact-worker` mode and does not load registry configuration.
+- `ARTIFACT_SOURCE_URL`: an explicit reader-facade origin implementing bounded
+  Kubo-compatible `POST /api/v0/cat?arg=<cid>` reads;
+- `ARTIFACT_WRITER_URL`: an explicit Reya writer-facade origin;
+- `ARTIFACT_WRITER_TOKEN`: the bearer token used only for writer health and
+  `POST /api/v0/add?expected-cid=<cid>` requests;
+- the shared Redis and queue configuration.
 
-The isolated mode is an explicit two-workload activation. Do not switch the
-registry from `combined` to `registry` until a separately supervised
-`artifact-worker` workload is ready against the same `REDIS_URL` and
-`QUEUE_NAME`. Apply a Redis ACL that lets the registry enqueue but not mutate
-artifact storage, while the worker receives the object-storage credentials and
-artifact-network egress.
+Production and staging facade URLs must be non-loopback HTTPS origins. The
+worker rejects redirects, applies deadlines, streams responses into explicit
+bounds, independently recomputes every CID, and discovers the complete package
+closure before writing. A package job mirrors the root, every recursive import,
+every `miscUrl`, and each non-empty on-chain metadata CID. Writer responses are
+reconciled as an exact set, including missing and extra members, and replays are
+idempotent.
 
-Queue names and job IDs are unchanged. New payloads carry the V1 contract
-version, and the worker treats existing unversioned jobs as V1 so the BullMQ
-backlog survives the transition. This slice isolates the current pinner; it does
-not claim complete artifact mirroring, backfill, poison-job recovery, or
-publication cutover.
+Resource controls are configurable with `ARTIFACT_FETCH_TIMEOUT_MS`,
+`ARTIFACT_WRITE_TIMEOUT_MS`, `ARTIFACT_READINESS_TIMEOUT_MS`,
+`ARTIFACT_MAX_FETCH_BYTES`, `ARTIFACT_MAX_NODE_BYTES`,
+`ARTIFACT_MAX_COMPRESSED_BYTES`, `ARTIFACT_MAX_INFLATED_BYTES`,
+`ARTIFACT_MAX_CLOSURE_BYTES`, `ARTIFACT_MAX_CLOSURE_INFLATED_BYTES`,
+`ARTIFACT_MAX_CLOSURE_NODES`, and `ARTIFACT_MAX_WRITE_RESPONSE_BYTES`.
+
+Legacy unversioned jobs remain valid and retain their original job IDs. New
+package jobs may include normalized `metadataCids`; their deterministic job ID
+includes the metadata set so a second publication of the same root with
+different metadata cannot be discarded as a duplicate.
+
+Both process entrypoints handle `SIGINT` and `SIGTERM` by closing their owned
+Redis, queue, and worker resources. The image build asserts after NCC that the
+registry bundle contains no artifact handler, writer token, object-store SDK, or
+`@usecannon/repo` code.
 
 ## Optional 4byte enrichment
 

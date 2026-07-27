@@ -8,6 +8,17 @@ import * as routes from './routes';
 
 import type { RepoContext } from './types';
 
+const SAFE_REQUEST_LOG_FORMAT =
+  ':remote-addr - :remote-user :method :safe-path HTTP/:http-version :status :res[content-length] - :response-time ms';
+
+morgan.token('safe-path', (req) => {
+  try {
+    return new URL(req.url ?? '/', 'http://repo.invalid').pathname;
+  } catch {
+    return '/invalid-request-path';
+  }
+});
+
 export function createApp(ctx: RepoContext): { app: Express; start: () => Promise<Server> } {
   const app = express();
   const readerEnabled = ctx.config.REPO_ROLE === 'reader' || ctx.config.REPO_ROLE === 'combined';
@@ -24,7 +35,8 @@ export function createApp(ctx: RepoContext): { app: Express; start: () => Promis
     app.enable('trust proxy');
   }
 
-  app.use(morgan('short'));
+  // Query strings can contain unvalidated expected CIDs; never copy them into logs.
+  app.use(morgan(SAFE_REQUEST_LOG_FORMAT));
   if (corsAllowedOrigins.length > 0) {
     app.use(
       cors({
@@ -71,6 +83,7 @@ export function createApp(ctx: RepoContext): { app: Express; start: () => Promis
 
   app.use(
     routes.health({
+      config: ctx.config,
       rdb: ctx.rdb,
       objectStoreRead: ctx.objectStoreRead,
       objectStoreWrite: ctx.objectStoreWrite,

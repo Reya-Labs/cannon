@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { loadFourByteConfig } from '../src/4byte-config';
 import { loadRegistryConfig } from '../src/config';
-import { loadIndexerProcessConfig } from '../src/process-config';
 import { loadArtifactWorkerConfig } from '../src/worker-config';
 
 function validRegistryEnvironment(): Record<string, string> {
@@ -99,29 +98,106 @@ describe('registry configuration', () => {
   });
 });
 
-describe('indexer process configuration', () => {
-  it('preserves combined mode by default', () => {
-    assert.equal(loadIndexerProcessConfig({}).INDEXER_PROCESS_MODE, 'combined');
-  });
-
-  it('requires storage credentials only in the privileged artifact worker', () => {
-    const common = {
-      IPFS_URL: 'https://artifacts.example.com',
+describe('artifact worker configuration', () => {
+  function validWorkerEnvironment() {
+    return {
+      ARTIFACT_SOURCE_URL: 'https://artifacts.example.com',
+      ARTIFACT_WRITER_TOKEN: 'writer-token',
+      ARTIFACT_WRITER_URL: 'https://writer.example.com',
       NODE_ENV: 'production',
       REDIS_URL: 'rediss://redis.example.com:6379',
     };
+  }
 
-    assert.throws(() => loadArtifactWorkerConfig(common), /S3_/);
-    assert.doesNotThrow(() =>
-      loadArtifactWorkerConfig({
-        ...common,
-        S3_BUCKET: 'cannon',
-        S3_ENDPOINT: 'https://objects.example.com',
-        S3_FOLDER: 'repo-v2',
-        S3_KEY: 'write-key',
-        S3_REGION: 'us-east-1',
-        S3_SECRET: 'write-secret',
-      })
+  it('requires explicit source, authenticated writer, and Redis endpoints without object-store credentials', () => {
+    const config = loadArtifactWorkerConfig(validWorkerEnvironment());
+
+    assert.equal(config.ARTIFACT_SOURCE_URL, 'https://artifacts.example.com');
+    assert.equal(config.ARTIFACT_WRITER_URL, 'https://writer.example.com');
+    assert.equal('S3_KEY' in config, false);
+    assert.equal('S3_SECRET' in config, false);
+    assert.equal('GCS_PROJECT_ID' in config, false);
+  });
+
+  it('fails closed without any required facade setting', () => {
+    for (const name of ['ARTIFACT_SOURCE_URL', 'ARTIFACT_WRITER_URL', 'ARTIFACT_WRITER_TOKEN'] as const) {
+      const environment: Record<string, string> = validWorkerEnvironment();
+      delete environment[name];
+      assert.throws(() => loadArtifactWorkerConfig(environment), new RegExp(name));
+    }
+  });
+
+  it('rejects unsafe production facade endpoints', () => {
+    for (const sourceUrl of [
+      'http://artifacts.example.com',
+      'https://user:secret@artifacts.example.com',
+      'https://artifacts.example.com/api',
+      'https://127.0.0.1',
+      'https://[::ffff:0.0.0.0]',
+      'https://[::ffff:127.0.0.1]',
+      'https://service.localhost',
+      'https://service.localhost.',
+    ]) {
+      assert.throws(
+        () =>
+          loadArtifactWorkerConfig({
+            ...validWorkerEnvironment(),
+            ARTIFACT_SOURCE_URL: sourceUrl,
+          }),
+        /non-loopback HTTPS/
+      );
+    }
+  });
+
+  it('allows explicit loopback HTTP facades for tests and development', () => {
+    const config = loadArtifactWorkerConfig({
+      ...validWorkerEnvironment(),
+      ARTIFACT_SOURCE_URL: 'http://127.0.0.1:8081',
+      ARTIFACT_WRITER_URL: 'http://localhost:8082',
+      NODE_ENV: 'test',
+    });
+
+    assert.equal(config.ARTIFACT_SOURCE_URL, 'http://127.0.0.1:8081');
+    assert.equal(config.ARTIFACT_WRITER_URL, 'http://localhost:8082');
+  });
+
+  it('rejects writer tokens with surrounding whitespace', () => {
+    assert.throws(
+      () =>
+        loadArtifactWorkerConfig({
+          ...validWorkerEnvironment(),
+          ARTIFACT_WRITER_TOKEN: ' writer-secret',
+        }),
+      /surrounding whitespace/
+    );
+  });
+
+  it('enforces integer and relational resource bounds', () => {
+    assert.throws(
+      () =>
+        loadArtifactWorkerConfig({
+          ...validWorkerEnvironment(),
+          ARTIFACT_MAX_CLOSURE_NODES: '0',
+        }),
+      /ARTIFACT_MAX_CLOSURE_NODES/
+    );
+    assert.throws(
+      () =>
+        loadArtifactWorkerConfig({
+          ...validWorkerEnvironment(),
+          ARTIFACT_MAX_FETCH_BYTES: '10',
+          ARTIFACT_MAX_NODE_BYTES: '11',
+        }),
+      /ARTIFACT_MAX_NODE_BYTES must not exceed/
+    );
+    assert.throws(
+      () =>
+        loadArtifactWorkerConfig({
+          ...validWorkerEnvironment(),
+          ARTIFACT_MAX_CLOSURE_INFLATED_BYTES: '100',
+          ARTIFACT_MAX_INFLATED_BYTES: '101',
+        }),
+      /ARTIFACT_MAX_INFLATED_BYTES must not exceed/
     );
   });
 });

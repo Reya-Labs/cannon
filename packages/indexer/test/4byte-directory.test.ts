@@ -433,9 +433,12 @@ describe('one-shot enrichment worker', () => {
     const imports = localImportGraph(indexPath);
     const registryImports = localImportGraph(resolve(__dirname, '../src/registry.ts'));
 
-    assert.ok(imports.has(resolve(__dirname, '../src/process-mode.ts')));
+    assert.ok(imports.has(resolve(__dirname, '../src/registry.ts')));
     assert.ok(!imports.has(resolve(__dirname, '../src/4byte-directory.ts')));
     assert.ok(!imports.has(resolve(__dirname, '../src/4byte-config.ts')));
+    assert.ok(!imports.has(resolve(__dirname, '../src/worker.ts')));
+    assert.ok(!imports.has(resolve(__dirname, '../src/artifact-client.ts')));
+    assert.ok(!imports.has(resolve(__dirname, '../src/artifact-closure.ts')));
     assert.ok(registryImports.has(resolve(__dirname, '../src/queue/contracts.ts')));
     assert.ok(!registryImports.has(resolve(__dirname, '../src/queue/pinning.ts')));
     assert.ok(!registryImports.has(resolve(__dirname, '../src/worker.ts')));

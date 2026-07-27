@@ -1,4 +1,5 @@
 import { createJobs } from '../helpers/create-queue';
+import { createHash } from 'node:crypto';
 
 /**
  * Runtime version of the Redis queue payload shared by the registry producer
@@ -12,47 +13,72 @@ export type PinningJobName = 'PIN_CID' | 'PIN_PACKAGE';
 export interface PinningJobData {
   cid: string;
   contractVersion?: number;
+  metadataCids?: string[];
 }
 
 export interface ValidatedPinningJobData {
   cid: string;
   contractVersion: typeof PINNING_JOB_CONTRACT_VERSION;
+  metadataCids?: string[];
 }
+
+const MAX_METADATA_CIDS = 32;
 
 /**
  * Matches the existing builder `extractValidCid` wire behavior without making
  * the producer contract depend on generated builder output.
  */
 function extractLegacyCannonCid(value: unknown): string {
-  if (typeof value !== 'string') throw new Error(`Invalid CID ${value}`);
+  if (typeof value !== 'string') throw new Error('Invalid CID');
 
   const trimmed = value.trim();
   const cid = trimmed.startsWith('ipfs://') ? trimmed.slice('ipfs://'.length) : trimmed;
   if (cid.length !== 46 || ![...cid].every((character) => /[a-zA-Z0-9]/.test(character))) {
-    throw new Error(`Invalid CID ${value}`);
+    throw new Error('Invalid CID');
   }
 
   return cid;
 }
 
 export function validatePinningJobData(data: PinningJobData): ValidatedPinningJobData {
+  if (!data || typeof data !== 'object') throw new Error('Invalid pinning job data');
+
   const contractVersion = data.contractVersion ?? PINNING_JOB_CONTRACT_VERSION;
   if (contractVersion !== PINNING_JOB_CONTRACT_VERSION) {
-    throw new Error(`Unsupported pinning job contract version: ${contractVersion}`);
+    throw new Error('Unsupported pinning job contract version');
   }
+
+  if (data.metadataCids !== undefined && !Array.isArray(data.metadataCids)) {
+    throw new Error('metadataCids must be an array');
+  }
+  if ((data.metadataCids?.length ?? 0) > MAX_METADATA_CIDS) {
+    throw new Error(`metadataCids exceeds the ${MAX_METADATA_CIDS} item limit`);
+  }
+
+  const metadataCids = data.metadataCids ? [...new Set(data.metadataCids.map(extractLegacyCannonCid))].sort() : undefined;
 
   return {
     cid: extractLegacyCannonCid(data.cid),
     contractVersion: PINNING_JOB_CONTRACT_VERSION,
+    ...(metadataCids?.length ? { metadataCids } : {}),
   };
 }
 
 function createJob(name: PinningJobName, data: PinningJobData) {
   const validated = validatePinningJobData(data);
+  if (name === 'PIN_CID' && validated.metadataCids) {
+    throw new Error('PIN_CID does not accept metadataCids');
+  }
+
+  const metadataSuffix =
+    name === 'PIN_PACKAGE' && validated.metadataCids
+      ? `_metadata_${createHash('sha256').update(validated.metadataCids.join('\n')).digest('hex').slice(0, 16)}`
+      : '';
+
   return {
     name,
     data: validated,
-    opts: { jobId: `${name}_${validated.cid}` },
+    opts: { jobId: `${name}_${validated.cid}${metadataSuffix}` },
   };
 }
 
