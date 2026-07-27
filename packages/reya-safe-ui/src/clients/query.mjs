@@ -47,41 +47,60 @@ export function createQueryClient(config) {
       return validateChainsResponse(await getJson(config, url));
     },
 
-    async packageByRef(input) {
-      const fullPackageRef = validatePackageRefInput(input);
+    async packageByRef(...args) {
+      if (args.length !== 1) fail('INVALID_INPUT');
+      const [input] = args;
+      const packageRef = validatePackageRefInput(input);
       const url = routeUrl(
         config.serviceOrigin,
         `${QUERY_ROUTE_PATHS.packages}/${encodeURIComponent(
-          fullPackageRef
+          packageRef.fullPackageRef
         )}/${REYA_CHAIN_ID}`
       );
-      return validatePackageResponse(await getJson(config, url));
+      return validatePackageResponse(await getJson(config, url), packageRef);
     },
 
-    async packagesByName(input) {
+    async packagesByName(...args) {
+      if (args.length !== 1) fail('INVALID_INPUT');
+      const [input] = args;
       const packageName = validatePackageNameInput(input);
       const url = routeUrl(
         config.serviceOrigin,
         `${QUERY_ROUTE_PATHS.packages}/${encodeURIComponent(packageName)}`
       );
-      return validatePackagesResponse(await getJson(config, url));
+      url.searchParams.set('chainIds', String(REYA_CHAIN_ID));
+      return validatePackagesResponse(await getJson(config, url), packageName);
     },
 
-    async search(input) {
-      const { query, types } = validateSearchInput(input);
+    async search(...args) {
+      if (args.length !== 1) fail('INVALID_INPUT');
+      const [input] = args;
+      const { normalizedQuery, query, types } = validateSearchInput(input);
       const url = routeUrl(config.serviceOrigin, QUERY_ROUTE_PATHS.search);
       url.searchParams.set('chainIds', String(REYA_CHAIN_ID));
       url.searchParams.set('query', query);
       if (types.length > 0) url.searchParams.set('types', types.join(','));
-      return validateSearchResponse(await getJson(config, url));
+      return validateSearchResponse(
+        await getJson(config, url),
+        normalizedQuery,
+        types,
+        query
+      );
     },
 
-    async selector(input) {
+    async selector(...args) {
+      if (args.length !== 1) fail('INVALID_INPUT');
+      const [input] = args;
       const { selectors, type } = validateSelectorInput(input);
       const url = routeUrl(config.serviceOrigin, QUERY_ROUTE_PATHS.selector);
+      url.searchParams.set('chainIds', String(REYA_CHAIN_ID));
       url.searchParams.set('q', selectors.join(','));
       if (type !== undefined) url.searchParams.set('type', type);
-      return validateSelectorResponse(await getJson(config, url), selectors);
+      return validateSelectorResponse(
+        await getJson(config, url),
+        selectors,
+        type
+      );
     },
   });
 }

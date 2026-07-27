@@ -68,6 +68,6 @@ Tailscale ingress and its `/query` and `/artifacts` routes do not yet exist.
 Activation also requires the reviewed query API and read-only artifact
 workloads, exact-origin CORS, signer access testing, artifact backfill and
 recovery evidence, and a separate change that intentionally imports the
-clients and updates CSP. The query API must also normalize Redis aggregate
-namespace counts into bounded JSON numbers; its current declared numeric
-contract must not forward the raw node-redis string/Buffer value.
+clients and updates CSP. Activation depends on the reviewed query API contract,
+including its normalization of Redis aggregate namespace counts into bounded
+JSON numbers; these clients reject raw node-redis string/Buffer counts.

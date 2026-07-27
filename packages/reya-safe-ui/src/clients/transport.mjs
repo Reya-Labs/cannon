@@ -1,3 +1,4 @@
+import { REYA_READ_LIMITS } from './config.mjs';
 import { fail, ReyaReadClientError } from './errors.mjs';
 
 const TIMEOUT = Symbol('read-client-timeout');
@@ -66,7 +67,7 @@ function concatenate(chunks, length) {
 }
 
 async function readBody(response, maximumBytes, deadline) {
-  const declaredLength = parseContentLength(response.headers, maximumBytes);
+  parseContentLength(response.headers, maximumBytes);
   if (
     response.body === null ||
     typeof response.body?.getReader !== 'function'
@@ -76,6 +77,7 @@ async function readBody(response, maximumBytes, deadline) {
 
   const reader = response.body.getReader();
   const chunks = [];
+  let chunkCount = 0;
   let length = 0;
   let completed = false;
 
@@ -97,6 +99,10 @@ async function readBody(response, maximumBytes, deadline) {
         fail('RESPONSE_REJECTED');
       }
 
+      chunkCount += 1;
+      if (chunkCount > REYA_READ_LIMITS.responseChunks) {
+        fail('RESPONSE_REJECTED');
+      }
       length += result.value.byteLength;
       if (length > maximumBytes) fail('RESPONSE_REJECTED');
       chunks.push(result.value);
@@ -114,9 +120,6 @@ async function readBody(response, maximumBytes, deadline) {
     reader.releaseLock();
   }
 
-  if (declaredLength !== undefined && declaredLength !== length) {
-    fail('RESPONSE_REJECTED');
-  }
   return concatenate(chunks, length);
 }
 

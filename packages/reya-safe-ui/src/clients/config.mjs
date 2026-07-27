@@ -7,6 +7,7 @@ export const REYA_READ_LIMITS = Object.freeze({
   artifactDeadlineMs: 15_000,
   queryBytes: 512 * 1024,
   queryDeadlineMs: 8_000,
+  responseChunks: 4_096,
 });
 
 const ORIGIN_HOST_PATTERN =

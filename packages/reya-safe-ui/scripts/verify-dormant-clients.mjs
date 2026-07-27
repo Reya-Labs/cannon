@@ -1,6 +1,7 @@
 import { lstat, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { init, parse } from 'es-module-lexer';
 import { compareCanonicalText } from '../src/config.mjs';
 
 const PACKAGE_ROOT = path.resolve(
@@ -10,6 +11,12 @@ const PACKAGE_ROOT = path.resolve(
 const SOURCE_ROOT = path.join(PACKAGE_ROOT, 'src');
 const ACTIVE_ENTRY = path.join(SOURCE_ROOT, 'build.mjs');
 const DORMANT_ROOT = path.join(SOURCE_ROOT, 'clients');
+const ALLOWED_NODE_IMPORTS = new Set([
+  'node:crypto',
+  'node:fs/promises',
+  'node:path',
+  'node:url',
+]);
 
 const FORBIDDEN_SOURCE = Object.freeze([
   ['hard-coded remote URL', /\bhttps?:\/\/[^\s'"`]+/i],
@@ -30,10 +37,6 @@ const FORBIDDEN_SOURCE = Object.freeze([
   ['artifact upload route', /\/api\/v0\/add\b/],
   ['browser bearer credential', /\b(?:authorization|bearer)\b/i],
 ]);
-
-const IMPORT_PATTERN =
-  /\b(?:import|export)\s+(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]/g;
-const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
 
 async function collectModules(root, current = root) {
   const entries = await readdir(current, { withFileTypes: true });
@@ -63,15 +66,20 @@ function relativeModule(root, file) {
 }
 
 function importedSpecifiers(source) {
+  const [imports] = parse(source);
   const specifiers = [];
-  for (const pattern of [IMPORT_PATTERN, DYNAMIC_IMPORT_PATTERN]) {
-    pattern.lastIndex = 0;
-    for (const match of source.matchAll(pattern)) specifiers.push(match[1]);
+  for (const imported of imports) {
+    if (imported.d === -2) continue;
+    if (typeof imported.n !== 'string') {
+      throw new Error('active Reya Safe UI graph has a non-literal import');
+    }
+    specifiers.push(imported.n);
   }
   return specifiers;
 }
 
 async function activeImportGraph({ activeEntry, sourceRoot }) {
+  await init;
   const root = path.resolve(sourceRoot);
   const pending = [path.resolve(activeEntry)];
   const reachable = new Set();
@@ -86,13 +94,6 @@ async function activeImportGraph({ activeEntry, sourceRoot }) {
     reachable.add(current);
 
     const source = await readFile(current, 'utf8');
-    const literalDynamicImports = [...source.matchAll(DYNAMIC_IMPORT_PATTERN)]
-      .length;
-    const dynamicImportExpressions = [...source.matchAll(/\bimport\s*\(/g)]
-      .length;
-    if (literalDynamicImports !== dynamicImportExpressions) {
-      throw new Error('active Reya Safe UI graph has a non-literal import');
-    }
     if (
       /\b(?:createRequire|require\s*\(|eval\s*\(|new\s+Function\b)/.test(source)
     ) {
@@ -100,7 +101,19 @@ async function activeImportGraph({ activeEntry, sourceRoot }) {
     }
 
     for (const specifier of importedSpecifiers(source)) {
-      if (!specifier.startsWith('.')) continue;
+      if (specifier.startsWith('node:')) {
+        if (!ALLOWED_NODE_IMPORTS.has(specifier)) {
+          throw new Error(
+            'active Reya Safe UI graph has an unsupported Node import'
+          );
+        }
+        continue;
+      }
+      if (!specifier.startsWith('.')) {
+        throw new Error(
+          'active Reya Safe UI graph has an unsupported non-relative import'
+        );
+      }
       const resolved = path.resolve(path.dirname(current), specifier);
       if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
         throw new Error('active Reya Safe UI import escapes the source root');

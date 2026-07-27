@@ -42,6 +42,8 @@ test('dormancy proof rejects a direct or dynamic client import', async (context)
 
   for (const source of [
     "import './clients/index.mjs';\n",
+    "import'./clients/index.mjs';\n",
+    "import/* reviewed? */'./clients/index.mjs';\n",
     "await import('./clients/index.mjs');\n",
   ]) {
     await writeFile(path.join(temporary, 'build.mjs'), source);
@@ -55,6 +57,50 @@ test('dormancy proof rejects a direct or dynamic client import', async (context)
       /disabled shell imports dormant client source/
     );
   }
+});
+
+test('dormancy proof rejects imports outside the reviewed relative graph', async (context) => {
+  const temporary = await mkdtemp(
+    path.join(os.tmpdir(), 'reya-safe-ui-import-scope-')
+  );
+  context.after(() => rm(temporary, { force: true, recursive: true }));
+  const clients = path.join(temporary, 'clients');
+  await mkdir(clients);
+  await writeFile(
+    path.join(clients, 'index.mjs'),
+    'export const dormant = true;\n'
+  );
+
+  for (const source of [
+    "import 'unreviewed-package';\n",
+    "import '/absolute/module.mjs';\n",
+    "import 'file:///tmp/module.mjs';\n",
+  ]) {
+    await writeFile(path.join(temporary, 'build.mjs'), source);
+    await assert.rejects(
+      () =>
+        verifyDormantClients({
+          activeEntry: path.join(temporary, 'build.mjs'),
+          dormantRoot: clients,
+          sourceRoot: temporary,
+        }),
+      /unsupported non-relative import/
+    );
+  }
+
+  await writeFile(
+    path.join(temporary, 'build.mjs'),
+    "import { execFile } from 'node:child_process';\nvoid execFile;\n"
+  );
+  await assert.rejects(
+    () =>
+      verifyDormantClients({
+        activeEntry: path.join(temporary, 'build.mjs'),
+        dormantRoot: clients,
+        sourceRoot: temporary,
+      }),
+    /unsupported Node import/
+  );
 });
 
 test('dormancy proof rejects non-static code loaders in the active graph', async (context) => {
@@ -81,6 +127,20 @@ test('dormancy proof rejects non-static code loaders in the active graph', async
         sourceRoot: temporary,
       }),
     /active Reya Safe UI graph has a dynamic code loader/
+  );
+
+  await writeFile(
+    path.join(temporary, 'build.mjs'),
+    "const target = './clients/index.mjs';\nawait import(target);\n"
+  );
+  await assert.rejects(
+    () =>
+      verifyDormantClients({
+        activeEntry: path.join(temporary, 'build.mjs'),
+        dormantRoot: clients,
+        sourceRoot: temporary,
+      }),
+    /active Reya Safe UI graph has a non-literal import/
   );
 });
 

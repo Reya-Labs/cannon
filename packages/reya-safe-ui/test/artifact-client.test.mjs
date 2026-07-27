@@ -91,6 +91,10 @@ test('rejects extra artifact request fields, including write credentials', async
       assertClientError('INVALID_INPUT')
     );
   }
+  await assert.rejects(
+    () => client.artifacts.cat({ cid: DEPLOY_CID }, {}),
+    assertClientError('INVALID_INPUT')
+  );
 });
 
 test('fails closed when the verifier rejects, throws, or returns a malformed CID', async () => {
@@ -132,7 +136,7 @@ test('does not let the injected verifier mutate returned artifact bytes', async 
   assert.deepEqual(await client.artifacts.cat({ cid: DEPLOY_CID }), artifact);
 });
 
-test('enforces media type, declared byte cap, streamed byte cap, and exact length', async () => {
+test('enforces media type plus declared and streamed byte caps', async () => {
   const oversizedChunks = Array.from(
     { length: 51 },
     () => new Uint8Array(1024 * 1024)
@@ -147,9 +151,6 @@ test('enforces media type, declared byte cap, streamed byte cap, and exact lengt
       },
     }),
     streamResponse(oversizedChunks),
-    streamResponse([new Uint8Array([1, 2, 3])], {
-      contentLength: 2,
-    }),
   ];
 
   for (const response of cases) {
@@ -180,6 +181,34 @@ test('accepts a bounded chunked artifact without Content-Length', async () => {
     await client.artifacts.cat({ cid: DEPLOY_CID }),
     new Uint8Array([1, 2, 3, 4, 5])
   );
+});
+
+test('rejects and cancels a response with a pathological chunk count', async () => {
+  let cancellations = 0;
+  let chunks = 0;
+  const stream = new ReadableStream({
+    cancel() {
+      cancellations += 1;
+    },
+    pull(controller) {
+      chunks += 1;
+      controller.enqueue(new Uint8Array(0));
+    },
+  });
+  const client = clientWith(
+    async () =>
+      new Response(stream, {
+        headers: { 'content-type': 'application/octet-stream' },
+      })
+  );
+
+  await assert.rejects(
+    () => client.artifacts.cat({ cid: DEPLOY_CID }),
+    assertClientError('RESPONSE_REJECTED')
+  );
+  assert.ok(chunks >= REYA_READ_LIMITS.responseChunks + 1);
+  assert.ok(chunks <= REYA_READ_LIMITS.responseChunks + 2);
+  assert.equal(cancellations, 1);
 });
 
 test('redacts repository HTTP, redirect, and network failures without fallback', async () => {

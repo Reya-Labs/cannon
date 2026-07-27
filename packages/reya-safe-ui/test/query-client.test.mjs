@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { test } from 'node:test';
+import { brotliCompressSync, gzipSync } from 'node:zlib';
 import {
   QUERY_ROUTE_PATHS,
   REYA_READ_LIMITS,
@@ -103,10 +105,10 @@ test('maps the finite query surface to one origin and omits credentials', async 
     requests.map(({ url }) => url),
     [
       `${SERVICE_ORIGIN}/query/chains`,
-      `${SERVICE_ORIGIN}/query/packages/reya-omnibus`,
+      `${SERVICE_ORIGIN}/query/packages/reya-omnibus?chainIds=1729`,
       `${SERVICE_ORIGIN}/query/packages/reya-omnibus%3A1.2.3%40main/1729`,
       `${SERVICE_ORIGIN}/query/search?chainIds=1729&query=reya-omnibus&types=package`,
-      `${SERVICE_ORIGIN}/query/selector?q=0x8da5cb5b&type=function`,
+      `${SERVICE_ORIGIN}/query/selector?chainIds=1729&q=0x8da5cb5b&type=function`,
     ]
   );
   for (const { options, url } of requests) {
@@ -150,6 +152,7 @@ test('accepts every finite PR13 document variant for chain 1729', async () => {
   ];
   const response = searchResponse({
     data: documents,
+    query: 'owner',
     total: documents.length,
   });
   const client = clientWith(async () => jsonResponse(response));
@@ -162,6 +165,84 @@ test('accepts every finite PR13 document variant for chain 1729', async () => {
   );
   assert.ok(Object.isFrozen(result.data));
   assert.ok(Object.isFrozen(result.data[0]));
+});
+
+test('binds package, search, and selector responses to the exact request', async () => {
+  const cases = [
+    [
+      (client) =>
+        client.query.packagesByName({ packageName: 'reya-omnibus' }),
+      {
+        data: [packageDocument({ name: 'other-package' })],
+        status: 200,
+        total: 1,
+      },
+    ],
+    [
+      (client) =>
+        client.query.packageByRef({
+          fullPackageRef: 'reya-omnibus:1.2.3@main',
+        }),
+      {
+        data: packageDocument({ version: '9.9.9' }),
+        status: 200,
+      },
+    ],
+    [
+      (client) => client.query.search({ query: 'reya-omnibus' }),
+      searchResponse({ query: 'other-package' }),
+    ],
+    [
+      (client) => client.query.search({ query: 'reya-omnibus' }),
+      searchResponse({ isHex: true }),
+    ],
+    [
+      (client) =>
+        client.query.search({
+          query: 'reya-omnibus',
+          types: ['contract'],
+        }),
+      searchResponse(),
+    ],
+    [
+      (client) => client.query.selector({ selectors: [SELECTOR] }),
+      {
+        results: {
+          [SELECTOR]: [
+            selectorDocument({
+              selector: '0x82b42900',
+            }),
+          ],
+        },
+        status: 200,
+      },
+    ],
+    [
+      (client) =>
+        client.query.selector({
+          selectors: [SELECTOR],
+          type: 'function',
+        }),
+      {
+        results: {
+          [SELECTOR]: [
+            selectorDocument({
+              type: 'error',
+            }),
+          ],
+        },
+        status: 200,
+      },
+    ],
+  ];
+
+  for (const [invoke, response] of cases) {
+    const client = clientWith(async () => jsonResponse(response));
+    await assert.rejects(
+      () => invoke(client),
+      assertClientError('RESPONSE_REJECTED')
+    );
+  }
 });
 
 test('validates a bounded multi-chain index but exposes only Reya chain 1729', async () => {
@@ -205,6 +286,11 @@ test('rejects every query input outside the reviewed contract', async () => {
         types: ['package', 'package'],
       }),
     () => client.query.search({ query: 'reya', types: ['unsupported'] }),
+    () => client.query.search({ query: 'reya' }, {}),
+    () =>
+      client.query.search({
+        query: '0x000000000000000000000000000000000000000A',
+      }),
     () => client.query.packagesByName({ packageName: 'ab' }),
     () => client.query.packagesByName({ packageName: 'Reya' }),
     () =>
@@ -212,6 +298,11 @@ test('rejects every query input outside the reviewed contract', async () => {
         packageName: 'reya-omnibus',
         chainId: 1729,
       }),
+    () =>
+      client.query.packagesByName(
+        { packageName: 'reya-omnibus' },
+        { chainId: 1729 }
+      ),
     () =>
       client.query.packageByRef({
         fullPackageRef: 'reya-omnibus:1.2.3',
@@ -224,6 +315,11 @@ test('rejects every query input outside the reviewed contract', async () => {
       client.query.packageByRef({
         fullPackageRef: 'reya-omnibus:1.2.3@../main',
       }),
+    () =>
+      client.query.packageByRef(
+        { fullPackageRef: 'reya-omnibus:1.2.3@main' },
+        {}
+      ),
     () => client.query.selector({ selectors: [] }),
     () => client.query.selector({ selectors: ['0x8DA5CB5B'] }),
     () => client.query.selector({ selectors: [SELECTOR, SELECTOR] }),
@@ -244,10 +340,82 @@ test('rejects every query input outside the reviewed contract', async () => {
         selectors: [SELECTOR],
         bearerToken: 'secret',
       }),
+    () => client.query.selector({ selectors: [SELECTOR] }, {}),
   ];
 
   for (const invoke of invalidCalls) {
     await assert.rejects(invoke, assertClientError('INVALID_INPUT'));
+  }
+});
+
+test('binds a raw search request to the API-normalized echoed query', async () => {
+  let requestedUrl;
+  const client = clientWith(async (url) => {
+    requestedUrl = url;
+    return jsonResponse(searchResponse({ data: [], query: 'owner', total: 0 }));
+  });
+
+  const result = await client.query.search({ query: 'owner()' });
+
+  assert.equal(
+    requestedUrl,
+    `${SERVICE_ORIGIN}/query/search?chainIds=1729&query=owner%28%29`
+  );
+  assert.equal(result.query, 'owner');
+});
+
+test('recomputes deterministic search classification flags', async () => {
+  const cases = [
+    [
+      '0x0000000000000000000000000000000000000001',
+      {
+        isAddress: true,
+        isHex: true,
+        query: '0x0000000000000000000000000000000000000001',
+      },
+    ],
+    [
+      `0x${'ab'.repeat(32)}`,
+      {
+        isTx: true,
+        query: `0x${'ab'.repeat(32)}`,
+      },
+    ],
+    [
+      SELECTOR,
+      {
+        isFunctionSelector: true,
+        isHex: true,
+        query: SELECTOR,
+      },
+    ],
+    [
+      'valid-package:1.2.3@main',
+      {
+        isPackageRef: true,
+        query: 'valid-package123main',
+      },
+    ],
+    [
+      'CoreProxy',
+      {
+        isContractName: true,
+        query: 'coreproxy',
+      },
+    ],
+  ];
+
+  for (const [query, overrides] of cases) {
+    const client = clientWith(async () =>
+      jsonResponse(
+        searchResponse({
+          data: [],
+          total: 0,
+          ...overrides,
+        })
+      )
+    );
+    await client.query.search({ query });
   }
 });
 
@@ -279,6 +447,16 @@ test('fails closed on malformed or cross-chain response schemas', async () => {
         selectorDocument({
           packageName: undefined,
         }),
+      ],
+    }),
+    searchResponse({
+      data: [
+        {
+          name: 'owner()',
+          selector: SELECTOR,
+          type: 'function',
+          address: '0x0000000000000000000000000000000000000001',
+        },
       ],
     }),
     searchResponse({
@@ -353,7 +531,7 @@ test('fails closed on malformed or cross-chain response schemas', async () => {
   }
 });
 
-test('rejects malformed JSON, wrong media types, length lies, and oversized bodies', async () => {
+test('rejects malformed JSON, wrong media types, and oversized bodies', async () => {
   const cases = [
     jsonResponse('{', { contentLength: false }),
     jsonResponse(searchResponse(), {
@@ -361,9 +539,6 @@ test('rejects malformed JSON, wrong media types, length lies, and oversized bodi
     }),
     jsonResponse(searchResponse(), {
       headers: { 'content-length': '999999999999999999999' },
-    }),
-    jsonResponse(searchResponse(), {
-      headers: { 'content-length': '1' },
     }),
     streamResponse([new Uint8Array(REYA_READ_LIMITS.queryBytes + 1)], {
       contentType: 'application/json',
@@ -376,6 +551,41 @@ test('rejects malformed JSON, wrong media types, length lies, and oversized bodi
       () => client.query.search({ query: 'reya' }),
       assertClientError('RESPONSE_REJECTED')
     );
+  }
+});
+
+test('accepts gzip and Brotli responses while capping decoded bytes', async (context) => {
+  const document = JSON.stringify(searchResponse());
+  const encoded = {
+    br: brotliCompressSync(document),
+    gzip: gzipSync(document),
+  };
+  const server = createServer((request, response) => {
+    const encoding = request.url === '/br' ? 'br' : 'gzip';
+    const body = encoded[encoding];
+    response.writeHead(200, {
+      'content-encoding': encoding,
+      'content-length': String(body.byteLength),
+      'content-type': 'application/json',
+    });
+    response.end(body);
+  });
+  context.after(
+    () =>
+      new Promise((resolve) => {
+        server.close(resolve);
+      })
+  );
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+
+  for (const encoding of ['gzip', 'br']) {
+    const client = clientWith((_url, options) =>
+      fetch(`http://127.0.0.1:${address.port}/${encoding}`, options)
+    );
+    const result = await client.query.search({ query: 'reya-omnibus' });
+    assert.equal(result.data[0].name, 'reya-omnibus');
   }
 });
 

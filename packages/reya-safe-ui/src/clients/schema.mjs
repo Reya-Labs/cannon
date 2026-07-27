@@ -12,6 +12,8 @@ const PACKAGE_NAME_PATTERN = /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]$/;
 const PACKAGE_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,31}$/;
 const PACKAGE_PRESET_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,23}$/;
 const SELECTOR_PATTERN = /^0x(?:[0-9a-f]{8}|[0-9a-f]{64})$/;
+const SELECTOR_NAME_PATTERN =
+  /^[A-Za-z_][A-Za-z0-9_]*\([A-Za-z0-9_(),[\]]*\)$/;
 const MAX_RESPONSE_TOTAL = 1_000_000;
 const MAX_SEARCH_RESULTS = 500;
 const MAX_PACKAGE_RESULTS = 500;
@@ -233,7 +235,7 @@ function assertSelector(document) {
     optional
   );
   if (!SELECTOR_TYPES.has(value.type)) reject();
-  assertString(value.name, 512);
+  assertString(value.name, 512, SELECTOR_NAME_PATTERN);
   assertString(value.selector, 66, SELECTOR_PATTERN);
 
   if (Object.hasOwn(value, 'address')) assertAddress(value.address);
@@ -260,6 +262,12 @@ function assertSelector(document) {
     ) {
       reject();
     }
+  } else if (
+    ['address', 'chainId', 'contractName'].some((key) =>
+      Object.hasOwn(value, key)
+    )
+  ) {
+    reject();
   }
   return value;
 }
@@ -320,24 +328,39 @@ export function validateChainsResponse(response) {
   });
 }
 
-export function validatePackagesResponse(response) {
+export function validatePackagesResponse(response, expectedPackageName) {
   const value = assertExactKeys(response, ['data', 'status', 'total']);
   assertStatus(value.status);
   assertNonNegativeInteger(value.total, MAX_RESPONSE_TOTAL);
   const data = assertArray(value.data, MAX_PACKAGE_RESULTS);
-  data.forEach(assertPackage);
+  for (const document of data) {
+    const pkg = assertPackage(document);
+    if (pkg.name !== expectedPackageName) reject();
+  }
   if (value.total < data.length) reject();
   return deepFreeze(value);
 }
 
-export function validatePackageResponse(response) {
+export function validatePackageResponse(response, expectedPackage) {
   const value = assertExactKeys(response, ['data', 'status']);
   assertStatus(value.status);
-  assertPackage(value.data);
+  const pkg = assertPackage(value.data);
+  if (
+    pkg.name !== expectedPackage.name ||
+    pkg.version !== expectedPackage.version ||
+    pkg.preset !== expectedPackage.preset
+  ) {
+    reject();
+  }
   return deepFreeze(value);
 }
 
-export function validateSearchResponse(response) {
+export function validateSearchResponse(
+  response,
+  expectedQuery,
+  expectedTypes,
+  rawQuery
+) {
   const value = assertExactKeys(response, [
     'data',
     'isAddress',
@@ -352,6 +375,7 @@ export function validateSearchResponse(response) {
   ]);
   assertStatus(value.status);
   assertString(value.query, 256);
+  if (value.query !== expectedQuery) reject();
   for (const key of [
     'isAddress',
     'isContractName',
@@ -362,14 +386,39 @@ export function validateSearchResponse(response) {
   ]) {
     if (typeof value[key] !== 'boolean') reject();
   }
+  const isTx = /^0x[0-9a-f]{64}$/.test(rawQuery);
+  const expectedFlags = {
+    isAddress: /^0x[0-9a-f]{40}$/.test(rawQuery),
+    isContractName: /^[A-Z][A-Za-z0-9_]*$/.test(rawQuery),
+    isFunctionSelector: /^0x[0-9a-f]{8}$/.test(rawQuery),
+    isHex: !isTx && /^0x[0-9a-f]*$/.test(rawQuery),
+    isPackageRef:
+      rawQuery.length <= 256 &&
+      /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]:[^@]+(?:@[^\s]+)?$/.test(
+        rawQuery
+      ),
+    isTx,
+  };
+  for (const [key, expected] of Object.entries(expectedFlags)) {
+    if (value[key] !== expected) reject();
+  }
   assertNonNegativeInteger(value.total, MAX_RESPONSE_TOTAL);
   const data = assertArray(value.data, MAX_SEARCH_RESULTS);
-  data.forEach(assertDocument);
+  for (const document of data) {
+    const validated = assertDocument(document);
+    if (expectedTypes.length > 0 && !expectedTypes.includes(validated.type)) {
+      reject();
+    }
+  }
   if (value.total < data.length) reject();
   return deepFreeze(value);
 }
 
-export function validateSelectorResponse(response, requestedSelectors) {
+export function validateSelectorResponse(
+  response,
+  requestedSelectors,
+  requestedType
+) {
   const value = assertExactKeys(response, ['results', 'status']);
   assertStatus(value.status);
   const results = assertObject(value.results);
@@ -379,20 +428,39 @@ export function validateSelectorResponse(response, requestedSelectors) {
 
   for (const selector of expected) {
     const entries = assertArray(results[selector], MAX_SELECTOR_RESULTS);
-    entries.forEach(assertSelector);
+    for (const entry of entries) {
+      const validated = assertSelector(entry);
+      if (
+        validated.selector !== selector ||
+        (requestedType !== undefined && validated.type !== requestedType)
+      ) {
+        reject();
+      }
+    }
   }
   return deepFreeze(value);
 }
 
 export function validateSearchInput(input) {
   const value = assertInputObject(input, ['query'], ['types']);
+  const normalized =
+    typeof value.query === 'string'
+      ? value.query
+          .trim()
+          .toLowerCase()
+          .replace(/\s+/g, '-')
+          .replace(/^[-_]+|[^a-z0-9-_]|[-_]+$/g, '')
+      : '';
+  const isHexCandidate =
+    typeof value.query === 'string' && /^0x[0-9a-fA-F]*$/.test(value.query);
   if (
     typeof value.query !== 'string' ||
     value.query.length === 0 ||
     value.query.length > 256 ||
     value.query !== value.query.trim() ||
     /[\u0000-\u001f\u007f]/.test(value.query) ||
-    !/[A-Za-z0-9]/.test(value.query)
+    normalized.length === 0 ||
+    (isHexCandidate && value.query !== value.query.toLowerCase())
   ) {
     fail('INVALID_INPUT');
   }
@@ -412,7 +480,11 @@ export function validateSearchInput(input) {
     }
     types = [...value.types];
   }
-  return Object.freeze({ query: value.query, types: Object.freeze(types) });
+  return Object.freeze({
+    normalizedQuery: normalized,
+    query: value.query,
+    types: Object.freeze(types),
+  });
 }
 
 function assertInputObject(input, required, optional = []) {
@@ -462,7 +534,12 @@ export function validatePackageRefInput(input) {
   ) {
     fail('INVALID_INPUT');
   }
-  return value.fullPackageRef;
+  return Object.freeze({
+    fullPackageRef: value.fullPackageRef,
+    name: match.groups.name,
+    preset: match.groups.preset,
+    version: match.groups.version,
+  });
 }
 
 export function validateSelectorInput(input) {

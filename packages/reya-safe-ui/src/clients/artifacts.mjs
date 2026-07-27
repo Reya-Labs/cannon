@@ -7,7 +7,9 @@ export const ARTIFACT_CAT_PATH = '/artifacts/api/v0/cat';
 
 export function createArtifactClient(config) {
   return Object.freeze({
-    async cat(input) {
+    async cat(...args) {
+      if (args.length !== 1) fail('INVALID_INPUT');
+      const [input] = args;
       const cid = validateCidInput(input);
       const url = new URL(config.serviceOrigin);
       url.pathname = ARTIFACT_CAT_PATH;

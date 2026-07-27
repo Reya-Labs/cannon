@@ -8,6 +8,9 @@
   "engines": {
     "node": "22.23.1"
   },
+  "devDependencies": {
+    "es-module-lexer": "1.6.0"
+  },
   "scripts": {
     "build": "node src/build.mjs",
     "lint": "node scripts/lint.mjs",
