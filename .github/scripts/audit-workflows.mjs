@@ -35,6 +35,7 @@ const runtimeImagePaths = [
   'docker/repo.Dockerfile',
   'package.json',
   'packages/api/**',
+  'packages/artifact-codec/**',
   'packages/builder/**',
   'packages/cli/**',
   'packages/indexer/**',
@@ -150,7 +151,7 @@ const workflowPolicies = new Map([
 const exactWorkflowDigests = new Map([
   [
     'runtime-image-security.yml',
-    '7f1ec9c45d072e353780f779c1f3b692b0548a597e8dc178bbc5a93f2c9cd2ba',
+    '96d6c8d02f40abd08dbff7d5889c79bf463531591134496add9e983798fff8b3',
   ],
 ]);
 
