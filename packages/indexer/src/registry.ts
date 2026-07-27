@@ -19,6 +19,7 @@ import * as viemChains from 'viem/chains';
 import { config } from './config';
 import * as rkey from './db';
 import { ActualRedisClientType, useRedis } from './redis';
+import { canonicalAbiSelector } from './abi-selector';
 import { assertRpcChain, createRpcClient } from './helpers/rpc';
 import { createQueue, Queue } from './queue';
 import { createIndexesIfNedeed } from './search-indexes';
@@ -254,9 +255,7 @@ export async function handleCannonPublish(
           // process the contract abi as well
           for (const abiItem of contract.abi) {
             if (abiItem.type === 'function' || abiItem.type === 'error') {
-              const functionHash = viem.toFunctionHash(abiItem as viem.AbiFunction);
-              const selector = functionHash.slice(0, 10);
-              const functionSignature = viem.toFunctionSignature(abiItem as viem.AbiFunction);
+              const { selector, signature: functionSignature } = canonicalAbiSelector(abiItem);
 
               const contractAddress = contract.address.trim().toLowerCase();
 
