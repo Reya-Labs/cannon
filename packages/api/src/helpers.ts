@@ -4,12 +4,12 @@ import { BadRequestError, ServerError } from './errors';
 import { ApiDocumentType, RedisPackage, RedisTag } from './types';
 
 const packageNameRegex = /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]$/;
-/** Returns whether a value is a canonical Cannon package name. */
+/** Returns whether a value is a 3–32 character canonical Cannon package name. */
 export function isPackageName(packageName: unknown): packageName is string {
   return typeof packageName === 'string' && packageNameRegex.test(packageName);
 }
 
-/** Validates a package name and escapes hyphens for RediSearch queries. */
+/** Validates and escapes a package name for RediSearch; throws BadRequestError on invalid input. */
 export function parsePackageName(packageName: string) {
   if (!isPackageName(packageName)) {
     throw new BadRequestError('Invalid package name');
@@ -20,7 +20,7 @@ export function parsePackageName(packageName: string) {
 
 const MAX_PACKAGE_REF_LENGTH = 256;
 const partialPackageRefRegex = /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]:[^@]+(?:@[^\s]+)?$/;
-/** Returns whether a bounded value is a valid Cannon partial package reference. */
+/** Returns whether a value is a valid Cannon partial package reference of at most 256 characters. */
 export function isPartialPackageRef(packageName: unknown): packageName is string {
   return (
     typeof packageName === 'string' &&
@@ -31,7 +31,7 @@ export function isPartialPackageRef(packageName: unknown): packageName is string
 }
 
 const fullPackageRefRegex = /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]:[^@]+@[^\s]+$/;
-/** Returns whether a bounded value is a valid Cannon package reference with an explicit preset. */
+/** Returns whether a value is a valid explicit-preset Cannon reference of at most 256 characters. */
 export function isFullPackageRef(fullPackageRef: unknown): fullPackageRef is string {
   return (
     typeof fullPackageRef === 'string' &&
@@ -42,7 +42,7 @@ export function isFullPackageRef(fullPackageRef: unknown): fullPackageRef is str
 }
 
 const contractNameRegex = /^[A-Z][A-Za-z0-9_]*$/;
-/** Returns whether a value is a supported Solidity contract identifier. */
+/** Returns whether a value starts uppercase and contains only identifier characters. */
 export function isContractName(contractName: unknown) {
   return typeof contractName === 'string' && contractNameRegex.test(contractName);
 }
@@ -53,7 +53,7 @@ export function isFunctionSelector(selector: unknown) {
   return typeof selector === 'string' && functionSelectorRegex.test(selector);
 }
 
-/** Returns whether a value is a bounded canonical function-style ABI signature. */
+/** Returns whether a value is a canonical function-style ABI signature of at most 512 characters. */
 export function isAbiSignature(signature: unknown): signature is string {
   if (typeof signature !== 'string' || signature.length > 512) return false;
 
@@ -74,7 +74,10 @@ export function isChainId(chainId: unknown): chainId is string {
 }
 
 const MAX_CHAIN_IDS = 20;
-/** Parses and deduplicates a bounded comma-separated chain-id query parameter. */
+/**
+ * Parses and deduplicates at most 20 comma-separated safe chain IDs.
+ * Throws BadRequestError for a non-string, malformed, oversized, or unsafe value.
+ */
 export function parseChainIds(chainIds: unknown): number[] {
   if (chainIds === undefined || chainIds === null || chainIds === '') return [];
   if (typeof chainIds !== 'string') throw new BadRequestError('Invalid chainIds parameter');
@@ -87,7 +90,10 @@ export function parseChainIds(chainIds: unknown): number[] {
 }
 
 const MAX_TEXT_QUERY_LENGTH = 256;
-/** Normalizes a bounded free-text query into the restricted RediSearch token alphabet. */
+/**
+ * Normalizes at most 256 free-text characters into the restricted RediSearch token alphabet.
+ * Throws BadRequestError for a non-string or oversized value.
+ */
 export function parseTextQuery(query: unknown): string {
   if (query === undefined || query === null || query === '') return '';
 
@@ -106,7 +112,10 @@ export function parseTextQuery(query: unknown): string {
 }
 
 const QUERY_TYPES = new Set<ApiDocumentType>(['namespace', 'package', 'contract', 'function', 'error']);
-/** Parses and deduplicates the supported public document-type filter. */
+/**
+ * Parses and deduplicates a comma-separated document-type filter of at most 128 characters.
+ * Throws BadRequestError for malformed or unsupported input.
+ */
 export function parseQueryTypes(type: unknown): ApiDocumentType[] {
   if (type === undefined || type === null || type === '') return [];
   if (typeof type !== 'string' || type.length > 128) throw new BadRequestError('Invalid types parameter');
@@ -120,7 +129,10 @@ export function parseQueryTypes(type: unknown): ApiDocumentType[] {
 
 const selectorRegex = /^0x[0-9a-fA-F]{8}$/;
 const MAX_SELECTORS = 20;
-/** Parses, lowercases, and deduplicates a bounded list of four-byte selectors. */
+/**
+ * Parses, lowercases, and deduplicates at most 20 comma-separated four-byte selectors.
+ * Throws BadRequestError for an absent, malformed, or oversized value.
+ */
 export function parseSelectors(value: unknown): viem.Hex[] {
   if (typeof value !== 'string' || !value) throw new BadRequestError('Query selector not specified');
   const selectors = value.split(',');
@@ -134,14 +146,14 @@ export function parseSelectors(value: unknown): viem.Hex[] {
   return [...new Set(selectors.map((selector) => selector.toLowerCase()))] as viem.Hex[];
 }
 
-/** Parses the optional public selector kind, rejecting unsupported document types. */
+/** Parses function/error or undefined; throws BadRequestError for any other selector kind. */
 export function parseSelectorType(value: unknown): 'function' | 'error' | undefined {
   if (value === undefined) return undefined;
   if (value === 'function' || value === 'error') return value;
   throw new BadRequestError('type must be function or error');
 }
 
-/** Parses publisher addresses and rejects malformed configured values. */
+/** Parses comma-separated publisher addresses; throws ServerError for malformed configured values. */
 export function parseAddresses(addresses: any) {
   if (typeof addresses !== 'string') return [] as viem.Address[];
   const result = addresses.split(',');

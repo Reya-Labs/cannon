@@ -15,7 +15,8 @@ function normalizeMetricLabels(labels: Record<string, number | string>): void {
 }
 
 /**
- * Creates the authenticated metrics route on the API listener.
+ * Creates the metrics route on the API listener using ApiConfig's
+ * METRICS_USER and METRICS_PASSWORD for HTTP Basic authentication.
  *
  * Route and method normalization keep label cardinality finite.
  */
