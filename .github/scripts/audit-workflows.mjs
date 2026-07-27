@@ -1,13 +1,33 @@
 #!/usr/bin/env node
 
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { parseDocument } from 'yaml';
 import { verifySafeAppBackendWorkflows } from './verify-safe-app-backend-workflows.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultRepositoryRoot = resolve(dirname(scriptPath), '../..');
+
+const runtimeImagePaths = [
+  '.github/dependabot.yml',
+  '.github/scripts/verify-runtime-image.sh',
+  '.github/workflows/runtime-image-security.yml',
+  'docker/api.Dockerfile',
+  'docker/indexer.Dockerfile',
+  'docker/repo.Dockerfile',
+  'package.json',
+  'packages/api/**',
+  'packages/builder/**',
+  'packages/cli/**',
+  'packages/indexer/**',
+  'packages/repo/**',
+  'packages/safe-app-backend/**',
+  'pnpm-lock.yaml',
+  'pnpm-workspace.yaml',
+];
 
 const workflowPolicies = new Map([
   [
@@ -42,6 +62,42 @@ const workflowPolicies = new Map([
     },
   ],
   [
+    'runtime-image-security.yml',
+    {
+      pull_request: {
+        paths: runtimeImagePaths,
+      },
+      push: {
+        branches: ['dev', 'main'],
+        paths: runtimeImagePaths,
+      },
+      schedule: [{ cron: '23 6 * * 1' }],
+      workflow_dispatch: {
+        inputs: {
+          runtime: {
+            description: 'Image whose already-pushed digest should be scanned',
+            required: false,
+            default: 'repo',
+            type: 'choice',
+            options: ['repo', 'indexer', 'api', 'safe-app-backend'],
+          },
+          image_ref: {
+            description:
+              'Optional ghcr.io/reya-labs IMAGE@sha256 digest to scan instead of rebuilding',
+            required: false,
+            type: 'string',
+          },
+          expected_revision: {
+            description:
+              'Required 40-character Cannon source revision when image_ref is set',
+            required: false,
+            type: 'string',
+          },
+        },
+      },
+    },
+  ],
+  [
     'supply-chain.yml',
     {
       pull_request: null,
@@ -61,6 +117,23 @@ const workflowPolicies = new Map([
       pull_request: null,
       push: ['dev'],
     },
+  ],
+]);
+
+// The runtime workflow builds untrusted source and can pull release artifacts.
+// Keep its complete reviewed source fail-closed: any legitimate edit must update
+// this policy digest in the same review.
+const exactWorkflowDigests = new Map([
+  [
+    'runtime-image-security.yml',
+    'f8e18ec880b987b9d247cde6ad8fe06657e75c91aca51d191ca28bae3aef72c6',
+  ],
+]);
+
+const exactPolicyFileDigests = new Map([
+  [
+    '.github/scripts/verify-runtime-image.sh',
+    '6072f2e7f299a7a2752fc80db04cfb61a91be4c3aaa836a57f3bcc0ed8062538',
   ],
 ]);
 
@@ -93,6 +166,7 @@ const allowedActionUses = new Set([
   'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
   'aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25',
   'cypress-io/github-action@f790eee7a50d9505912f50c2095510be7de06aa7',
+  'docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7',
   'foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a',
   'pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271',
   'pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1',
@@ -105,6 +179,17 @@ const allowedContainerImages = new Set([
 const allowedRunners = new Set(['ubuntu-24.04', 'ubuntu-24.04-arm']);
 
 const allowedGitHubContexts = new Map([
+  [
+    '.github/workflows/runtime-image-security.yml',
+    new Set([
+      'github.actor',
+      'github.event.pull_request.head.sha',
+      'github.ref_protected',
+      'github.repository',
+      'github.sha',
+      'github.token',
+    ]),
+  ],
   [
     '.github/workflows/reya-safe-ui.yml',
     new Set([
@@ -202,12 +287,24 @@ const auditEvents = (value, expected, displayPath, errors) => {
     );
   }
 
-  for (const [event, expectedBranches] of Object.entries(expected)) {
+  for (const [event, expectedConfiguration] of Object.entries(expected)) {
     const configuration = value[event];
-    if (expectedBranches === null) {
+    if (expectedConfiguration === null) {
       if (configuration !== null) {
         errors.push(
           `${displayPath}: ${event} must run for every pull-request base`
+        );
+      }
+      continue;
+    }
+
+    if (
+      !Array.isArray(expectedConfiguration) ||
+      !expectedConfiguration.every((item) => typeof item === 'string')
+    ) {
+      if (!isDeepStrictEqual(configuration, expectedConfiguration)) {
+        errors.push(
+          `${displayPath}: ${event} must exactly match the reviewed configuration`
         );
       }
       continue;
@@ -224,10 +321,10 @@ const auditEvents = (value, expected, displayPath, errors) => {
       errors.push(`${displayPath}: ${event} may configure only branches`);
     }
 
-    if (!sameStrings(configuration.branches, expectedBranches)) {
+    if (!sameStrings(configuration.branches, expectedConfiguration)) {
       errors.push(
         `${displayPath}: ${event} branches must be exactly ${[
-          ...expectedBranches,
+          ...expectedConfiguration,
         ]
           .sort()
           .join(', ')}`
@@ -472,6 +569,17 @@ const auditWorkflow = (
   const displayPath = relative(repositoryRoot, workflowPath);
   const { text, value } = readYaml(workflowPath, displayPath, errors);
   auditRawText(text, displayPath, errors);
+  const expectedDigest = exactWorkflowDigests.get(
+    workflowPath.split(sep).at(-1)
+  );
+  if (expectedDigest !== undefined) {
+    const actualDigest = createHash('sha256').update(text).digest('hex');
+    if (actualDigest !== expectedDigest) {
+      errors.push(
+        `${displayPath}: source must exactly match the reviewed workflow digest`
+      );
+    }
+  }
   if (!isRecord(value)) {
     if (value !== undefined)
       errors.push(`${displayPath}: workflow must be a mapping`);
@@ -489,7 +597,19 @@ const auditWorkflow = (
         errors.push(`${displayPath}: job ${jobName} must be a mapping`);
         continue;
       }
-      if ('permissions' in job) {
+      const expectedJobPermissions =
+        displayPath === '.github/workflows/runtime-image-security.yml' &&
+        jobName === 'scan-pushed-digest'
+          ? { contents: 'read', packages: 'read' }
+          : undefined;
+      if (
+        expectedJobPermissions !== undefined &&
+        !isDeepStrictEqual(job.permissions, expectedJobPermissions)
+      ) {
+        errors.push(
+          `${displayPath}: job ${jobName} permissions must be exactly contents: read and packages: read`
+        );
+      } else if (expectedJobPermissions === undefined && 'permissions' in job) {
         errors.push(
           `${displayPath}: job ${jobName} must inherit read-only workflow permissions`
         );
@@ -631,6 +751,22 @@ export const auditRepository = (repositoryRoot = defaultRepositoryRoot) => {
     const isRequired = marker === undefined || existsSync(join(root, marker));
     if (isRequired && !workflows.includes(expectedWorkflow)) {
       errors.push(`${expectedWorkflow}: required workflow is missing`);
+    }
+  }
+
+  for (const [path, expectedDigest] of exactPolicyFileDigests) {
+    const policyPath = join(root, path);
+    if (!existsSync(policyPath)) {
+      errors.push(`${path}: required policy file is missing`);
+      continue;
+    }
+    const actualDigest = createHash('sha256')
+      .update(readFileSync(policyPath, 'utf8'))
+      .digest('hex');
+    if (actualDigest !== expectedDigest) {
+      errors.push(
+        `${path}: source must exactly match the reviewed policy digest`
+      );
     }
   }
 

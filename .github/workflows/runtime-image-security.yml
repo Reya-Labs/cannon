@@ -1,0 +1,351 @@
+name: Runtime image security
+
+on:
+  pull_request:
+    paths:
+      - '.github/dependabot.yml'
+      - '.github/scripts/verify-runtime-image.sh'
+      - '.github/workflows/runtime-image-security.yml'
+      - 'docker/api.Dockerfile'
+      - 'docker/indexer.Dockerfile'
+      - 'docker/repo.Dockerfile'
+      - 'package.json'
+      - 'packages/api/**'
+      - 'packages/builder/**'
+      - 'packages/cli/**'
+      - 'packages/indexer/**'
+      - 'packages/repo/**'
+      - 'packages/safe-app-backend/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+  push:
+    branches:
+      - dev
+      - main
+    paths:
+      - '.github/dependabot.yml'
+      - '.github/scripts/verify-runtime-image.sh'
+      - '.github/workflows/runtime-image-security.yml'
+      - 'docker/api.Dockerfile'
+      - 'docker/indexer.Dockerfile'
+      - 'docker/repo.Dockerfile'
+      - 'package.json'
+      - 'packages/api/**'
+      - 'packages/builder/**'
+      - 'packages/cli/**'
+      - 'packages/indexer/**'
+      - 'packages/repo/**'
+      - 'packages/safe-app-backend/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+  schedule:
+    - cron: '23 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      runtime:
+        description: Image whose already-pushed digest should be scanned
+        required: false
+        default: repo
+        type: choice
+        options:
+          - repo
+          - indexer
+          - api
+          - safe-app-backend
+      image_ref:
+        description: Optional ghcr.io/reya-labs IMAGE@sha256 digest to scan instead of rebuilding
+        required: false
+        type: string
+      expected_revision:
+        description: Required 40-character Cannon source revision when image_ref is set
+        required: false
+        type: string
+
+concurrency:
+  group: runtime-image-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TRIVY_VERSION: v0.72.0
+
+jobs:
+  build-and-scan:
+    if: github.event_name != 'workflow_dispatch' || inputs.image_ref == ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runtime: repo
+            context: .
+            dockerfile: ./docker/repo.Dockerfile
+            package_json: packages/repo/package.json
+            command: '["node","index.js"]'
+          - runtime: indexer
+            context: .
+            dockerfile: ./docker/indexer.Dockerfile
+            package_json: packages/indexer/package.json
+            command: '["node","index.js"]'
+          - runtime: api
+            context: .
+            dockerfile: ./docker/api.Dockerfile
+            package_json: packages/api/package.json
+            command: '["node","index.js"]'
+          - runtime: safe-app-backend
+            context: packages/safe-app-backend
+            dockerfile: ./packages/safe-app-backend/Dockerfile
+            package_json: packages/safe-app-backend/package.json
+            command: '["node","dist/server.js"]'
+    env:
+      SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      IMAGE_REF: cannon-runtime-${{ matrix.runtime }}:${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout exact image source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_REVISION }}
+          persist-credentials: false
+
+      - name: Resolve immutable image metadata
+        id: metadata
+        env:
+          PACKAGE_JSON: ${{ matrix.package_json }}
+        run: |
+          version="$(jq -er '.version' "$PACKAGE_JSON")"
+          source_date_epoch="$(git show -s --format=%ct "$SOURCE_REVISION")"
+          created="$(date -u --date="@${source_date_epoch}" '+%Y-%m-%dT%H:%M:%SZ')"
+          test "$version" != "unknown"
+          test -n "$source_date_epoch"
+          test -n "$created"
+          {
+            echo "version=$version"
+            echo "source_date_epoch=$source_date_epoch"
+            echo "created=$created"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build exact linux/amd64 image
+        env:
+          BUILD_CONTEXT: ${{ matrix.context }}
+          CREATED: ${{ steps.metadata.outputs.created }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          SOURCE_DATE_EPOCH: ${{ steps.metadata.outputs.source_date_epoch }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          docker buildx version
+          docker buildx build \
+            --build-arg "BUILD_DATE=${CREATED}" \
+            --build-arg "BUILD_REVISION=${SOURCE_REVISION}" \
+            --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
+            --build-arg "VERSION=${VERSION}" \
+            --file "$DOCKERFILE" \
+            --load \
+            --platform linux/amd64 \
+            --provenance=false \
+            --tag "$IMAGE_REF" \
+            "$BUILD_CONTEXT"
+
+      - name: Verify runtime contract
+        env:
+          EXPECTED_COMMAND: ${{ matrix.command }}
+          EXPECTED_CREATED: ${{ steps.metadata.outputs.created }}
+          EXPECTED_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          .github/scripts/verify-runtime-image.sh \
+            "$IMAGE_REF" \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            "$SOURCE_REVISION" \
+            "$EXPECTED_VERSION" \
+            "$EXPECTED_COMMAND" \
+            "$EXPECTED_CREATED"
+
+      - name: Generate SPDX SBOM with pinned Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          cache: true
+          format: spdx-json
+          image-ref: ${{ env.IMAGE_REF }}
+          output: sbom-${{ matrix.runtime }}.spdx.json
+          scan-type: image
+          version: ${{ env.TRIVY_VERSION }}
+
+      - name: Scan runtime HIGH and CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          cache: true
+          exit-code: '1'
+          format: json
+          ignore-unfixed: false
+          image-ref: ${{ env.IMAGE_REF }}
+          output: trivy-${{ matrix.runtime }}.json
+          scan-type: image
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          skip-setup-trivy: true
+          version: ${{ env.TRIVY_VERSION }}
+
+      - name: Record scan summary
+        if: always()
+        env:
+          IMAGE: ${{ matrix.runtime }}
+        run: |
+          if test -s "trivy-${IMAGE}.json"; then
+            critical="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' "trivy-${IMAGE}.json")"
+            high="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' "trivy-${IMAGE}.json")"
+            {
+              echo "### ${IMAGE}"
+              echo
+              echo "- Trivy: ${TRIVY_VERSION}"
+              echo "- Critical findings: ${critical}"
+              echo "- High findings: ${high}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload immutable scan evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          if-no-files-found: error
+          name: runtime-security-${{ matrix.runtime }}-${{ env.SOURCE_REVISION }}
+          path: |
+            sbom-${{ matrix.runtime }}.spdx.json
+            trivy-${{ matrix.runtime }}.json
+          retention-days: 30
+
+  scan-pushed-digest:
+    if: github.event_name == 'workflow_dispatch' && inputs.image_ref != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    env:
+      EXPECTED_REVISION: ${{ inputs.expected_revision }}
+      RUNTIME_KIND: ${{ inputs.runtime }}
+      IMAGE_REF: ${{ inputs.image_ref }}
+      TRUSTED_REF: ${{ github.ref }}
+      TRUSTED_REF_PROTECTED: ${{ github.ref_protected }}
+      TRUSTED_REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Validate exact digest request and trusted workflow ref
+        run: |
+          test "$TRUSTED_REPOSITORY" = "Reya-Labs/cannon"
+          test "$TRUSTED_REF" = "refs/heads/dev"
+          test "$TRUSTED_REF_PROTECTED" = "true"
+          expected_prefix="ghcr.io/reya-labs/${RUNTIME_KIND}@sha256:"
+          case "$IMAGE_REF" in
+            "$expected_prefix"[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
+              ;;
+            *)
+              echo "image_ref must be the selected Reya image at an immutable sha256 digest" >&2
+              exit 1
+              ;;
+          esac
+          digest="${IMAGE_REF##*@sha256:}"
+          test "${#digest}" -eq 64
+          test -z "${digest//[0-9a-f]/}"
+          test "${#EXPECTED_REVISION}" -eq 40
+          test -z "${EXPECTED_REVISION//[0-9a-f]/}"
+
+      - name: Checkout trusted verification policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          path: policy
+          persist-credentials: false
+
+      - name: Checkout exact image source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: source
+          ref: ${{ env.EXPECTED_REVISION }}
+          persist-credentials: false
+
+      - name: Require source revision in protected dev history
+        run: |
+          test "$(git -C source rev-parse HEAD)" = "$EXPECTED_REVISION"
+          git -C policy cat-file -e "${EXPECTED_REVISION}^{commit}"
+          git -C policy merge-base --is-ancestor "$EXPECTED_REVISION" HEAD
+
+      - name: Log in to GHCR read-only
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Pull exact linux/amd64 digest
+        run: docker pull --platform linux/amd64 "$IMAGE_REF"
+
+      - name: Verify pushed image provenance and runtime contract
+        run: |
+          case "$RUNTIME_KIND" in
+            repo)
+              expected_command='["node","index.js"]'
+              package_json=source/packages/repo/package.json
+              ;;
+            indexer)
+              expected_command='["node","index.js"]'
+              package_json=source/packages/indexer/package.json
+              ;;
+            api)
+              expected_command='["node","index.js"]'
+              package_json=source/packages/api/package.json
+              ;;
+            safe-app-backend)
+              expected_command='["node","dist/server.js"]'
+              package_json=source/packages/safe-app-backend/package.json
+              ;;
+          esac
+          version="$(jq -er '.version' "$package_json")"
+          source_date_epoch="$(git -C source show -s --format=%ct "$EXPECTED_REVISION")"
+          created="$(date -u --date="@${source_date_epoch}" '+%Y-%m-%dT%H:%M:%SZ')"
+          test "$version" != "unknown"
+          test -n "$source_date_epoch"
+          test -n "$created"
+          policy/.github/scripts/verify-runtime-image.sh \
+            "$IMAGE_REF" \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            "$EXPECTED_REVISION" \
+            "$version" \
+            "$expected_command" \
+            "$created"
+
+      - name: Generate SPDX SBOM with pinned Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          cache: true
+          format: spdx-json
+          image-ref: ${{ env.IMAGE_REF }}
+          output: sbom-${{ env.RUNTIME_KIND }}.spdx.json
+          scan-type: image
+          version: ${{ env.TRIVY_VERSION }}
+
+      - name: Scan pushed digest HIGH and CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          cache: true
+          exit-code: '1'
+          format: json
+          ignore-unfixed: false
+          image-ref: ${{ env.IMAGE_REF }}
+          output: trivy-${{ env.RUNTIME_KIND }}.json
+          scan-type: image
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          skip-setup-trivy: true
+          version: ${{ env.TRIVY_VERSION }}
+
+      - name: Upload immutable digest evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          if-no-files-found: error
+          name: pushed-runtime-security-${{ env.RUNTIME_KIND }}-${{ env.EXPECTED_REVISION }}
+          path: |
+            sbom-${{ env.RUNTIME_KIND }}.spdx.json
+            trivy-${{ env.RUNTIME_KIND }}.json
+          retention-days: 90

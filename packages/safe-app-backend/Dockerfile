@@ -1,13 +1,15 @@
-FROM node:22.23.1-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS node-base
+FROM node:22.23.1-alpine3.24@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS node-runtime
 
-FROM node-base AS pnpm-base
+FROM node-runtime AS pnpm-base
 
 ARG PNPM_VERSION=10.11.0
 ARG PNPM_SHA512=6540583f41cc5f628eb3d9773ecee802f4f9ef9923cc45b69890fb47991d4b092964694ec3a4f738a420c918a333062c8b925d312f42e4f0c263eb603551f977
-RUN npm pack --ignore-scripts "pnpm@${PNPM_VERSION}" --pack-destination /tmp \
-    && echo "${PNPM_SHA512}  /tmp/pnpm-${PNPM_VERSION}.tgz" | sha512sum -c - \
-    && npm install --global --ignore-scripts "/tmp/pnpm-${PNPM_VERSION}.tgz" \
-    && rm "/tmp/pnpm-${PNPM_VERSION}.tgz"
+ENV PNPM_HOME=/usr/local/share/pnpm
+ENV PATH="${PNPM_HOME}:${PATH}"
+RUN rm -rf /usr/local/lib/node_modules/npm \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx \
+    && corepack prepare "pnpm@${PNPM_VERSION}+sha512.${PNPM_SHA512}" --activate \
+    && corepack enable pnpm
 
 FROM pnpm-base AS build
 
@@ -28,12 +30,23 @@ WORKDIR /usr/app
 COPY ./package.json ./pnpm-lock.yaml ./
 RUN pnpm i --prod --frozen-lockfile --ignore-scripts --no-optional
 
-FROM node-base
+FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 WORKDIR /usr/app
 
+# Keep APK metadata intact while installing only Node's pinned runtime libraries.
+# pnpm, npm, Corepack and Yarn remain confined to non-runtime stages.
+RUN apk add --no-cache \
+    libgcc=15.2.0-r5 \
+    libstdc++=15.2.0-r5 \
+    && addgroup -g 1000 node \
+    && adduser -u 1000 -G node -s /bin/sh -D node
+
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/bin/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
 ARG VERSION=unknown
-ARG BUILD_DATE=unknown
+ARG BUILD_DATE=1970-01-01T00:00:00Z
 ARG BUILD_REVISION=unknown
 ARG SOURCE_DATE_EPOCH=0
 
@@ -41,13 +54,15 @@ LABEL org.opencontainers.image.source="https://github.com/Reya-Labs/cannon" \
       org.opencontainers.image.description="Hardened signature staging backend for Reya Safe transactions" \
       org.opencontainers.image.licenses="GPL-3.0" \
       org.opencontainers.image.title="Cannon Safe App Backend" \
-      org.opencontainers.image.vendor="usecannon" \
+      org.opencontainers.image.vendor="Reya Labs" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.revision="${BUILD_REVISION}" \
-      org.opencontainers.image.documentation="https://github.com/Reya-Labs/cannon/tree/dev/packages/safe-app-backend" \
-      org.opencontainers.image.base.name="node:22.23.1-alpine" \
-      org.opencontainers.image.base.digest="sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2"
+      org.opencontainers.image.base.name="docker.io/library/alpine:3.24.1" \
+      org.opencontainers.image.base.digest="sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b" \
+      io.reya.cannon.runtime.node.name="docker.io/library/node:22.23.1-alpine3.24" \
+      io.reya.cannon.runtime.node.digest="sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2" \
+      org.opencontainers.image.documentation="https://github.com/Reya-Labs/cannon/tree/dev/packages/safe-app-backend"
 
 ENV NODE_ENV=production
 ENV PORT=8080
@@ -56,23 +71,15 @@ ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 
 EXPOSE ${PORT}
 
-RUN rm -rf \
-      /opt/yarn-v* \
-      /usr/local/lib/node_modules/corepack \
-      /usr/local/lib/node_modules/npm \
-    && rm -f \
-      /usr/local/bin/corepack \
-      /usr/local/bin/npm \
-      /usr/local/bin/npx \
-      /usr/local/bin/yarn \
-      /usr/local/bin/yarnpkg
-
+COPY --from=production-dependencies /usr/app/package.json ./package.json
 COPY --from=production-dependencies /usr/app/node_modules ./node_modules
 COPY --from=build /usr/app/dist ./dist
 COPY ./scripts/verify-runtime.sh /usr/local/bin/verify-runtime
 RUN chmod 0555 /usr/local/bin/verify-runtime
 
 USER node
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -q -O /dev/null "http://127.0.0.1:${PORT}/readyz" || exit 1

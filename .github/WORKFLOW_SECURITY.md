@@ -53,7 +53,8 @@ repository/environment boundary described below.
 Dependency review rejects newly introduced high or critical vulnerable dependencies. Dependabot proposes bounded
 weekly npm, GitHub Actions, and runtime-base updates against `dev`; human review and normal CI remain mandatory.
 PRO-729 supplies the recurring exact-image, SBOM and vulnerability evidence for the repo, indexer and API runtimes
-and the shared runtime-base evidence consumed by the Safe backend.
+and the shared runtime-base evidence consumed by the Safe backend. The exact source, pushed-digest scan, provenance,
+activation, and rollback contract is recorded in [`docs/runtime-image-security.md`](../docs/runtime-image-security.md).
 
 The in-repository `workflow-policy` job is advisory: a pull request can replace a required job with a no-op while
 preserving its check name. After merge, PRO-731 must install an organization or enterprise ruleset-required workflow
