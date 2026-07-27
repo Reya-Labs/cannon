@@ -61,9 +61,12 @@ export async function startArtifactWorker(environment: unknown = process.env, op
       'artifact worker readiness'
     );
     return { client, close, queue, worker };
-  } catch (error) {
+  } catch {
     await close();
-    throw error;
+    // BullMQ and HTTP-client readiness errors may contain connection URLs or
+    // credentials. Keep the executable boundary diagnostic intentionally
+    // generic while still failing closed.
+    throw new Error('artifact worker readiness failed');
   }
 }
 

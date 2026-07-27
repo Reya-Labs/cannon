@@ -443,14 +443,14 @@ describe('worker readiness', () => {
     assert.deepEqual(calls.slice().sort(), ['facades-ready', 'redis-ready', 'worker-close']);
   });
 
-  it('closes the worker when facade readiness fails', async () => {
+  it('closes the worker and redacts dependency details when readiness fails', async () => {
     let closeCount = 0;
     const worker = {
       async close() {
         closeCount++;
       },
       async waitUntilReady() {
-        return undefined;
+        throw new Error('redis://worker:secret@redis.internal:6379');
       },
     };
     const queue = {
@@ -470,7 +470,15 @@ describe('worker readiness', () => {
       },
     };
 
-    await assert.rejects(startArtifactWorker(workerEnvironment(), { client, queue }), /writer health unavailable/);
+    await assert.rejects(
+      startArtifactWorker(workerEnvironment(), { client, queue }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message === 'artifact worker readiness failed' &&
+        !error.message.includes('secret') &&
+        !error.message.includes('redis.internal') &&
+        !error.message.includes('writer health')
+    );
     assert.equal(closeCount, 1);
   });
 
