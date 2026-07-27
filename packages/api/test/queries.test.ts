@@ -477,7 +477,7 @@ describe('bounded aggregate query factories', () => {
           return {
             documents: [
               { value: { ...canonical, type: 'error' } },
-              { value: { ...canonical, name: 'owner()', selector: '0x8da5cb5b', type: 'function' } },
+              { value: { ...canonical, name: 'owner()', selector: '0x8DA5CB5B', type: 'function' } },
               { value: { ...canonical, chainId: '1', type: 'error' } },
               {
                 value: {
@@ -519,10 +519,10 @@ describe('bounded aggregate query factories', () => {
     assert.deepEqual(searchQueries, ['@selector:{0x82b42900},@chainId:{1729}']);
     assert.equal(result.total, 2);
     assert.deepEqual(
-      result.data.map(({ type, chainId }) => [type, chainId]),
+      result.data.map(({ type, chainId, selector }) => [type, chainId, selector]),
       [
-        ['error', 1729],
-        ['function', 1729],
+        ['error', 1729, '0x82b42900'],
+        ['function', 1729, '0x8da5cb5b'],
       ]
     );
     assert.equal(

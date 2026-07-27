@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  ABI_SIGNATURE_CONFORMANCE_VECTORS,
   isAbiSignature,
   isFullPackageRef,
   isPartialPackageRef,
@@ -45,25 +46,10 @@ describe('query validation', () => {
   });
 
   it('accepts only canonical printable ABI signatures', () => {
-    for (const signature of [
-      'owner()',
-      '$owner()',
-      'owner$(uint256)',
-      'transfer(address,uint256)',
-      'setConfig((uint256,bool),bytes32[])',
-    ]) {
+    for (const signature of ABI_SIGNATURE_CONFORMANCE_VECTORS.accepted) {
       assert.equal(isAbiSignature(signature), true);
     }
-    for (const signature of [
-      'owner',
-      'owner ()',
-      'owner(\u202eaddress)',
-      '<img>()',
-      'foo((uint256)',
-      'foo(,)',
-      'foo(uint)',
-      'x'.repeat(513),
-    ]) {
+    for (const signature of [...ABI_SIGNATURE_CONFORMANCE_VECTORS.rejected, 'x'.repeat(513)]) {
       assert.equal(isAbiSignature(signature), false);
     }
   });

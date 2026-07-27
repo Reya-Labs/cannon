@@ -136,7 +136,7 @@ export function transformFunction(value: RedisFunction) {
     return {
       type: value.type,
       name: value.name,
-      selector: value.selector,
+      selector: value.selector.toLowerCase() as viem.Hex,
       contractName: value.contractName,
       chainId: Number.parseInt(value.chainId),
       address: viem.getAddress(value.address),
@@ -156,7 +156,7 @@ export function transformFunction(value: RedisFunction) {
     return {
       type: value.type,
       name: value.name,
-      selector: value.selector,
+      selector: value.selector.toLowerCase() as viem.Hex,
     } satisfies ApiSelectorResult;
   }
 }
