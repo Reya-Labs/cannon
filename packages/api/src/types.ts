@@ -52,8 +52,8 @@ export interface ApiPackage {
   preset: string;
   chainId: number;
   deployUrl: IpfsUrl;
-  metaUrl: IpfsUrl;
-  miscUrl: IpfsUrl;
+  metaUrl: IpfsUrl | '';
+  miscUrl?: IpfsUrl;
   timestamp: number;
 }
 

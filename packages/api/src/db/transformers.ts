@@ -1,6 +1,6 @@
-import { PackageReference } from '@usecannon/builder';
+import { getIpfsUrl, PackageReference } from '@usecannon/builder';
 import * as viem from 'viem';
-import { isChainId, isContractName, isFunctionSelector } from '../helpers';
+import { isChainId, isContractName, isFunctionSelector, isRedisTagOfPackage } from '../helpers';
 import { ApiSelectorResult, ApiPackage, IpfsUrl, RedisDocument, RedisFunction, RedisPackage, RedisTag } from '../types';
 
 export function findPackageByTag(documents: { value: RedisDocument }[], tag: RedisTag) {
@@ -18,33 +18,86 @@ export function findPackageByTag(documents: { value: RedisDocument }[], tag: Red
   return result.value as RedisPackage;
 }
 
-export function transformPackage(value: RedisPackage): ApiPackage {
+function parseTimestamp(value: unknown): number | undefined {
+  if (typeof value !== 'string' || !/^(?:0|[1-9][0-9]*)$/.test(value)) return;
+
+  const timestamp = Number(value);
+  return Number.isSafeInteger(timestamp) ? timestamp : undefined;
+}
+
+function parsePackageReference(name: unknown, version: unknown, preset: unknown): PackageReference | undefined {
+  if (typeof name !== 'string' || typeof version !== 'string' || typeof preset !== 'string') return;
+
+  const fullPackageRef = `${name}:${version}@${preset}`;
+  return PackageReference.isValid(fullPackageRef) ? new PackageReference(fullPackageRef) : undefined;
+}
+
+const CANNON_CID_V0 = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
+function parseIpfsUrl(value: unknown): IpfsUrl | undefined {
+  const url = getIpfsUrl(value);
+  return url && CANNON_CID_V0.test(url.slice('ipfs://'.length)) ? (url as IpfsUrl) : undefined;
+}
+
+export function transformPackage(value: RedisPackage): ApiPackage | undefined {
+  if (!value || value.type !== 'package') return;
+
+  const ref = parsePackageReference(value.name, value.version, value.preset);
+  const chainId = isChainId(value.chainId) ? Number(value.chainId) : undefined;
+  const timestamp = parseTimestamp(value.timestamp);
+  const deployUrl = parseIpfsUrl(value.deployUrl);
+  const metaUrl = value.metaUrl === '' ? '' : parseIpfsUrl(value.metaUrl);
+  const miscUrl = value.miscUrl === undefined || value.miscUrl === '' ? undefined : parseIpfsUrl(value.miscUrl);
+
+  if (
+    !ref ||
+    chainId === undefined ||
+    timestamp === undefined ||
+    !deployUrl ||
+    metaUrl === undefined ||
+    (value.miscUrl !== undefined && value.miscUrl !== '' && miscUrl === undefined) ||
+    !viem.isAddress(value.owner)
+  ) {
+    return;
+  }
+
   return {
     type: 'package',
-    name: value.name as string,
-    version: value.version as string,
-    preset: value.preset as string,
-    chainId: Number.parseInt(value.chainId as string),
-    deployUrl: value.deployUrl as IpfsUrl,
-    metaUrl: value.metaUrl as IpfsUrl,
-    miscUrl: value.miscUrl as IpfsUrl,
-    timestamp: Number.parseInt(value.timestamp as string),
-    publisher: value.owner as viem.Address,
+    name: ref.name,
+    version: ref.version,
+    preset: ref.preset,
+    chainId,
+    deployUrl,
+    metaUrl,
+    ...(miscUrl ? { miscUrl } : {}),
+    timestamp,
+    publisher: viem.getAddress(value.owner),
   };
 }
 
-export function transformPackageWithTag(pkg: RedisPackage, tag: RedisTag): ApiPackage {
+export function transformPackageWithTag(pkg: RedisPackage, tag: RedisTag): ApiPackage | undefined {
+  const transformed = transformPackage(pkg);
+  const ref = parsePackageReference(tag.name, tag.tag, tag.preset);
+  const chainId = isChainId(tag.chainId) ? Number(tag.chainId) : undefined;
+  const timestamp = parseTimestamp(tag.timestamp);
+
+  if (
+    !transformed ||
+    tag.type !== 'tag' ||
+    !ref ||
+    chainId === undefined ||
+    timestamp === undefined ||
+    !isRedisTagOfPackage(pkg, tag)
+  ) {
+    return;
+  }
+
   return {
-    type: 'package',
-    name: tag.name as string,
-    version: tag.tag as string,
-    preset: tag.preset as string,
-    chainId: Number.parseInt(tag.chainId as string),
-    deployUrl: pkg.deployUrl as IpfsUrl,
-    metaUrl: pkg.metaUrl as IpfsUrl,
-    miscUrl: pkg.miscUrl as IpfsUrl,
-    timestamp: Number.parseInt(tag.timestamp as string),
-    publisher: pkg.owner as viem.Address,
+    ...transformed,
+    name: ref.name,
+    version: ref.version,
+    preset: ref.preset,
+    chainId,
+    timestamp,
   };
 }
 

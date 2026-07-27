@@ -5,6 +5,9 @@ import { AggregateSteps, type RedisClientType } from 'redis';
 import { createChainQueries, MAX_CHAIN_RESULTS } from '../src/queries/chains';
 import { createPackageQueryExecutor, createPartialPackageRefQuery, MAX_NAMESPACE_RESULTS } from '../src/queries/packages';
 
+const DEPLOY_URL = 'ipfs://QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn';
+const META_URL = 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+
 describe('bounded aggregate query factories', () => {
   it('limits and validates chain aggregates while reusing the cached query promise', async () => {
     let aggregateCalls = 0;
@@ -169,8 +172,8 @@ describe('bounded aggregate query factories', () => {
             return [
               {
                 chainId: '1',
-                deployUrl: 'ipfs://deploy',
-                metaUrl: 'ipfs://meta',
+                deployUrl: DEPLOY_URL,
+                metaUrl: META_URL,
                 name: 'valid-package',
                 owner: '0x0000000000000000000000000000000000000001',
                 preset: 'main',
@@ -199,8 +202,130 @@ describe('bounded aggregate query factories', () => {
 
       assert.equal(result.total, 1);
       assert.equal(result.data[0]?.name, 'valid-package');
+      assert.equal(result.data[0]?.chainId, 1);
+      assert.equal(result.data[0]?.publisher, '0x0000000000000000000000000000000000000001');
+      assert.equal('owner' in result.data[0]!, false);
       assert.deepEqual(fanouts, [2, 1]);
       assert.deepEqual(warnings, [['query API skipped malformed Redis document', { kind: 'tag' }]]);
+    } finally {
+      console.warn = originalConsoleWarn;
+    }
+  });
+
+  it('normalizes exact-version partial matches into the public package contract', async () => {
+    let batchNumber = 0;
+    const redis = {
+      multi: () => ({
+        exec: async () => {
+          batchNumber += 1;
+          if (batchNumber > 1) return [];
+          return [
+            {
+              chainId: '1729',
+              deployUrl: DEPLOY_URL.replace('ipfs://', ''),
+              metaUrl: '',
+              name: 'valid-package',
+              owner: '0x0000000000000000000000000000000000000001',
+              preset: 'main',
+              timestamp: '123',
+              type: 'package',
+              version: '1.2.3',
+            },
+          ];
+        },
+        hGetAll: () => undefined,
+      }),
+    } as unknown as RedisClientType;
+    const queryPartialPackageRef = createPartialPackageRefQuery(
+      async () => redis,
+      async () => [1729]
+    );
+
+    const result = await queryPartialPackageRef({ packageRef: 'valid-package:1.2.3' });
+
+    assert.deepEqual(result, {
+      total: 1,
+      data: [
+        {
+          type: 'package',
+          name: 'valid-package',
+          version: '1.2.3',
+          preset: 'main',
+          chainId: 1729,
+          deployUrl: DEPLOY_URL,
+          metaUrl: '',
+          timestamp: 123,
+          publisher: '0x0000000000000000000000000000000000000001',
+        },
+      ],
+    });
+    assert.equal('owner' in result.data[0]!, false);
+  });
+
+  it('skips partial matches with malformed publishers or artifact references', async () => {
+    let batchNumber = 0;
+    const redis = {
+      multi: () => ({
+        exec: async () => {
+          batchNumber += 1;
+          if (batchNumber > 1) return [];
+          return [
+            {
+              chainId: '1',
+              deployUrl: DEPLOY_URL,
+              metaUrl: META_URL,
+              name: 'valid-package',
+              owner: 'not-an-address',
+              preset: 'main',
+              timestamp: '123',
+              type: 'package',
+              version: '1.2.3',
+            },
+            {
+              chainId: '2',
+              deployUrl: `ipfs://${'a'.repeat(46)}`,
+              metaUrl: META_URL,
+              name: 'valid-package',
+              owner: '0x0000000000000000000000000000000000000002',
+              preset: 'main',
+              timestamp: '123',
+              type: 'package',
+              version: '1.2.3',
+            },
+            {
+              chainId: '3',
+              deployUrl: DEPLOY_URL,
+              metaUrl: META_URL,
+              name: 'valid-package',
+              owner: '0x0000000000000000000000000000000000000003',
+              preset: 'main',
+              timestamp: '123',
+              type: 'package',
+              version: '1.2.3',
+            },
+          ];
+        },
+        hGetAll: () => undefined,
+      }),
+    } as unknown as RedisClientType;
+    const warnings: unknown[][] = [];
+    const originalConsoleWarn = console.warn;
+    console.warn = (...values: unknown[]) => warnings.push(values);
+
+    try {
+      const queryPartialPackageRef = createPartialPackageRefQuery(
+        async () => redis,
+        async () => [1, 2, 3]
+      );
+
+      const result = await queryPartialPackageRef({ packageRef: 'valid-package:1.2.3' });
+
+      assert.equal(result.total, 1);
+      assert.equal(result.data[0]?.chainId, 3);
+      assert.deepEqual(warnings, [
+        ['query API skipped malformed Redis document', { kind: 'package' }],
+        ['query API skipped malformed Redis document', { kind: 'package' }],
+      ]);
     } finally {
       console.warn = originalConsoleWarn;
     }

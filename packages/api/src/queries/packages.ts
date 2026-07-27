@@ -73,7 +73,12 @@ export function createPackageQueryExecutor(getRedis: () => Promise<RedisClientTy
       const item = value as unknown as RedisDocument;
 
       if (item.type === 'package') {
-        data.push(transformPackage(item));
+        const pkg = transformPackage(item);
+        if (!pkg) {
+          warnMalformedDocument('package');
+          continue;
+        }
+        data.push(pkg);
       } else if (item.type === 'tag') {
         const pkg = findPackageByTag(packagesResults.documents as any, item);
 
@@ -82,7 +87,12 @@ export function createPackageQueryExecutor(getRedis: () => Promise<RedisClientTy
           continue;
         }
 
-        data.push(transformPackageWithTag(pkg, item));
+        const taggedPackage = transformPackageWithTag(pkg, item);
+        if (!taggedPackage) {
+          warnMalformedDocument('tag');
+          continue;
+        }
+        data.push(taggedPackage);
       }
     }
 
@@ -120,21 +130,31 @@ export async function findPackageByFullRef(params: { fullPackageRef: string; cha
   if (!tagDoc?.name) return null;
 
   if (tagDoc.type === 'package') {
-    return transformPackage(tagDoc);
+    const pkg = transformPackage(tagDoc);
+    if (!pkg) warnMalformedDocument('package');
+    return pkg ?? null;
   }
 
   if (tagDoc.type !== 'tag') {
     throw new Error(`Invalid data found when looking at "${queryKey}"`);
   }
 
-  const packageRef = PackageReference.from(tagDoc.name, tagDoc.versionOfTag, tagDoc.preset);
+  let packageRef: PackageReference;
+  try {
+    packageRef = PackageReference.from(tagDoc.name, tagDoc.versionOfTag, tagDoc.preset);
+  } catch {
+    warnMalformedDocument('tag');
+    return null;
+  }
   const packageDoc = (await redis.hGetAll(
     `${keys.RKEY_PACKAGE_SEARCHABLE}:${packageRef.fullPackageRef}#${tagDoc.chainId}`
   )) as unknown as RedisPackage;
 
   if (!packageDoc?.name) return null;
 
-  return transformPackageWithTag(packageDoc, tagDoc);
+  const pkg = transformPackageWithTag(packageDoc, tagDoc);
+  if (!pkg) warnMalformedDocument('tag');
+  return pkg ?? null;
 }
 
 export function createPartialPackageRefQuery(
@@ -172,16 +192,30 @@ export function createPartialPackageRefQuery(
 
     const tagsResults: RedisPackage[] = ((await tagsBatch.exec()) as any).filter((doc: any) => !!doc?.name);
 
-    const data = results
-      .map((doc) => {
-        if (doc.type === 'tag') {
-          const pkg = tagsResults.find((pkg) => isRedisTagOfPackage(pkg, doc));
-          return pkg && transformPackage(pkg);
+    const data: ApiPackage[] = [];
+    for (const doc of results) {
+      if (doc.type === 'tag') {
+        const pkg = tagsResults.find((pkg) => isRedisTagOfPackage(pkg, doc));
+        if (!pkg) continue;
+
+        const transformed = transformPackage(pkg);
+        if (!transformed) {
+          warnMalformedDocument('package');
+          continue;
         }
 
-        return doc;
-      })
-      .filter((doc) => !!doc) as ApiPackage[];
+        data.push(transformed);
+        continue;
+      }
+
+      const transformed = transformPackage(doc);
+      if (!transformed) {
+        warnMalformedDocument('package');
+        continue;
+      }
+
+      data.push(transformed);
+    }
 
     return {
       total: data.length,
