@@ -1,9 +1,9 @@
 import type { ArtifactWorkerConfig } from './worker-config';
 
 export interface ArtifactFacadeClient {
-  checkHealth(): Promise<void>;
-  read(cid: string): Promise<Buffer>;
-  write(cid: string, data: Buffer): Promise<string>;
+  checkHealth(signal?: AbortSignal): Promise<void>;
+  read(cid: string, signal?: AbortSignal): Promise<Buffer>;
+  write(cid: string, data: Buffer, signal?: AbortSignal): Promise<string>;
 }
 
 type FetchImplementation = typeof fetch;
@@ -18,7 +18,19 @@ function boundedIntegerHeader(value: string | null): number | null {
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
-async function readBoundedBody(response: Response, maxBytes: number, label: string, signal: AbortSignal): Promise<Buffer> {
+interface DeadlineRequest {
+  abortError(label?: string): Error;
+  finish(): void;
+  response: Response;
+  signal: AbortSignal;
+}
+
+async function readBoundedBody(
+  response: Response,
+  maxBytes: number,
+  label: string,
+  request: DeadlineRequest
+): Promise<Buffer> {
   const declaredLength = boundedIntegerHeader(response.headers.get('content-length'));
   if (declaredLength !== null && declaredLength > maxBytes) {
     await response.body?.cancel().catch(() => undefined);
@@ -35,19 +47,19 @@ async function readBoundedBody(response: Response, maxBytes: number, label: stri
   try {
     while (!done) {
       const result = await new Promise<Awaited<ReturnType<typeof reader.read>>>((resolve, reject) => {
-        if (signal.aborted) {
-          reject(new Error(`${label} timed out`));
+        if (request.signal.aborted) {
+          reject(request.abortError(label));
           return;
         }
         const onAbort = () => {
-          reject(new Error(`${label} timed out`));
+          reject(request.abortError(label));
           void reader.cancel().catch(() => undefined);
         };
-        signal.addEventListener('abort', onAbort, { once: true });
+        request.signal.addEventListener('abort', onAbort, { once: true });
         reader
           .read()
           .then(resolve, reject)
-          .finally(() => signal.removeEventListener('abort', onAbort));
+          .finally(() => request.signal.removeEventListener('abort', onAbort));
       });
       done = result.done;
       if (done) break;
@@ -63,9 +75,9 @@ async function readBoundedBody(response: Response, maxBytes: number, label: stri
     }
   } catch (error) {
     if (error instanceof ResponseLimitError) throw error;
-    if (signal.aborted) {
+    if (request.signal.aborted) {
       await reader.cancel().catch(() => undefined);
-      throw new Error(`${label} timed out`);
+      throw request.abortError(label);
     }
     throw new Error(`${label} failed`);
   } finally {
@@ -80,10 +92,25 @@ async function requestWithDeadline(
   url: URL,
   init: FetchRequestInit,
   timeoutMs: number,
-  label: string
-): Promise<{ finish: () => void; response: Response; signal: AbortSignal }> {
+  label: string,
+  parentSignal?: AbortSignal
+): Promise<DeadlineRequest> {
+  if (parentSignal?.aborted) throw new Error(`${label} cancelled`);
+
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const onParentAbort = () => controller.abort();
+  parentSignal?.addEventListener('abort', onParentAbort, { once: true });
+  const timeout = setTimeout(() => {
+    if (controller.signal.aborted) return;
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  const finish = () => {
+    clearTimeout(timeout);
+    parentSignal?.removeEventListener('abort', onParentAbort);
+  };
+  const abortError = (errorLabel = label) => new Error(`${errorLabel} ${timedOut ? 'timed out' : 'cancelled'}`);
 
   try {
     const response = await fetchImpl(url, {
@@ -92,14 +119,15 @@ async function requestWithDeadline(
       signal: controller.signal,
     });
     return {
-      finish: () => clearTimeout(timeout),
+      abortError,
+      finish,
       response,
       signal: controller.signal,
     };
   } catch {
-    clearTimeout(timeout);
+    finish();
     if (controller.signal.aborted) {
-      throw new Error(`${label} timed out`);
+      throw abortError();
     }
     throw new Error(`${label} failed`);
   }
@@ -131,16 +159,17 @@ export function createArtifactFacadeClient(
   config: ArtifactWorkerConfig,
   fetchImpl: FetchImplementation = fetch
 ): ArtifactFacadeClient {
-  async function checkEndpointHealth(url: URL, headers: FetchHeadersInit | undefined, label: string) {
+  async function checkEndpointHealth(url: URL, headers: FetchHeadersInit | undefined, label: string, signal?: AbortSignal) {
     const request = await requestWithDeadline(
       fetchImpl,
       url,
       { headers, method: 'GET' },
       config.ARTIFACT_READINESS_TIMEOUT_MS,
-      label
+      label,
+      signal
     );
     try {
-      const body = await readBoundedBody(request.response, config.ARTIFACT_MAX_WRITE_RESPONSE_BYTES, label, request.signal);
+      const body = await readBoundedBody(request.response, config.ARTIFACT_MAX_WRITE_RESPONSE_BYTES, label, request);
       if (!request.response.ok) {
         throw new Error(`${label} returned HTTP ${request.response.status}`);
       }
@@ -153,24 +182,26 @@ export function createArtifactFacadeClient(
   }
 
   return {
-    async checkHealth() {
+    async checkHealth(signal) {
       await Promise.all([
-        checkEndpointHealth(healthUrl(config.ARTIFACT_SOURCE_URL), undefined, 'artifact source health check'),
+        checkEndpointHealth(healthUrl(config.ARTIFACT_SOURCE_URL), undefined, 'artifact source health check', signal),
         checkEndpointHealth(
           writerHealthUrl(config.ARTIFACT_WRITER_URL),
           { Authorization: `Bearer ${config.ARTIFACT_WRITER_TOKEN}` },
-          'artifact writer health check'
+          'artifact writer health check',
+          signal
         ),
       ]);
     },
 
-    async read(cid: string) {
+    async read(cid: string, signal?: AbortSignal) {
       const request = await requestWithDeadline(
         fetchImpl,
         sourceCatUrl(config.ARTIFACT_SOURCE_URL, cid),
         { method: 'POST' },
         config.ARTIFACT_FETCH_TIMEOUT_MS,
-        'artifact source request'
+        'artifact source request',
+        signal
       );
 
       try {
@@ -179,18 +210,13 @@ export function createArtifactFacadeClient(
           throw new Error(`artifact source returned HTTP ${request.response.status}`);
         }
 
-        return await readBoundedBody(
-          request.response,
-          config.ARTIFACT_MAX_FETCH_BYTES,
-          'artifact source response',
-          request.signal
-        );
+        return await readBoundedBody(request.response, config.ARTIFACT_MAX_FETCH_BYTES, 'artifact source response', request);
       } finally {
         request.finish();
       }
     },
 
-    async write(cid: string, data: Buffer) {
+    async write(cid: string, data: Buffer, signal?: AbortSignal) {
       const form = new FormData();
       form.append('file', new Blob([data]), cid);
 
@@ -203,14 +229,15 @@ export function createArtifactFacadeClient(
           method: 'POST',
         },
         config.ARTIFACT_WRITE_TIMEOUT_MS,
-        'artifact writer request'
+        'artifact writer request',
+        signal
       );
       try {
         const body = await readBoundedBody(
           request.response,
           config.ARTIFACT_MAX_WRITE_RESPONSE_BYTES,
           'artifact writer response',
-          request.signal
+          request
         );
 
         if (!request.response.ok) {

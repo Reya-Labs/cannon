@@ -35,12 +35,19 @@ every `miscUrl`, and each non-empty on-chain metadata CID. Writer responses are
 reconciled as an exact set, including missing and extra members, and replays are
 idempotent.
 
-Resource controls are configurable with `ARTIFACT_FETCH_TIMEOUT_MS`,
+Every queue attempt has an aggregate `ARTIFACT_JOB_TIMEOUT_MS` deadline and
+active reads/writes are cancelled on worker shutdown. Resource controls are
+configurable with `ARTIFACT_FETCH_TIMEOUT_MS`,
 `ARTIFACT_WRITE_TIMEOUT_MS`, `ARTIFACT_READINESS_TIMEOUT_MS`,
 `ARTIFACT_MAX_FETCH_BYTES`, `ARTIFACT_MAX_NODE_BYTES`,
 `ARTIFACT_MAX_COMPRESSED_BYTES`, `ARTIFACT_MAX_INFLATED_BYTES`,
 `ARTIFACT_MAX_CLOSURE_BYTES`, `ARTIFACT_MAX_CLOSURE_INFLATED_BYTES`,
-`ARTIFACT_MAX_CLOSURE_NODES`, and `ARTIFACT_MAX_WRITE_RESPONSE_BYTES`.
+`ARTIFACT_MAX_CLOSURE_NODES`, `ARTIFACT_MAX_WRITE_RESPONSE_BYTES`, and
+`ARTIFACT_WORKER_PAYLOAD_BUDGET_BYTES`. The default queue concurrency is one.
+Startup rejects configurations where concurrency multiplied by the conservative
+per-job payload estimate (retained closure plus transient node and inflate/JSON
+copies) exceeds the payload budget. Container memory must additionally cover
+the Node.js runtime and operational headroom.
 
 Legacy unversioned jobs remain valid and retain their original job IDs. New
 package jobs may include normalized `metadataCids`; their deterministic job ID

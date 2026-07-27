@@ -10,7 +10,8 @@ import {
   mirrorArtifactClosure,
   reconcileClosure,
 } from '../src/artifact-closure';
-import { listenForShutdown } from '../src/shutdown';
+import { createPinningHandlers } from '../src/queue/pinning';
+import { createRetryableResourceCloser, listenForShutdown } from '../src/shutdown';
 import { startArtifactWorker } from '../src/worker';
 import { PINNING_JOB_CONTRACT_VERSION, pinningJobContracts, validatePinningJobData } from '../src/queue/contracts';
 import { loadArtifactWorkerConfig } from '../src/worker-config';
@@ -297,6 +298,115 @@ describe('graceful shutdown', () => {
     assert.equal(source.listenerCount('SIGTERM'), 0);
     assert.equal(source.listenerCount('SIGINT'), 0);
   });
+
+  it('bounds a complete queue attempt and propagates its cancellation signal', async () => {
+    let receivedSignal: AbortSignal | undefined;
+    let markReadStarted: () => void = () => undefined;
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    const client: ArtifactFacadeClient = {
+      async checkHealth() {
+        return undefined;
+      },
+      async read(_cid, signal) {
+        assert.ok(signal);
+        receivedSignal = signal;
+        markReadStarted();
+        return new Promise<Buffer>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('sensitive downstream error')), { once: true });
+        });
+      },
+      async write() {
+        throw new Error('unused');
+      },
+    };
+    const handlers = createPinningHandlers(client, workerConfig({ ARTIFACT_JOB_TIMEOUT_MS: '10' }));
+    const pinCid = handlers.find(({ name }) => name === 'PIN_CID');
+    assert.ok(pinCid);
+
+    const job = pinCid.handler({ cid: TEST_CID });
+    await readStarted;
+    await assert.rejects(job, (error: unknown) => error instanceof Error && error.message === 'artifact job timed out');
+    assert.equal(receivedSignal?.aborted, true);
+  });
+
+  it('cancels active facade work before closing the worker', async () => {
+    let pinCidHandler: ReturnType<typeof createPinningHandlers>[number]['handler'] | undefined;
+    let workerCloseCount = 0;
+    let markReadStarted: () => void = () => undefined;
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    const worker = {
+      async close() {
+        workerCloseCount++;
+      },
+      async waitUntilReady() {
+        return undefined;
+      },
+    };
+    const queue = {
+      createWorker(handlers: ReturnType<typeof createPinningHandlers>) {
+        pinCidHandler = handlers.find(({ name }) => name === 'PIN_CID')?.handler;
+        return worker;
+      },
+    } as unknown as Queue;
+    const client: ArtifactFacadeClient = {
+      async checkHealth() {
+        return undefined;
+      },
+      async read(_cid, signal) {
+        assert.ok(signal);
+        markReadStarted();
+        return new Promise<Buffer>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('sensitive downstream error')), { once: true });
+        });
+      },
+      async write() {
+        throw new Error('unused');
+      },
+    };
+    const service = await startArtifactWorker(workerEnvironment(), { client, queue, waitUntilReady: false });
+    assert.ok(pinCidHandler);
+
+    const job = pinCidHandler({ cid: TEST_CID });
+    await readStarted;
+    await service.close();
+
+    await assert.rejects(job, (error: unknown) => error instanceof Error && error.message === 'artifact job cancelled');
+    assert.equal(workerCloseCount, 1);
+  });
+
+  it('closes every resource, retries only failures, and keeps errors generic', async () => {
+    let workerCloseCount = 0;
+    let queueCloseCount = 0;
+    const worker = {
+      async close() {
+        workerCloseCount++;
+        if (workerCloseCount === 1) throw new Error('writer-secret redis://secret');
+      },
+    };
+    const queue = {
+      async close() {
+        queueCloseCount++;
+      },
+    };
+    const close = createRetryableResourceCloser(() => [worker, queue], 'queue cleanup failed');
+
+    await assert.rejects(
+      close(),
+      (error: unknown) =>
+        error instanceof Error && error.message === 'queue cleanup failed' && !error.message.includes('secret')
+    );
+    assert.equal(workerCloseCount, 1);
+    assert.equal(queueCloseCount, 1);
+
+    await Promise.all([close(), close()]);
+    await close();
+    assert.equal(workerCloseCount, 2);
+    assert.equal(queueCloseCount, 1);
+  });
 });
 
 describe('worker readiness', () => {
@@ -362,5 +472,44 @@ describe('worker readiness', () => {
 
     await assert.rejects(startArtifactWorker(workerEnvironment(), { client, queue }), /writer health unavailable/);
     assert.equal(closeCount, 1);
+  });
+
+  it('allows a failed service cleanup to be retried and then becomes idempotent', async () => {
+    let closeCount = 0;
+    const worker = {
+      async close() {
+        closeCount++;
+        if (closeCount === 1) throw new Error('redis://secret');
+      },
+      async waitUntilReady() {
+        return undefined;
+      },
+    };
+    const queue = {
+      createWorker() {
+        return worker;
+      },
+    } as unknown as Queue;
+    const client: ArtifactFacadeClient = {
+      async checkHealth() {
+        return undefined;
+      },
+      async read() {
+        throw new Error('unused');
+      },
+      async write() {
+        throw new Error('unused');
+      },
+    };
+    const service = await startArtifactWorker(workerEnvironment(), { client, queue, waitUntilReady: false });
+
+    await assert.rejects(
+      service.close(),
+      (error: unknown) =>
+        error instanceof Error && error.message === 'artifact worker cleanup failed' && !error.message.includes('secret')
+    );
+    await service.close();
+    await service.close();
+    assert.equal(closeCount, 2);
   });
 });

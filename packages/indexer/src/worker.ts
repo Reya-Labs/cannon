@@ -3,12 +3,13 @@ import type { ArtifactFacadeClient } from './artifact-client';
 import { createQueue } from './queue';
 import type { Queue } from './queue';
 import { startPinningWorker } from './queue/pinning';
-import { listenForShutdown } from './shutdown';
+import { createRetryableResourceCloser, listenForShutdown } from './shutdown';
 import { loadArtifactWorkerConfig } from './worker-config';
 
 interface ArtifactWorkerOptions {
   client?: ArtifactFacadeClient;
   queue?: Queue;
+  shutdownSignal?: AbortSignal;
   waitUntilReady?: boolean;
 }
 
@@ -31,16 +32,23 @@ export async function startArtifactWorker(environment: unknown = process.env, op
   const ownsQueue = !options.queue;
   const queue = options.queue ?? createQueue(config);
   const client = options.client ?? createArtifactFacadeClient(config);
-  const worker = startPinningWorker(queue, config, client);
-  let closed = false;
+  const activeJobs = new AbortController();
+  const onShutdown = () => activeJobs.abort();
+  if (options.shutdownSignal?.aborted) {
+    activeJobs.abort();
+  } else {
+    options.shutdownSignal?.addEventListener('abort', onShutdown, { once: true });
+  }
+  const worker = startPinningWorker(queue, config, client, { shutdownSignal: activeJobs.signal });
+  const closeResources = createRetryableResourceCloser(() => [ownsQueue ? queue : worker], 'artifact worker cleanup failed');
+  let shutdownListenerDisposed = false;
 
   async function close() {
-    if (closed) return;
-    closed = true;
-    if (ownsQueue) {
-      await queue.close();
-    } else {
-      await worker.close();
+    activeJobs.abort();
+    await closeResources();
+    if (!shutdownListenerDisposed) {
+      options.shutdownSignal?.removeEventListener('abort', onShutdown);
+      shutdownListenerDisposed = true;
     }
   }
 
@@ -48,7 +56,7 @@ export async function startArtifactWorker(environment: unknown = process.env, op
 
   try {
     await withTimeout(
-      Promise.all([worker.waitUntilReady(), client.checkHealth()]),
+      Promise.all([worker.waitUntilReady(), client.checkHealth(activeJobs.signal)]),
       config.ARTIFACT_READINESS_TIMEOUT_MS,
       'artifact worker readiness'
     );
@@ -64,7 +72,7 @@ export async function runArtifactWorker(environment: unknown = process.env) {
   let service: Awaited<ReturnType<typeof startArtifactWorker>> | undefined;
 
   try {
-    service = await startArtifactWorker(environment);
+    service = await startArtifactWorker(environment, { shutdownSignal: shutdown.signal });
     await shutdown.requested;
   } finally {
     shutdown.dispose();

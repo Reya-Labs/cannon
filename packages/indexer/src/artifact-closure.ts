@@ -48,7 +48,16 @@ export function assertExactClosure(expected: Iterable<string>, actual: Iterable<
   }
 }
 
-function parseDeployment(data: Buffer, config: ArtifactWorkerConfig): { deployment: DeploymentInfo; inflatedBytes: number } {
+function throwIfCancelled(signal?: AbortSignal) {
+  if (signal?.aborted) throw new Error('artifact job cancelled');
+}
+
+function parseDeployment(
+  data: Buffer,
+  config: ArtifactWorkerConfig,
+  signal?: AbortSignal
+): { deployment: DeploymentInfo; inflatedBytes: number } {
+  throwIfCancelled(signal);
   if (data.length > config.ARTIFACT_MAX_COMPRESSED_BYTES) {
     throw new Error('compressed package exceeds its per-node limit');
   }
@@ -59,6 +68,7 @@ function parseDeployment(data: Buffer, config: ArtifactWorkerConfig): { deployme
   } catch {
     throw new Error('package is invalid or exceeds its inflated per-node limit');
   }
+  throwIfCancelled(signal);
 
   let deployment: unknown;
   try {
@@ -66,6 +76,7 @@ function parseDeployment(data: Buffer, config: ArtifactWorkerConfig): { deployme
   } catch {
     throw new Error('package contains invalid JSON');
   }
+  throwIfCancelled(signal);
 
   if (
     !deployment ||
@@ -81,13 +92,21 @@ function parseDeployment(data: Buffer, config: ArtifactWorkerConfig): { deployme
   return { deployment: deployment as DeploymentInfo, inflatedBytes: inflated.length };
 }
 
-async function readVerified(client: ArtifactFacadeClient, cid: string, config: ArtifactWorkerConfig): Promise<Buffer> {
-  const data = await client.read(cid);
+async function readVerified(
+  client: ArtifactFacadeClient,
+  cid: string,
+  config: ArtifactWorkerConfig,
+  signal?: AbortSignal
+): Promise<Buffer> {
+  throwIfCancelled(signal);
+  const data = await client.read(cid, signal);
+  throwIfCancelled(signal);
   if (data.length > config.ARTIFACT_MAX_NODE_BYTES) {
     throw new Error('artifact exceeds its per-node limit');
   }
 
   const actualCid = await getContentCID(data);
+  throwIfCancelled(signal);
   if (actualCid !== cid) {
     throw new Error('artifact source returned bytes that do not match the requested CID');
   }
@@ -98,8 +117,10 @@ export async function discoverArtifactClosure(
   client: ArtifactFacadeClient,
   rootCidValue: string,
   metadataCidValues: string[],
-  config: ArtifactWorkerConfig
+  config: ArtifactWorkerConfig,
+  signal?: AbortSignal
 ): Promise<ArtifactClosure> {
+  throwIfCancelled(signal);
   const rootCid = normalizeCid(rootCidValue);
   const artifacts = new Map<string, Buffer>();
   const expectedCids = new Set<string>();
@@ -109,6 +130,7 @@ export async function discoverArtifactClosure(
   let closureInflatedBytes = 0;
 
   function addExpected(cidValue: unknown, packageNode: boolean) {
+    throwIfCancelled(signal);
     const cid = normalizeCid(cidValue);
     if (!expectedCids.has(cid)) {
       expectedCids.add(cid);
@@ -124,10 +146,12 @@ export async function discoverArtifactClosure(
   }
 
   async function load(cid: string) {
+    throwIfCancelled(signal);
     const existing = artifacts.get(cid);
     if (existing) return existing;
 
-    const data = await readVerified(client, cid, config);
+    const data = await readVerified(client, cid, config, signal);
+    throwIfCancelled(signal);
     closureBytes += data.length;
     if (closureBytes > config.ARTIFACT_MAX_CLOSURE_BYTES) {
       throw new Error('artifact closure exceeds its compressed byte limit');
@@ -140,9 +164,10 @@ export async function discoverArtifactClosure(
   for (const metadataCid of metadataCidValues) addExpected(metadataCid, false);
 
   for (let index = 0; index < packageQueue.length; index++) {
+    throwIfCancelled(signal);
     const packageCid = packageQueue[index];
     const data = await load(packageCid);
-    const parsed = parseDeployment(data, config);
+    const parsed = parseDeployment(data, config, signal);
     closureInflatedBytes += parsed.inflatedBytes;
     if (closureInflatedBytes > config.ARTIFACT_MAX_CLOSURE_INFLATED_BYTES) {
       throw new Error('artifact closure exceeds its inflated byte limit');
@@ -161,9 +186,11 @@ export async function discoverArtifactClosure(
   }
 
   for (const cid of expectedCids) {
+    throwIfCancelled(signal);
     await load(cid);
   }
 
+  throwIfCancelled(signal);
   assertExactClosure(expectedCids, artifacts.keys());
   return { artifacts, packageCids, inflatedBytes: closureInflatedBytes };
 }
@@ -172,22 +199,33 @@ export async function mirrorArtifactClosure(
   client: ArtifactFacadeClient,
   rootCid: string,
   metadataCids: string[],
-  config: ArtifactWorkerConfig
+  config: ArtifactWorkerConfig,
+  signal?: AbortSignal
 ) {
-  const closure = await discoverArtifactClosure(client, rootCid, metadataCids, config);
+  const closure = await discoverArtifactClosure(client, rootCid, metadataCids, config, signal);
   const mirrored: string[] = [];
 
   for (const [cid, data] of closure.artifacts) {
-    mirrored.push(await client.write(cid, data));
+    throwIfCancelled(signal);
+    mirrored.push(await client.write(cid, data, signal));
+    throwIfCancelled(signal);
   }
 
   assertExactClosure(closure.artifacts.keys(), mirrored);
   return closure;
 }
 
-export async function mirrorSingleArtifact(client: ArtifactFacadeClient, cidValue: string, config: ArtifactWorkerConfig) {
+export async function mirrorSingleArtifact(
+  client: ArtifactFacadeClient,
+  cidValue: string,
+  config: ArtifactWorkerConfig,
+  signal?: AbortSignal
+) {
+  throwIfCancelled(signal);
   const cid = normalizeCid(cidValue);
-  const data = await readVerified(client, cid, config);
-  const mirroredCid = await client.write(cid, data);
+  const data = await readVerified(client, cid, config, signal);
+  throwIfCancelled(signal);
+  const mirroredCid = await client.write(cid, data, signal);
+  throwIfCancelled(signal);
   assertExactClosure([cid], [mirroredCid]);
 }

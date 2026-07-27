@@ -199,6 +199,40 @@ describe('artifact worker configuration', () => {
         }),
       /ARTIFACT_MAX_INFLATED_BYTES must not exceed/
     );
+    assert.throws(
+      () =>
+        loadArtifactWorkerConfig({
+          ...validWorkerEnvironment(),
+          ARTIFACT_JOB_TIMEOUT_MS: `${15 * 60_000 + 1}`,
+        }),
+      /ARTIFACT_JOB_TIMEOUT_MS must not exceed/
+    );
+  });
+
+  it('admits only the concurrency that fits the configured payload budget', () => {
+    const defaults = loadArtifactWorkerConfig(validWorkerEnvironment());
+    assert.equal(defaults.QUEUE_CONCURRENCY, 1);
+    assert.equal(defaults.ARTIFACT_WORKER_PAYLOAD_BUDGET_BYTES, 256 * 1024 * 1024);
+
+    assert.throws(
+      () =>
+        loadArtifactWorkerConfig({
+          ...validWorkerEnvironment(),
+          QUEUE_CONCURRENCY: '2',
+        }),
+      /exceed ARTIFACT_WORKER_PAYLOAD_BUDGET_BYTES/
+    );
+
+    const twoSmallJobs = loadArtifactWorkerConfig({
+      ...validWorkerEnvironment(),
+      ARTIFACT_MAX_CLOSURE_BYTES: `${32 * 1024 * 1024}`,
+      ARTIFACT_MAX_COMPRESSED_BYTES: `${8 * 1024 * 1024}`,
+      ARTIFACT_MAX_FETCH_BYTES: `${8 * 1024 * 1024}`,
+      ARTIFACT_MAX_INFLATED_BYTES: `${16 * 1024 * 1024}`,
+      ARTIFACT_MAX_NODE_BYTES: `${8 * 1024 * 1024}`,
+      QUEUE_CONCURRENCY: '2',
+    });
+    assert.equal(twoSmallJobs.QUEUE_CONCURRENCY, 2);
   });
 });
 

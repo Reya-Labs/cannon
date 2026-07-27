@@ -4,7 +4,7 @@ import 'dotenv/config';
 const queueConfigSpecs = {
   REDIS_URL: str({ devDefault: 'redis://localhost:6379' }),
   QUEUE_NAME: str({ default: 'pinner-queue' }),
-  QUEUE_CONCURRENCY: num({ default: 5 }),
+  QUEUE_CONCURRENCY: num({ default: 1 }),
   QUEUE_RETRIES: num({ default: 5 }),
 };
 

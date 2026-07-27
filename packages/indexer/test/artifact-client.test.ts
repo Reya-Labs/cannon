@@ -130,6 +130,38 @@ describe('artifact facade HTTP client', () => {
     await assert.rejects(client.read('QmStalled'), /artifact source response timed out/);
   });
 
+  it('propagates external cancellation without exposing endpoints or bearer tokens', async () => {
+    const fetchMock: typeof fetch = async (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('writer-secret https://writer.test')), {
+          once: true,
+        });
+      });
+    const client = createArtifactFacadeClient(config(), fetchMock);
+
+    const readController = new AbortController();
+    const read = client.read('QmCancelledRead', readController.signal);
+    readController.abort();
+    await assert.rejects(
+      read,
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message === 'artifact source request cancelled' &&
+        !error.message.includes('writer-secret')
+    );
+
+    const writeController = new AbortController();
+    const write = client.write('QmCancelledWrite', Buffer.from('artifact'), writeController.signal);
+    writeController.abort();
+    await assert.rejects(
+      write,
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message === 'artifact writer request cancelled' &&
+        !error.message.includes('writer-secret')
+    );
+  });
+
   it('bounds and validates the writer response', async () => {
     const oversizedFetch: typeof fetch = async () => streamingResponse([Buffer.alloc(20)], { status: 200 });
     const oversizedClient = createArtifactFacadeClient(config({ ARTIFACT_MAX_WRITE_RESPONSE_BYTES: '10' }), oversizedFetch);

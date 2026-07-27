@@ -1,5 +1,6 @@
 import { Job as BullJob, Queue as BullQueue, Worker as BullWorker } from 'bullmq';
 import { parseRedisUrl } from './redis';
+import { createRetryableResourceCloser } from '../shutdown';
 
 export interface QueueOptions {
   redisUrl: string;
@@ -113,10 +114,13 @@ export function createQueue<T extends ParsedJobActions<string, any, DefaultJobCo
   }
 
   const workers: BullWorker<QueueJobData, any, QueueJobName>[] = [];
+  let closingStarted = false;
   function createWorker(
     jobHandlers: JobHandlerSchema<QueueJobName, QueueJobData, QueueContext>[],
     workerOpts?: WorkerOptions
   ) {
+    if (closingStarted) throw new Error('queue is closing');
+
     const handlerNames = jobHandlers.map(({ name }) => name);
     const missingHandlers = jobs.jobs.map(({ name }) => name).filter((name) => !handlerNames.includes(name as QueueJobName));
     if (missingHandlers.length) {
@@ -180,9 +184,11 @@ export function createQueue<T extends ParsedJobActions<string, any, DefaultJobCo
     } while (pending > 0);
   }
 
+  const closeResources = createRetryableResourceCloser(() => [...workers, queue], 'queue cleanup failed');
+
   async function close() {
-    await Promise.all(workers.map((w) => w.close()));
-    await queue.close();
+    closingStarted = true;
+    await closeResources();
   }
 
   return { queue, add, createBatch, createWorker, pendingCount, waitForIdle, close };
