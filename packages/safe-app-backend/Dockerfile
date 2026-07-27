@@ -13,6 +13,9 @@ FROM pnpm-base AS build
 
 WORKDIR /usr/app
 
+ARG SOURCE_DATE_EPOCH=0
+ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
+
 COPY ./package.json ./pnpm-lock.yaml ./tsconfig.json ./
 RUN pnpm i --frozen-lockfile --ignore-scripts
 COPY ./src ./src
@@ -23,7 +26,7 @@ FROM pnpm-base AS production-dependencies
 WORKDIR /usr/app
 
 COPY ./package.json ./pnpm-lock.yaml ./
-RUN pnpm i --prod --frozen-lockfile --ignore-scripts
+RUN pnpm i --prod --frozen-lockfile --ignore-scripts --no-optional
 
 FROM node-base
 
@@ -32,6 +35,7 @@ WORKDIR /usr/app
 ARG VERSION=unknown
 ARG BUILD_DATE=unknown
 ARG BUILD_REVISION=unknown
+ARG SOURCE_DATE_EPOCH=0
 
 LABEL org.opencontainers.image.source="https://github.com/Reya-Labs/cannon" \
       org.opencontainers.image.description="Hardened signature staging backend for Reya Safe transactions" \
@@ -41,12 +45,14 @@ LABEL org.opencontainers.image.source="https://github.com/Reya-Labs/cannon" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.revision="${BUILD_REVISION}" \
-      org.opencontainers.image.documentation="https://github.com/Reya-Labs/cannon/tree/dev/packages/safe-app-backend"
-
+      org.opencontainers.image.documentation="https://github.com/Reya-Labs/cannon/tree/dev/packages/safe-app-backend" \
+      org.opencontainers.image.base.name="node:22.23.1-alpine" \
+      org.opencontainers.image.base.digest="sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2"
 
 ENV NODE_ENV=production
 ENV PORT=8080
 ENV BUILD_REVISION=${BUILD_REVISION}
+ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 
 EXPOSE ${PORT}
 
