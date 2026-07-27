@@ -23,16 +23,23 @@ function parseNamespaceCount(value: unknown): number | undefined {
 }
 
 export function createPackageQueryExecutor(getRedis: () => Promise<RedisClientType> = useRedis) {
-  return async function queryPackages(params: { query: string; limit?: number; includeNamespaces?: boolean }) {
+  return async function queryPackages(params: {
+    query: string;
+    limit?: number;
+    includeNamespaces?: boolean;
+    includePackages?: boolean;
+  }) {
     const redis = await getRedis();
     const batch = redis.multi();
     const namespaceLimit = Math.min(params.limit ?? DEFAULT_LIMIT, MAX_NAMESPACE_RESULTS);
 
-    batch.ft.search(keys.RKEY_PACKAGE_SEARCHABLE, params.query, {
-      SORTBY: { BY: 'timestamp', DIRECTION: 'DESC' },
-      LIMIT: { from: 0, size: params.limit || DEFAULT_LIMIT },
-      TIMEOUT: 1_000,
-    });
+    if (params.includePackages !== false) {
+      batch.ft.search(keys.RKEY_PACKAGE_SEARCHABLE, params.query, {
+        SORTBY: { BY: 'timestamp', DIRECTION: 'DESC' },
+        LIMIT: { from: 0, size: params.limit || DEFAULT_LIMIT },
+        TIMEOUT: 1_000,
+      });
+    }
 
     if (params.includeNamespaces) {
       batch.ft.aggregate(keys.RKEY_PACKAGE_SEARCHABLE, params.query, {
@@ -55,11 +62,14 @@ export function createPackageQueryExecutor(getRedis: () => Promise<RedisClientTy
       });
     }
 
-    const [packagesResults, namespacesResults] = (await batch.exec()) as any[];
+    const results = (await batch.exec()) as any[];
+    let resultIndex = 0;
+    const packagesResults = params.includePackages !== false ? results[resultIndex++] : undefined;
+    const namespacesResults = params.includeNamespaces ? results[resultIndex] : undefined;
 
     const data: ApiDocument[] = [];
 
-    if (!packagesResults) {
+    if (params.includePackages !== false && !packagesResults) {
       throw new ServerError('Could not connect to packages');
     }
 
@@ -83,7 +93,7 @@ export function createPackageQueryExecutor(getRedis: () => Promise<RedisClientTy
       }
     }
 
-    for (const { value } of packagesResults.documents) {
+    for (const { value } of packagesResults?.documents ?? []) {
       const item = value as unknown as RedisDocument;
 
       if (item.type === 'package') {
@@ -111,7 +121,7 @@ export function createPackageQueryExecutor(getRedis: () => Promise<RedisClientTy
     }
 
     return {
-      total: packagesResults.total + (namespacesResults?.total || 0),
+      total: (packagesResults?.total || 0) + (namespacesResults?.total || 0),
       data,
     } satisfies {
       total: number;
@@ -258,6 +268,7 @@ export async function searchPackages(params: {
   limit?: number;
   chainIds?: number[];
   includeNamespaces: boolean;
+  includePackages: boolean;
 }) {
   const q = parseTextQuery(params.query);
 
@@ -274,6 +285,7 @@ export async function searchPackages(params: {
     query: queries.join(',') || '*',
     limit: params.limit,
     includeNamespaces: params.includeNamespaces,
+    includePackages: params.includePackages,
   });
 
   // Sort results by showing first the more close ones to the expected one

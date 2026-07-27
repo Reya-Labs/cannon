@@ -2,7 +2,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  isAbiSignature,
   isFullPackageRef,
+  isPartialPackageRef,
   parseChainIds,
   parseQueryTypes,
   parseSelectors,
@@ -20,6 +22,7 @@ describe('query validation', () => {
 
   it('accepts only supported document types', () => {
     assert.deepEqual(parseQueryTypes('package,function,package'), ['package', 'function']);
+    assert.throws(() => parseQueryTypes('event'), /unsupported document type/);
     assert.throws(() => parseQueryTypes('packages'), /unsupported document type/);
     assert.throws(() => parseQueryTypes(['package']), /Invalid types parameter/);
     assert.throws(() => parseQueryTypes('p'.repeat(129)), /Invalid types parameter/);
@@ -33,16 +36,48 @@ describe('query validation', () => {
 
   it('accepts bounded, valid selector lists and strict selector types', () => {
     assert.deepEqual(parseSelectors('0x12345678,0x12345678'), ['0x12345678']);
-    assert.deepEqual(parseSelectors(`0x${'ab'.repeat(32)}`), [`0x${'ab'.repeat(32)}`]);
-    assert.equal(parseSelectorType('event'), 'event');
-    assert.throws(() => parseSelectors('0x1234'), /valid 4-byte or 32-byte selectors/);
+    assert.equal(parseSelectorType('error'), 'error');
+    assert.throws(() => parseSelectors(`0x${'ab'.repeat(32)}`), /valid 4-byte selectors/);
+    assert.throws(() => parseSelectors('0x1234'), /valid 4-byte selectors/);
     assert.throws(() => parseSelectors(Array.from({ length: 21 }, () => '0x12345678').join(',')), /at most 20/);
+    assert.throws(() => parseSelectorType('event'), /type must be/);
     assert.throws(() => parseSelectorType('all'), /type must be/);
+  });
+
+  it('accepts only canonical printable ABI signatures', () => {
+    for (const signature of [
+      'owner()',
+      '$owner()',
+      'owner$(uint256)',
+      'transfer(address,uint256)',
+      'setConfig((uint256,bool),bytes32[])',
+    ]) {
+      assert.equal(isAbiSignature(signature), true);
+    }
+    for (const signature of [
+      'owner',
+      'owner ()',
+      'owner(\u202eaddress)',
+      '<img>()',
+      'foo((uint256)',
+      'foo(,)',
+      'foo(uint)',
+      'x'.repeat(513),
+    ]) {
+      assert.equal(isAbiSignature(signature), false);
+    }
   });
 
   it('requires full package references to satisfy the canonical field bounds', () => {
     assert.equal(isFullPackageRef('valid-package:1.2.3@main'), true);
     assert.equal(isFullPackageRef(`valid-package:${'v'.repeat(33)}@main`), false);
     assert.equal(isFullPackageRef(`valid-package:1.2.3@${'p'.repeat(25)}`), false);
+  });
+
+  it('requires partial package references to satisfy the canonical field bounds', () => {
+    assert.equal(isPartialPackageRef('valid-package:1.2.3'), true);
+    assert.equal(isPartialPackageRef('valid-package:1.2.3@main'), true);
+    assert.equal(isPartialPackageRef(`valid-package:${'v'.repeat(33)}@main`), false);
+    assert.equal(isPartialPackageRef(`valid-package:1.2.3@${'p'.repeat(25)}`), false);
   });
 });

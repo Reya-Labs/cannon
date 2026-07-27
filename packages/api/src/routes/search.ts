@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import Fuse from 'fuse.js';
 import * as viem from 'viem';
-import { BadRequestError } from '../errors';
+import { BadRequestError, ServerError } from '../errors';
 import {
   isContractName,
   isFunctionSelector,
@@ -15,8 +15,24 @@ import { findSelector, searchFunctions } from '../queries/selectors';
 import { findPackagesByPartialRef, searchPackages } from '../queries/packages';
 import { ApiDocument } from '../types';
 
-const search: Router = Router();
 const MAX_TYPED_RESULTS = 100;
+const SELECTOR_TYPES = new Set(['error', 'function']);
+export type SearchDependencies = {
+  findContractsByAddress: typeof findContractsByAddress;
+  findPackagesByPartialRef: typeof findPackagesByPartialRef;
+  findSelector: typeof findSelector;
+  searchContracts: typeof searchContracts;
+  searchFunctions: typeof searchFunctions;
+  searchPackages: typeof searchPackages;
+};
+const DEFAULT_SEARCH_DEPENDENCIES: SearchDependencies = {
+  findContractsByAddress,
+  findPackagesByPartialRef,
+  findSelector,
+  searchContracts,
+  searchFunctions,
+  searchPackages,
+};
 
 export interface SearchResponse {
   status: number;
@@ -36,125 +52,151 @@ function _pushResults(response: SearchResponse, result: { total: number; data: A
   response.data.push(...result.data);
 }
 
-search.get('/search', async (req, res) => {
-  const chainIds = parseChainIds(req.query.chainIds);
+export function createSearchRouter(overrides: Partial<SearchDependencies> = {}): Router {
+  const dependencies = { ...DEFAULT_SEARCH_DEPENDENCIES, ...overrides };
+  const search = Router();
 
-  if (req.query.query && typeof req.query.query !== 'string') {
-    throw new BadRequestError('Invalid "query" param');
-  }
+  search.get('/search', async (req, res) => {
+    const chainIds = parseChainIds(req.query.chainIds);
 
-  const query = parseTextQuery(req.query.query);
-  const types = parseQueryTypes(req.query.types);
+    if (req.query.query && typeof req.query.query !== 'string') {
+      throw new BadRequestError('Invalid "query" param');
+    }
 
-  const response = {
-    status: 200,
-    query,
-    isAddress: viem.isAddress(query),
-    isTx: viem.isHash(query),
-    isHex: !viem.isHash(query) && viem.isHex(query),
-    isPackageRef: isPartialPackageRef(query),
-    isContractName: isContractName(query),
-    isFunctionSelector: isFunctionSelector(query),
-    total: 0,
-    data: [] as ApiDocument[],
-  } satisfies SearchResponse;
+    const query = parseTextQuery(req.query.query);
+    const rawQuery = typeof req.query.query === 'string' ? req.query.query.trim() : '';
+    const types = parseQueryTypes(req.query.types);
+    const includesType = (type: ApiDocument['type']) => !types.length || types.includes(type);
+    const selectorTypes = types.filter((type): type is 'error' | 'function' => SELECTOR_TYPES.has(type));
 
-  if (response.isAddress) {
-    const result = await findContractsByAddress({
-      address: query as viem.Address,
-      limit: 20,
-      chainIds,
-    });
+    const response = {
+      status: 200,
+      query,
+      isAddress: viem.isAddress(rawQuery),
+      isTx: viem.isHash(rawQuery),
+      isHex: !viem.isHash(rawQuery) && viem.isHex(rawQuery),
+      isPackageRef: isPartialPackageRef(rawQuery),
+      isContractName: isContractName(rawQuery),
+      isFunctionSelector: isFunctionSelector(rawQuery),
+      total: 0,
+      data: [] as ApiDocument[],
+    } satisfies SearchResponse;
 
-    _pushResults(response, result);
-  } else if (response.isTx) {
-    // TODO: tx (look for package names) reg:transactionToPackage
-  } else if (response.isPackageRef) {
-    const result = await findPackagesByPartialRef({
-      packageRef: query,
-      chainIds,
-    });
+    if (response.isAddress) {
+      if (includesType('contract')) {
+        const result = await dependencies.findContractsByAddress({
+          address: rawQuery as viem.Address,
+          limit: 20,
+          chainIds,
+        });
 
-    _pushResults(response, result);
-  } else if (response.isHex) {
-    if (query.length >= 10) {
-      const selector = query.slice(0, 10);
-      const result = await findSelector({
-        selector: selector as viem.Hex,
+        _pushResults(response, result);
+      }
+    } else if (response.isTx) {
+      // TODO: tx (look for package names) reg:transactionToPackage
+    } else if (response.isPackageRef) {
+      if (includesType('package')) {
+        const result = await dependencies.findPackagesByPartialRef({
+          packageRef: rawQuery,
+          chainIds,
+        });
+
+        _pushResults(response, result);
+      }
+    } else if (response.isHex) {
+      if (rawQuery.length >= 10 && (!types.length || selectorTypes.length > 0)) {
+        const selector = rawQuery.slice(0, 10);
+        const result = await dependencies.findSelector({
+          selector: selector as viem.Hex,
+          limit: 20,
+          chainIds,
+          types: types.length ? selectorTypes : undefined,
+        });
+
+        _pushResults(response, result);
+      }
+    } else if (response.isFunctionSelector && (!types.length || selectorTypes.length > 0)) {
+      const result = await dependencies.findSelector({
+        selector: rawQuery as viem.Hex,
         limit: 20,
         chainIds,
+        types: types.length ? selectorTypes : undefined,
       });
 
       _pushResults(response, result);
-    }
-  } else if (response.isFunctionSelector) {
-    const result = await findSelector({
-      selector: query as viem.Hex,
-      limit: 20,
-      chainIds,
-    });
+    } else {
+      // Search by contractName
+      if (includesType('contract') && response.isContractName && rawQuery.length >= 5) {
+        const contractsResults = await dependencies.searchContracts({
+          query: rawQuery,
+          limit: 20,
+          chainIds,
+        });
 
-    _pushResults(response, result);
-  } else {
-    // Search by contractName
-    if ((!types.length || types.includes('contract')) && response.isContractName && query.length >= 5) {
-      const contractsResults = await searchContracts({
-        query,
-        limit: 20,
-        chainIds,
+        _pushResults(response, contractsResults);
+      }
+
+      // Search by functionName
+      if ((!types.length || selectorTypes.length > 0) && query.length >= 5) {
+        const contractsResults = await dependencies.searchFunctions({
+          query,
+          limit: 20,
+          chainIds,
+          types: types.length ? selectorTypes : undefined,
+        });
+
+        _pushResults(response, contractsResults);
+      }
+
+      const includeNamespaces = includesType('namespace');
+      const includePackages = includesType('package');
+      if (includeNamespaces || includePackages) {
+        const packagesResult = await dependencies.searchPackages({
+          query,
+          chainIds,
+          limit: types.length ? MAX_TYPED_RESULTS : 20,
+          includeNamespaces,
+          includePackages,
+        });
+
+        _pushResults(response, packagesResult);
+      }
+    }
+
+    if (types.length && response.data.some(({ type }) => !types.includes(type))) {
+      throw new ServerError('Search result violated the requested type scope');
+    }
+
+    if (query) {
+      const fuzzyOrder = new Fuse<ApiDocument>(response.data, {
+        keys: [
+          'type',
+          {
+            name: 'name',
+            weight: 2,
+          },
+          {
+            name: 'contractName',
+            weight: 2,
+          },
+          {
+            name: 'selector',
+            weight: 3,
+          },
+          {
+            name: 'address',
+            weight: 3,
+          },
+        ],
       });
 
-      _pushResults(response, contractsResults);
+      response.data = fuzzyOrder.search(query).map(({ item }) => item);
     }
 
-    // Search by functionName
-    if ((!types.length || types.includes('function')) && query.length >= 5) {
-      const contractsResults = await searchFunctions({
-        query,
-        limit: 20,
-        chainIds,
-      });
+    res.json(response);
+  });
 
-      _pushResults(response, contractsResults);
-    }
+  return search;
+}
 
-    const packagesResult = await searchPackages({
-      query,
-      chainIds,
-      limit: types.length ? MAX_TYPED_RESULTS : 20,
-      includeNamespaces: !types.length || types.includes('namespace'),
-    });
-
-    _pushResults(response, packagesResult);
-  }
-
-  if (query) {
-    const fuzzyOrder = new Fuse<ApiDocument>(response.data, {
-      keys: [
-        'type',
-        {
-          name: 'name',
-          weight: 2,
-        },
-        {
-          name: 'contractName',
-          weight: 2,
-        },
-        {
-          name: 'selector',
-          weight: 3,
-        },
-        {
-          name: 'address',
-          weight: 3,
-        },
-      ],
-    });
-
-    response.data = fuzzyOrder.search(query).map(({ item }) => item);
-  }
-
-  res.json(response);
-});
-
-export { search };
+export const search = createSearchRouter();

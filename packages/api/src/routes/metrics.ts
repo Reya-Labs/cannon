@@ -1,4 +1,4 @@
-import { type Request, Router } from 'express';
+import { type Request, type RequestHandler, Router } from 'express';
 import basicAuth from 'express-basic-auth';
 import prometheus from 'express-prom-bundle';
 import { Registry } from 'prom-client';
@@ -18,13 +18,13 @@ export function createMetricsRouter(config: ApiConfig): Router {
   const metrics = Router();
   const registry = new Registry();
 
-  metrics.use(
-    '/metrics',
-    basicAuth({
-      challenge: true,
-      users: { [config.METRICS_USER]: config.METRICS_PASSWORD },
-    })
-  );
+  // express-basic-auth still resolves the workspace's hoisted Express 4
+  // declarations; confine that type mismatch to its runtime-compatible boundary.
+  const authenticateMetrics = basicAuth({
+    challenge: true,
+    users: { [config.METRICS_USER]: config.METRICS_PASSWORD },
+  }) as unknown as RequestHandler;
+  metrics.use('/metrics', authenticateMetrics);
 
   metrics.use(
     prometheus({

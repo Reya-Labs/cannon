@@ -18,11 +18,12 @@ export function parsePackageName(packageName: string) {
 
 const MAX_PACKAGE_REF_LENGTH = 256;
 const partialPackageRefRegex = /^[a-z0-9][A-Za-z0-9-]{1,29}[a-z0-9]:[^@]+(?:@[^\s]+)?$/;
-export function isPartialPackageRef(packageName: unknown) {
+export function isPartialPackageRef(packageName: unknown): packageName is string {
   return (
     typeof packageName === 'string' &&
     packageName.length <= MAX_PACKAGE_REF_LENGTH &&
-    partialPackageRefRegex.test(packageName)
+    partialPackageRefRegex.test(packageName) &&
+    PackageReference.isValid(packageName)
   );
 }
 
@@ -44,6 +45,17 @@ export function isContractName(contractName: unknown) {
 const functionSelectorRegex = /^0x[0-9a-fA-F]{8}$/;
 export function isFunctionSelector(selector: unknown) {
   return typeof selector === 'string' && functionSelectorRegex.test(selector);
+}
+
+export function isAbiSignature(signature: unknown): signature is string {
+  if (typeof signature !== 'string' || signature.length > 512) return false;
+
+  try {
+    const item = viem.parseAbiItem(`function ${signature}`);
+    return item.type === 'function' && viem.toFunctionSignature(item) === signature;
+  } catch {
+    return false;
+  }
 }
 
 const chainIdRegex = /^[1-9][0-9]*$/;
@@ -83,7 +95,7 @@ export function parseTextQuery(query: unknown): string {
   );
 }
 
-const QUERY_TYPES = new Set<ApiDocumentType>(['namespace', 'package', 'contract', 'function', 'event', 'error']);
+const QUERY_TYPES = new Set<ApiDocumentType>(['namespace', 'package', 'contract', 'function', 'error']);
 export function parseQueryTypes(type: unknown): ApiDocumentType[] {
   if (type === undefined || type === null || type === '') return [];
   if (typeof type !== 'string' || type.length > 128) throw new BadRequestError('Invalid types parameter');
@@ -95,7 +107,7 @@ export function parseQueryTypes(type: unknown): ApiDocumentType[] {
   return [...new Set(values)] as ApiDocumentType[];
 }
 
-const selectorRegex = /^0x(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{64})$/;
+const selectorRegex = /^0x[0-9a-fA-F]{8}$/;
 const MAX_SELECTORS = 20;
 export function parseSelectors(value: unknown): viem.Hex[] {
   if (typeof value !== 'string' || !value) throw new BadRequestError('Query selector not specified');
@@ -105,15 +117,15 @@ export function parseSelectors(value: unknown): viem.Hex[] {
     selectors.length > MAX_SELECTORS ||
     selectors.some((selector) => !selectorRegex.test(selector))
   ) {
-    throw new BadRequestError(`q must contain at most ${MAX_SELECTORS} valid 4-byte or 32-byte selectors`);
+    throw new BadRequestError(`q must contain at most ${MAX_SELECTORS} valid 4-byte selectors`);
   }
   return [...new Set(selectors.map((selector) => selector.toLowerCase()))] as viem.Hex[];
 }
 
-export function parseSelectorType(value: unknown): 'function' | 'event' | 'error' | undefined {
+export function parseSelectorType(value: unknown): 'function' | 'error' | undefined {
   if (value === undefined) return undefined;
-  if (value === 'function' || value === 'event' || value === 'error') return value;
-  throw new BadRequestError('type must be function, event or error');
+  if (value === 'function' || value === 'error') return value;
+  throw new BadRequestError('type must be function or error');
 }
 
 export function parseAddresses(addresses: any) {

@@ -88,6 +88,39 @@ describe('bounded aggregate query factories', () => {
     assert.deepEqual(limit, { type: AggregateSteps.LIMIT, from: 0, size: MAX_NAMESPACE_RESULTS });
   });
 
+  it('can query namespaces without fetching unrequested package documents', async () => {
+    let packageSearches = 0;
+    const batch = {
+      exec: async () => [
+        {
+          results: [{ count: '2', name: 'valid-package' }],
+          total: 1,
+        },
+      ],
+      ft: {
+        aggregate: () => batch,
+        search: () => {
+          packageSearches += 1;
+          return batch;
+        },
+      },
+    };
+    const redis = { multi: () => batch } as unknown as RedisClientType;
+    const queryPackages = createPackageQueryExecutor(async () => redis);
+
+    const result = await queryPackages({
+      includeNamespaces: true,
+      includePackages: false,
+      query: '@chainId:{1729}',
+    });
+
+    assert.equal(packageSearches, 0);
+    assert.deepEqual(result, {
+      data: [{ count: 2, name: 'valid-package', type: 'namespace' }],
+      total: 1,
+    });
+  });
+
   it('skips namespace groups whose Redis COUNT cannot satisfy the numeric API contract', async () => {
     const batch = {
       exec: async () => [
@@ -423,7 +456,7 @@ describe('bounded aggregate query factories', () => {
     }
   });
 
-  it('preserves selector types and skips malformed package-backed records without throwing', async () => {
+  it('applies chain scope before the selector limit and rejects contextual global records', async () => {
     const canonical = {
       address: '0x0000000000000000000000000000000000000001',
       chainId: '1729',
@@ -433,27 +466,42 @@ describe('bounded aggregate query factories', () => {
       selector: '0x82b42900',
       timestamp: '123',
     };
+    const searchQueries: string[] = [];
     const redis = {
       ft: {
-        search: async () => ({
-          documents: [
-            { value: { ...canonical, type: 'error' } },
-            { value: { ...canonical, name: 'owner()', selector: '0x8da5cb5b', type: 'function' } },
-            { value: { ...canonical, chainId: '1', type: 'error' } },
-            {
-              value: {
-                name: 'Unauthorized()',
-                selector: '0x82b42900',
-                timestamp: '123',
-                type: 'error',
+        search: async (_index: string, query: string) => {
+          searchQueries.push(query);
+          return {
+            documents: [
+              { value: { ...canonical, type: 'error' } },
+              { value: { ...canonical, name: 'owner()', selector: '0x8da5cb5b', type: 'function' } },
+              { value: { ...canonical, chainId: '1', type: 'error' } },
+              {
+                value: {
+                  name: 'Unauthorized()',
+                  selector: '0x82b42900',
+                  timestamp: '123',
+                  type: 'error',
+                },
               },
-            },
-            { value: { ...canonical, address: '', type: 'error' } },
-            { value: { ...canonical, chainId: '', type: 'error' } },
-            { value: { ...canonical, contractName: '', type: 'error' } },
-          ],
-          total: 7,
-        }),
+              {
+                value: {
+                  address: canonical.address,
+                  name: 'Unauthorized()',
+                  selector: '0x82b42900',
+                  timestamp: '123',
+                  type: 'error',
+                },
+              },
+              { value: { ...canonical, address: '', type: 'error' } },
+              { value: { ...canonical, chainId: '', type: 'error' } },
+              { value: { ...canonical, contractName: '', type: 'error' } },
+              { value: { ...canonical, name: 'foo((uint256)', selector: '0x12345678', type: 'function' } },
+              { value: { ...canonical, name: 'owner()', selector: '0x12345678', type: 'function' } },
+            ],
+            total: 10,
+          };
+        },
       },
     };
     const warnings: unknown[][] = [];
@@ -468,13 +516,13 @@ describe('bounded aggregate query factories', () => {
         chainIds: [1729],
       });
 
-      assert.equal(result.total, 3);
+      assert.deepEqual(searchQueries, ['@selector:{0x82b42900},@chainId:{1729}']);
+      assert.equal(result.total, 2);
       assert.deepEqual(
         result.data.map(({ type, chainId }) => [type, chainId]),
         [
           ['error', 1729],
           ['function', 1729],
-          ['error', undefined],
         ]
       );
       assert.equal(
@@ -482,6 +530,9 @@ describe('bounded aggregate query factories', () => {
         false
       );
       assert.deepEqual(warnings, [
+        ['query API skipped malformed Redis document', { kind: 'selector' }],
+        ['query API skipped malformed Redis document', { kind: 'selector' }],
+        ['query API skipped malformed Redis document', { kind: 'selector' }],
         ['query API skipped malformed Redis document', { kind: 'selector' }],
         ['query API skipped malformed Redis document', { kind: 'selector' }],
         ['query API skipped malformed Redis document', { kind: 'selector' }],

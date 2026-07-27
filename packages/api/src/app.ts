@@ -1,4 +1,4 @@
-import express, { type Express, type NextFunction, type Request, type Response } from 'express';
+import express, { type Express, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import helmet from 'helmet';
 import packageJson from '../package.json';
@@ -97,14 +97,15 @@ export function createApp({ checkReadiness, config, now = Date.now }: AppDepende
     }
   });
 
-  app.use(
-    rateLimit({
-      windowMs: 60 * 1000,
-      limit: 100,
-      standardHeaders: 'draft-7',
-      legacyHeaders: false,
-    })
-  );
+  // Some sibling packages intentionally retain Express 4 declarations. Keep
+  // the third-party middleware's hoisted type universe at this audited runtime boundary.
+  const requestRateLimit = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 100,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+  }) as unknown as RequestHandler;
+  app.use(requestRateLimit);
 
   app.use(createMetricsRouter(config));
   app.use(selector);

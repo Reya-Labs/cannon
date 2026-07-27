@@ -68,7 +68,7 @@ export interface ApiContract {
 }
 
 export interface ApiSelectorResult {
-  type: 'function' | 'event' | 'error';
+  type: 'function' | 'error';
   name: string;
   selector: string;
   contractName?: string;

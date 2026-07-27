@@ -1,7 +1,7 @@
 import { getIpfsUrl, PackageReference } from '@usecannon/builder';
 import { CID } from 'multiformats/cid';
 import * as viem from 'viem';
-import { isChainId, isContractName, isFunctionSelector, isRedisTagOfPackage } from '../helpers';
+import { isAbiSignature, isChainId, isContractName, isFunctionSelector, isRedisTagOfPackage } from '../helpers';
 import { ApiSelectorResult, ApiPackage, IpfsUrl, RedisDocument, RedisFunction, RedisPackage, RedisTag } from '../types';
 
 export function findPackageByTag(documents: { value: RedisDocument }[], tag: RedisTag) {
@@ -121,8 +121,9 @@ export function transformPackageWithTag(pkg: RedisPackage, tag: RedisTag): ApiPa
 
 export function transformFunction(value: RedisFunction) {
   if (!value || (value.type !== 'function' && value.type !== 'error')) return;
-  if (typeof value.name !== 'string' || !value.name) return;
+  if (!isAbiSignature(value.name)) return;
   if (!isFunctionSelector(value.selector)) return;
+  if (viem.toFunctionSelector(value.name).toLowerCase() !== value.selector.toLowerCase()) return;
   if (parseTimestamp(value.timestamp) === undefined) return;
 
   if (value.package) {
@@ -144,18 +145,18 @@ export function transformFunction(value: RedisFunction) {
       version: ref.version,
     } satisfies ApiSelectorResult;
   } else {
-    if (value.package !== undefined) return;
-    if (value.chainId !== undefined && !isChainId(value.chainId)) return;
-    if (value.address !== undefined && !viem.isAddress(value.address)) return;
-    if (value.contractName !== undefined && !isContractName(value.contractName)) return;
-
+    if (
+      value.package !== undefined ||
+      value.chainId !== undefined ||
+      value.address !== undefined ||
+      value.contractName !== undefined
+    ) {
+      return;
+    }
     return {
       type: value.type,
       name: value.name,
       selector: value.selector,
-      contractName: value.contractName,
-      chainId: value.chainId ? Number.parseInt(value.chainId) : undefined,
-      address: value.address ? viem.getAddress(value.address) : undefined,
     } satisfies ApiSelectorResult;
   }
 }
