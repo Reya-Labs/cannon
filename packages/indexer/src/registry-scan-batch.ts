@@ -228,6 +228,10 @@ function normalizeBatch(value: unknown): RegistryScanBatchV1 {
   return normalized;
 }
 
+/**
+ * Canonicalizes and validates one bounded scan batch before it crosses the
+ * durable-inbox trust boundary.
+ */
 export function createRegistryScanBatch(input: {
   registryChainId: number;
   previousCheckpoint: RegistryCheckpointV1 | null;
@@ -247,10 +251,12 @@ export function createRegistryScanBatch(input: {
   });
 }
 
+/** Revalidates and serializes a scan batch into its unique canonical JSON form. */
 export function serializeRegistryScanBatch(batch: RegistryScanBatchV1): string {
   return JSON.stringify(normalizeBatch(batch));
 }
 
+/** Parses only bounded, byte-canonical scan-batch JSON and rejects extensions. */
 export function parseRegistryScanBatch(serialized: string): RegistryScanBatchV1 {
   if (typeof serialized !== 'string') invalid('serialized value must be a string');
   if (byteLength(serialized) > REGISTRY_SCAN_BATCH_MAX_SERIALIZED_BYTES) {
@@ -269,10 +275,12 @@ export function parseRegistryScanBatch(serialized: string): RegistryScanBatchV1 
   return batch;
 }
 
+/** Returns the stable SHA-256 digest of a batch's revalidated canonical bytes. */
 export function registryScanBatchDigest(batch: RegistryScanBatchV1): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(serializeRegistryScanBatch(batch)).digest('hex')}`;
 }
 
+/** Derives the deterministic Redis `<blockNumber>-<logIndex>` ID for one validated envelope. */
 export function registryEventStreamId(envelope: RegistryEventEnvelopeV1): string {
   const normalized = normalizeEnvelope(envelope);
   const blockNumber = BigInt(normalized.blockNumber);

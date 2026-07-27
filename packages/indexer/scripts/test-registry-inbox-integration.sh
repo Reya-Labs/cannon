@@ -37,7 +37,7 @@ for _ in $(seq 1 30); do
 done
 docker exec "${CONTAINER_NAME}" redis-cli ping | grep -qx PONG
 
-PORT_LINE="$(docker port "${CONTAINER_NAME}" 6379/tcp)"
+PORT_LINE="$(docker port "${CONTAINER_NAME}" 6379/tcp | sed -n '1p')"
 REDIS_PORT="${PORT_LINE##*:}"
 export REGISTRY_INBOX_TEST_REDIS_URL="redis://127.0.0.1:${REDIS_PORT}"
 
@@ -74,4 +74,8 @@ if [[ "${STATE_AFTER_RESTART}" != "${STATE_BEFORE_RESTART}" || "${STREAM_AFTER_R
   echo "registry inbox persistence verification failed" >&2
   exit 1
 fi
+export REGISTRY_INBOX_TEST_PERSISTED_STATE="${STATE_AFTER_RESTART}"
+export REGISTRY_INBOX_TEST_PERSISTED_STREAM
+REGISTRY_INBOX_TEST_PERSISTED_STREAM="$(docker exec "${CONTAINER_NAME}" redis-cli -2 --json XRANGE "${PERSISTENCE_STREAM_KEY}" - +)"
+node --require ts-node/register scripts/registry-inbox-persistence-probe.ts verify
 docker exec "${CONTAINER_NAME}" redis-cli DEL "${PERSISTENCE_STATE_KEY}" "${PERSISTENCE_STREAM_KEY}" >/dev/null
