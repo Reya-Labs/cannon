@@ -40,6 +40,7 @@ export type AdmissionInput = {
   safeAddress: Address;
   safeTxHash: Hex;
   txn: SafeTransaction;
+  verifiedSignatures: VerifiedSignature[];
 };
 
 export type Admission = {
