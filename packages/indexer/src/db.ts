@@ -26,3 +26,10 @@ export const RKEY_PACKAGE_SEARCHABLE = 'reg:packages';
 export const RKEY_ABI_SEARCHABLE = 'reg:abi';
 
 export const RKEY_PINNED = 'indexer:pinned';
+
+/** Untrusted 4byte records live outside the canonical registry ABI namespace. */
+export const RKEY_4BYTE_ABI_PREFIX = 'enrichment:4byte:abi';
+/** Dedicated display-only search index for untrusted 4byte records. */
+export const RKEY_4BYTE_ABI_SEARCHABLE = 'enrichment:4byte:abi-search';
+/** Per-feed resume cursors for the bounded one-shot enrichment worker. */
+export const RKEY_4BYTE_CURSOR_PREFIX = 'enrichment:4byte:cursor';

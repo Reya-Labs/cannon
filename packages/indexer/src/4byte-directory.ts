@@ -1,88 +1,451 @@
-import axios from 'axios';
-import * as rkey from './db';
+import 'dotenv/config';
+import * as viem from 'viem';
 /* eslint no-console: "off" */
-import { ActualRedisClientType, useRedis } from './redis';
+import { FourByteConfig, loadFourByteConfig } from './4byte-config';
+import * as rkey from './db';
+import { useRedis } from './redis';
+
+export type DirectoryKind = 'function' | 'event';
 
 type DirectoryEntry = {
   id: number;
-  created_at: string;
-  text_signature: string;
-  hex_signature: string;
-  bytes_signature: string;
+  createdAt: string;
+  textSignature: string;
+  hexSignature: string;
+  bytesSignature: string;
 };
 
-type DirectoryResponse = {
+type DirectoryPage = {
   count: number;
   next: string | null;
   previous: string | null;
   results: DirectoryEntry[];
 };
 
-function sleep(t: number): Promise<void> {
+type RedisBatch = {
+  exec(): Promise<unknown>;
+  hSetNX(key: string, field: string, value: string): RedisBatch;
+  set(key: string, value: string): RedisBatch;
+};
+
+export type FourByteRedis = {
+  get(key: string): Promise<string | null>;
+  multi(): RedisBatch;
+};
+
+export type FeedSummary = {
+  entries: number;
+  kind: DirectoryKind;
+  pages: number;
+};
+
+export type EnrichmentSummary = {
+  failures: Array<{ error: Error; kind: DirectoryKind }>;
+  feeds: FeedSummary[];
+};
+
+type Fetch = (input: string | URL, init?: Parameters<typeof fetch>[1]) => Promise<Response>;
+type Sleep = (milliseconds: number) => Promise<void>;
+type ReserveEntries = (entries: number) => void;
+type EnrichmentLoopDependencies = {
+  fetchPage?: Fetch;
+  log?: (...values: unknown[]) => void;
+  useRedis?: typeof useRedis;
+};
+
+const SELECTOR_PATTERNS: Record<DirectoryKind, RegExp> = {
+  event: /^0x[0-9a-fA-F]{64}$/,
+  function: /^0x[0-9a-fA-F]{8}$/,
+};
+
+class RetryableRequestError extends Error {}
+
+function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
-    setTimeout(resolve, t);
+    setTimeout(resolve, milliseconds);
   });
 }
 
-export async function scan4ByteDirectory(rdb: ActualRedisClientType, nextDirectoryUrl: string, type: 'function' | 'event') {
-  const response = await axios.get<DirectoryResponse>(nextDirectoryUrl);
-
-  console.log('received batch', nextDirectoryUrl, response.statusText);
-
-  const batch = rdb.multi();
-
-  for (const item of response.data.results) {
-    const abiSearchKey = `${rkey.RKEY_ABI_SEARCHABLE}:4bd:${type}:${item.text_signature}`;
-    batch.hSetNX(abiSearchKey, 'name', item.text_signature);
-    batch.hSetNX(abiSearchKey, 'selector', item.hex_signature);
-    batch.hSetNX(abiSearchKey, 'type', type);
-    batch.hSetNX(abiSearchKey, 'timestamp', Math.floor(new Date(item.created_at).getTime() / 1000).toString());
+function asRecord(value: unknown, context: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${context} must be an object`);
   }
-  await batch.exec();
-
-  return response.data.next;
+  return value as Record<string, unknown>;
 }
 
-export async function loop() {
-  const redis = await useRedis();
+function asNullableString(value: unknown, context: string): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string') throw new Error(`${context} must be a string or null`);
+  return value;
+}
 
-  console.log('start signature database scan loop');
+function safeInteger(value: unknown, context: string, minimum = 0): number {
+  if (!Number.isSafeInteger(value) || (value as number) < minimum) {
+    throw new Error(`${context} must be a safe integer greater than or equal to ${minimum}`);
+  }
+  return value as number;
+}
 
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    let nextUrl: string | null = 'https://www.4byte.directory/api/v1/signatures/?format=json';
-    let failureCount = 0;
-    while (nextUrl) {
+/**
+ * Resolves a feed cursor while pinning every request to the configured HTTPS origin.
+ */
+export function resolvePageUrl(value: string, baseUrl: string): string {
+  let pageUrl: URL;
+  const configuredOrigin = new URL(baseUrl);
+  try {
+    pageUrl = new URL(value, `${configuredOrigin.origin}/`);
+  } catch {
+    throw new Error('4byte pagination URL is invalid');
+  }
+
+  // 4byte currently emits absolute http:// links behind its HTTPS proxy. Canonicalize
+  // only that same-authority downgrade; no request is ever made over plaintext HTTP.
+  if (pageUrl.protocol === 'http:' && pageUrl.host === configuredOrigin.host) {
+    pageUrl.protocol = 'https:';
+  }
+
+  if (
+    pageUrl.protocol !== 'https:' ||
+    pageUrl.origin !== configuredOrigin.origin ||
+    pageUrl.username ||
+    pageUrl.password ||
+    pageUrl.hash
+  ) {
+    throw new Error(`4byte pagination must remain on configured HTTPS origin ${configuredOrigin.origin}`);
+  }
+  if (pageUrl.toString().length > 2_048) throw new Error('4byte pagination URL exceeds the configured safety bound');
+
+  return pageUrl.toString();
+}
+
+function validateSelector(kind: DirectoryKind, textSignature: string, hexSignature: unknown): string {
+  if (typeof hexSignature !== 'string' || !SELECTOR_PATTERNS[kind].test(hexSignature)) {
+    throw new Error(`4byte ${kind} selector has an invalid shape`);
+  }
+
+  const digest = viem.keccak256(viem.toBytes(textSignature));
+  const expectedSelector = kind === 'function' ? digest.slice(0, 10) : digest;
+  if (hexSignature.toLowerCase() !== expectedSelector.toLowerCase()) {
+    throw new Error(`4byte ${kind} selector does not match its text signature`);
+  }
+
+  return hexSignature.toLowerCase();
+}
+
+function parseEntry(value: unknown, kind: DirectoryKind): DirectoryEntry {
+  const entry = asRecord(value, `4byte ${kind} entry`);
+  const id = safeInteger(entry.id, `4byte ${kind} entry id`, 1);
+  if (
+    typeof entry.text_signature !== 'string' ||
+    entry.text_signature.length < 1 ||
+    entry.text_signature.length > 4_096 ||
+    !/^[\x20-\x7e]+$/.test(entry.text_signature)
+  ) {
+    throw new Error(`4byte ${kind} text signature must be 1-4096 printable ASCII characters`);
+  }
+  if (typeof entry.created_at !== 'string' || !Number.isFinite(Date.parse(entry.created_at))) {
+    throw new Error(`4byte ${kind} created_at must be a valid timestamp`);
+  }
+  if (typeof entry.bytes_signature !== 'string' || entry.bytes_signature.length > 4_096) {
+    throw new Error(`4byte ${kind} bytes_signature must be a bounded string`);
+  }
+
+  return {
+    id,
+    createdAt: entry.created_at,
+    textSignature: entry.text_signature,
+    hexSignature: validateSelector(kind, entry.text_signature, entry.hex_signature),
+    bytesSignature: entry.bytes_signature,
+  };
+}
+
+/**
+ * Validates one bounded 4byte page and independently recomputes every selector.
+ */
+export function parseDirectoryPage(value: unknown, kind: DirectoryKind, baseUrl: string, maxResults: number): DirectoryPage {
+  const page = asRecord(value, `4byte ${kind} page`);
+  const count = safeInteger(page.count, `4byte ${kind} count`);
+  if (!Array.isArray(page.results)) throw new Error(`4byte ${kind} results must be an array`);
+  if (page.results.length > maxResults) {
+    throw new Error(`4byte ${kind} page exceeds the configured result bound`);
+  }
+
+  const results = page.results.map((entry) => parseEntry(entry, kind));
+  if (new Set(results.map((entry) => entry.id)).size !== results.length) {
+    throw new Error(`4byte ${kind} page contains duplicate entry ids`);
+  }
+  if (count < results.length) throw new Error(`4byte ${kind} count is smaller than its result set`);
+
+  const next = asNullableString(page.next, `4byte ${kind} next`);
+  const previous = asNullableString(page.previous, `4byte ${kind} previous`);
+
+  return {
+    count,
+    next: next === null ? null : resolvePageUrl(next, baseUrl),
+    previous: previous === null ? null : resolvePageUrl(previous, baseUrl),
+    results,
+  };
+}
+
+async function readBoundedJson(response: Response, maxResponseBytes: number): Promise<unknown> {
+  const contentType = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
+  if (contentType !== 'application/json') throw new Error('4byte response must use application/json');
+
+  const contentLength = response.headers.get('content-length');
+  if (contentLength !== null) {
+    const parsedLength = Number(contentLength);
+    if (!Number.isSafeInteger(parsedLength) || parsedLength < 0 || parsedLength > maxResponseBytes) {
+      throw new Error('4byte response Content-Length exceeds the configured byte bound');
+    }
+  }
+
+  if (!response.body) throw new Error('4byte response body is missing');
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let receivedBytes = 0;
+  let completed = false;
+
+  try {
+    let streamComplete = false;
+    while (!streamComplete) {
+      let chunk: Awaited<ReturnType<typeof reader.read>>;
       try {
-        nextUrl = await scan4ByteDirectory(redis, nextUrl, 'function');
-        failureCount = 0;
-      } catch (err) {
-        console.error('failed with error', err);
-        if (failureCount >= 5) {
-          console.error('error limit exceeded');
-          process.exit(1);
-        }
-        await sleep(Math.pow(failureCount++, 2));
+        chunk = await reader.read();
+      } catch (error) {
+        throw new RetryableRequestError(
+          `4byte response body read failed: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
+      const { done, value } = chunk;
+      if (done) {
+        streamComplete = true;
+        continue;
+      }
+      if (!value) throw new Error('4byte response stream returned an invalid chunk');
+      receivedBytes += value.byteLength;
+      if (receivedBytes > maxResponseBytes) {
+        throw new Error('4byte response body exceeds the configured byte bound');
+      }
+      chunks.push(value);
+    }
+    completed = true;
+  } finally {
+    if (!completed) await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+
+  const body = Buffer.concat(chunks);
+  let decoded: string;
+  try {
+    decoded = new TextDecoder('utf-8', { fatal: true }).decode(body);
+  } catch {
+    throw new Error('4byte response body is not valid UTF-8');
+  }
+
+  try {
+    return JSON.parse(decoded);
+  } catch {
+    throw new Error('4byte response body is not valid JSON');
+  }
+}
+
+async function requestPage(url: string, config: FourByteConfig, fetchPage: Fetch): Promise<unknown> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
+  let response: Response;
+
+  try {
+    response = await fetchPage(url, {
+      headers: { accept: 'application/json' },
+      redirect: 'manual',
+      signal: controller.signal,
+    });
+  } catch (error) {
+    clearTimeout(timeout);
+    throw new RetryableRequestError(`4byte request failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  try {
+    if (response.redirected || (response.status >= 300 && response.status < 400)) {
+      throw new Error('4byte redirects are forbidden');
+    }
+    if (response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500) {
+      throw new RetryableRequestError(`4byte request returned retryable HTTP ${response.status}`);
+    }
+    if (!response.ok) throw new Error(`4byte request returned HTTP ${response.status}`);
+
+    if (response.url && new URL(response.url).toString() !== new URL(url).toString()) {
+      throw new Error('4byte response URL does not match the requested URL');
     }
 
-    nextUrl = 'https://www.4byte.directory/api/v1/event-signatures/?format=json';
-    while (nextUrl) {
-      try {
-        nextUrl = await scan4ByteDirectory(redis, nextUrl, 'event');
-        failureCount = 0;
-      } catch (err) {
-        console.error('failed with error', err);
-        if (failureCount >= 5) {
-          console.error('error limit exceeded');
-          process.exit(1);
-        }
-        await sleep(Math.pow(failureCount++, 2));
-      }
+    return await readBoundedJson(response, config.maxResponseBytes);
+  } finally {
+    clearTimeout(timeout);
+    if (response.body && !response.body.locked) {
+      await response.body.cancel().catch(() => undefined);
     }
+  }
+}
+
+async function requestPageWithRetries(url: string, config: FourByteConfig, fetchPage: Fetch, wait: Sleep): Promise<unknown> {
+  for (let attempt = 0; attempt <= config.retries; attempt++) {
+    try {
+      return await requestPage(url, config, fetchPage);
+    } catch (error) {
+      if (!(error instanceof RetryableRequestError) || attempt >= config.retries) throw error;
+      await wait(Math.min(config.retryBaseMs * 2 ** attempt, config.retryMaxMs));
+    }
+  }
+
+  throw new Error('4byte retry loop exhausted unexpectedly');
+}
+
+function initialPageUrl(kind: DirectoryKind, baseUrl: string): string {
+  const path = kind === 'function' ? '/api/v1/signatures/' : '/api/v1/event-signatures/';
+  return resolvePageUrl(`${path}?format=json`, baseUrl);
+}
+
+function cursorKey(kind: DirectoryKind): string {
+  return `${rkey.RKEY_4BYTE_CURSOR_PREFIX}:${kind}`;
+}
+
+function entryKey(kind: DirectoryKind, id: number): string {
+  return `${rkey.RKEY_4BYTE_ABI_PREFIX}:${kind}:${id}`;
+}
+
+/**
+ * Scans one feed within page and entry limits.
+ *
+ * The shared reservation callback runs before Redis EXEC and is never refunded,
+ * so an ambiguous commit cannot disappear from the aggregate run budget.
+ */
+export async function scanFeed(
+  redis: FourByteRedis,
+  kind: DirectoryKind,
+  config: FourByteConfig,
+  entryBudget: number,
+  fetchPage: Fetch = fetch,
+  wait: Sleep = sleep,
+  reserveEntries: ReserveEntries = () => undefined
+): Promise<FeedSummary> {
+  const storedCursor = await redis.get(cursorKey(kind));
+  let nextUrl = storedCursor ? resolvePageUrl(storedCursor, config.baseUrl) : initialPageUrl(kind, config.baseUrl);
+  let entries = 0;
+  let pages = 0;
+  const visitedUrls = new Set<string>();
+
+  while (nextUrl && pages < config.maxPagesPerFeed) {
+    if (visitedUrls.has(nextUrl)) throw new Error(`4byte ${kind} pagination contains a cycle`);
+    visitedUrls.add(nextUrl);
+    const page = parseDirectoryPage(
+      await requestPageWithRetries(nextUrl, config, fetchPage, wait),
+      kind,
+      config.baseUrl,
+      config.maxResultsPerPage
+    );
+    if (entries + page.results.length > entryBudget) {
+      throw new Error('4byte run exceeds the configured aggregate entry bound');
+    }
+    // Reserve before EXEC so a lost transaction reply cannot make a committed page
+    // disappear from the shared run budget. Reservations are intentionally not
+    // refunded on failure; conservative under-utilization is safer than overrun.
+    reserveEntries(page.results.length);
+
+    const batch = redis.multi();
+    for (const item of page.results) {
+      const key = entryKey(kind, item.id);
+      batch.hSetNX(key, 'name', item.textSignature);
+      batch.hSetNX(key, 'selector', item.hexSignature);
+      batch.hSetNX(key, 'type', kind);
+      batch.hSetNX(key, 'source', '4byte.directory');
+      batch.hSetNX(key, 'trust', 'unverified');
+      batch.hSetNX(key, 'timestamp', Math.floor(Date.parse(item.createdAt) / 1_000).toString());
+    }
+    batch.set(cursorKey(kind), page.next ?? '');
+    await batch.exec();
+
+    entries += page.results.length;
+    pages++;
+    nextUrl = page.next ?? '';
+  }
+
+  return { entries, kind, pages };
+}
+
+/**
+ * Runs both feeds independently and reports per-feed failures without throwing.
+ */
+export async function runFourByteEnrichment(
+  redis: FourByteRedis,
+  config: FourByteConfig,
+  fetchPage: Fetch = fetch,
+  wait: Sleep = sleep
+): Promise<EnrichmentSummary> {
+  const failures: EnrichmentSummary['failures'] = [];
+  const feeds: FeedSummary[] = [];
+  let reservedEntries = 0;
+
+  for (const kind of ['function', 'event'] as const) {
+    try {
+      const result = await scanFeed(
+        redis,
+        kind,
+        config,
+        config.maxEntriesPerRun - reservedEntries,
+        fetchPage,
+        wait,
+        (entries) => {
+          if (reservedEntries + entries > config.maxEntriesPerRun) {
+            throw new Error('4byte run exceeds the configured aggregate entry bound');
+          }
+          reservedEntries += entries;
+        }
+      );
+      feeds.push(result);
+    } catch (error) {
+      failures.push({ error: error instanceof Error ? error : new Error(String(error)), kind });
+    }
+  }
+
+  return { failures, feeds };
+}
+
+/**
+ * Runs the disabled-by-default one-shot worker.
+ *
+ * Configuration is evaluated before Redis or fetch dependencies are accessed.
+ */
+export async function loop(
+  environment: unknown = process.env,
+  dependencies: EnrichmentLoopDependencies = {}
+): Promise<void> {
+  const config = loadFourByteConfig(environment);
+  const log = dependencies.log ?? console.log;
+  if (!config.enabled) {
+    log('4byte enrichment is disabled');
+    return;
+  }
+
+  const redis = await (dependencies.useRedis ?? useRedis)(config.redisUrl);
+  try {
+    const summary = await runFourByteEnrichment(redis as FourByteRedis, config, dependencies.fetchPage);
+    log(
+      '4byte enrichment completed',
+      summary.feeds.map(({ entries, kind, pages }) => ({ entries, kind, pages }))
+    );
+    if (summary.failures.length) {
+      throw new Error(
+        `4byte enrichment failed for ${summary.failures.map(({ error, kind }) => `${kind}: ${error.message}`).join('; ')}`
+      );
+    }
+  } finally {
+    await redis.quit();
   }
 }
 
 if (require.main === module) {
-  void loop();
+  void loop().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 }

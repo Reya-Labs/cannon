@@ -1,20 +1,20 @@
-import { initializeIndexes } from '../src/registry';
+import { recreateIndexes } from '../src/search-indexes';
 import { useRedis } from '../src/redis';
-import { redisIndexExists } from '../src/helpers/redis';
-import * as rkey from '../src/db';
+import { config } from '../src/config';
 
+/**
+ * Administrative index-recreation command.
+ *
+ * From the repository root:
+ * `REDIS_URL=rediss://... pnpm --filter @usecannon/indexer exec ts-node scripts/create-indexes.ts`
+ *
+ * REDIS_URL is required. The command drops and rebuilds only Cannon's managed
+ * RediSearch indexes; source hashes are retained for reindexing.
+ */
 async function main() {
-  const redis = await useRedis();
+  const redis = await useRedis(config.REDIS_URL);
 
-  if (await redisIndexExists(redis, rkey.RKEY_PACKAGE_SEARCHABLE)) {
-    await redis.ft.dropIndex(rkey.RKEY_PACKAGE_SEARCHABLE);
-  }
-
-  if (await redisIndexExists(redis, rkey.RKEY_ABI_SEARCHABLE)) {
-    await redis.ft.dropIndex(rkey.RKEY_ABI_SEARCHABLE);
-  }
-
-  await initializeIndexes(redis as any);
+  await recreateIndexes(redis as any);
 
   await redis.quit();
 }

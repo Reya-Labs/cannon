@@ -12,15 +12,17 @@ import {
 } from '@usecannon/builder';
 import CannonRegistryAbi from '@usecannon/builder/dist/src/abis/CannonRegistry';
 import _ from 'lodash';
-import { RedisClientType, SchemaFieldTypes, TimeSeriesDuplicatePolicies } from 'redis';
+import { RedisClientType, TimeSeriesDuplicatePolicies } from 'redis';
 /* eslint no-console: "off" */
 import * as viem from 'viem';
 import * as viemChains from 'viem/chains';
 import { config } from './config';
 import * as rkey from './db';
 import { ActualRedisClientType, useRedis } from './redis';
-import { createRpcClient } from './helpers/rpc';
+import { canonicalAbiSelector } from './abi-selector';
+import { assertRpcChain, createRpcClient } from './helpers/rpc';
 import { createQueue, Queue } from './queue';
+import { createIndexesIfNedeed } from './search-indexes';
 
 const BLOCK_BATCH_SIZE = 5000;
 
@@ -253,9 +255,7 @@ export async function handleCannonPublish(
           // process the contract abi as well
           for (const abiItem of contract.abi) {
             if (abiItem.type === 'function' || abiItem.type === 'error') {
-              const functionHash = viem.toFunctionHash(abiItem as viem.AbiFunction);
-              const selector = functionHash.slice(0, 10);
-              const functionSignature = viem.toFunctionSignature(abiItem as viem.AbiFunction);
+              const { selector, signature: functionSignature } = canonicalAbiSelector(abiItem);
 
               const contractAddress = contract.address.trim().toLowerCase();
 
@@ -307,45 +307,6 @@ export async function handleCannonPublish(
     await notify(packageRef, chainId);
   } catch (err) {
     console.error('[warn] notify failed:', err);
-  }
-}
-
-export async function initializeIndexes(redis: RedisClientType) {
-  console.log('[REG] create index', rkey.RKEY_PACKAGE_SEARCHABLE);
-  await redis.ft.create(
-    rkey.RKEY_PACKAGE_SEARCHABLE,
-    {
-      name: { type: SchemaFieldTypes.TEXT, NOSTEM: true },
-      type: { type: SchemaFieldTypes.TAG },
-      timestamp: { type: SchemaFieldTypes.NUMERIC, SORTABLE: true },
-      chainId: { type: SchemaFieldTypes.TAG },
-    },
-    { PREFIX: rkey.RKEY_PACKAGE_SEARCHABLE + ':' }
-  );
-
-  await redis.ft.alter(rkey.RKEY_PACKAGE_SEARCHABLE, {
-    name: { type: SchemaFieldTypes.TAG, AS: 'exactName' },
-  });
-
-  console.log('[REG] create index', rkey.RKEY_ABI_SEARCHABLE);
-  await redis.ft.create(
-    rkey.RKEY_ABI_SEARCHABLE,
-    {
-      name: { type: SchemaFieldTypes.TEXT, NOSTEM: true },
-      contractName: { type: SchemaFieldTypes.TEXT, NOSTEM: true },
-      type: { type: SchemaFieldTypes.TAG },
-      selector: { type: SchemaFieldTypes.TAG },
-      address: { type: SchemaFieldTypes.TAG },
-      chainId: { type: SchemaFieldTypes.TAG },
-      timestamp: { type: SchemaFieldTypes.NUMERIC, SORTABLE: true },
-    },
-    { PREFIX: rkey.RKEY_ABI_SEARCHABLE + ':' }
-  );
-}
-
-export async function createIndexesIfNedeed(redis: RedisClientType) {
-  if (!(await redis.ft._list()).length) {
-    await initializeIndexes(redis);
   }
 }
 
@@ -627,9 +588,12 @@ export async function scanChain(
 }
 
 export async function loop() {
-  const redis = await useRedis();
   const mainnetClient = createRpcClient('mainnet', config.MAINNET_PROVIDER_URL);
   const optimismClient = createRpcClient('optimism', config.OPTIMISM_PROVIDER_URL);
+  await assertRpcChain(mainnetClient, viemChains.mainnet.id, 'mainnet');
+  await assertRpcChain(optimismClient, viemChains.optimism.id, 'optimism');
+
+  const redis = await useRedis(config.REDIS_URL);
   const queue = createQueue();
 
   // Initialize worker for pinning images
