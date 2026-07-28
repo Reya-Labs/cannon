@@ -1,0 +1,8 @@
+/.github/ @arturbeg @bogdan-reya
+/docker/ @arturbeg @bogdan-reya
+/packages/safe-app-backend/ @arturbeg @bogdan-reya
+/.changeset/ @arturbeg @bogdan-reya
+/.npmrc @arturbeg @bogdan-reya
+/pnpm-workspace.yaml @arturbeg @bogdan-reya
+**/package.json @arturbeg @bogdan-reya
+**/pnpm-lock.yaml @arturbeg @bogdan-reya

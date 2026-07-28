@@ -1,0 +1,70 @@
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+      time: '07:00'
+      timezone: Europe/London
+    open-pull-requests-limit: 5
+    assignees:
+      - arturbeg
+    reviewers:
+      - arturbeg
+      - bogdan-reya
+    commit-message:
+      prefix: 'chore(deps)'
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+      time: '07:30'
+      timezone: Europe/London
+    open-pull-requests-limit: 5
+    assignees:
+      - arturbeg
+    reviewers:
+      - arturbeg
+      - bogdan-reya
+    commit-message:
+      prefix: 'chore(actions)'
+
+  - package-ecosystem: docker
+    directory: /docker
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+      time: '08:00'
+      timezone: Europe/London
+    open-pull-requests-limit: 3
+    assignees:
+      - arturbeg
+    reviewers:
+      - arturbeg
+      - bogdan-reya
+    commit-message:
+      prefix: 'chore(runtime)'
+
+  - package-ecosystem: docker
+    directory: /packages/safe-app-backend
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+      time: '08:15'
+      timezone: Europe/London
+    open-pull-requests-limit: 3
+    assignees:
+      - arturbeg
+    reviewers:
+      - arturbeg
+      - bogdan-reya
+    commit-message:
+      prefix: 'chore(runtime)'

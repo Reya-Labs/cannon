@@ -48,6 +48,7 @@ jobs:
         env:
           BUILD_REVISION: ${{ github.sha }}
           REDIS_URL: redis://127.0.0.1:6379
+      - run: npm ci --ignore-scripts --prefix .github/scripts
       - name: Verify the publication workflow policy
         run: |
           node .github/scripts/verify-safe-app-backend-workflows.mjs
