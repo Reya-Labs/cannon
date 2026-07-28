@@ -60,6 +60,7 @@ test('builds a deterministic, disabled-only static export', async (context) => {
     'assets/app.css',
     'index.html',
     'release.json',
+    'sbom.cdx.json',
   ]);
 
   const html = await readFile(path.join(first, 'index.html'), 'utf8');
@@ -77,6 +78,23 @@ test('builds a deterministic, disabled-only static export', async (context) => {
   assert.match(release.build.sourceDigest, /^sha256:[0-9a-f]{64}$/);
   assert.match(release.build.configDigest, /^sha256:[0-9a-f]{64}$/);
   assert.match(release.export.assetDigest, /^sha256:[0-9a-f]{64}$/);
+
+  const sbom = JSON.parse(
+    await readFile(path.join(first, 'sbom.cdx.json'), 'utf8')
+  );
+  assert.equal(sbom.bomFormat, 'CycloneDX');
+  assert.equal(sbom.specVersion, '1.6');
+  assert.equal(
+    sbom.metadata.component['bom-ref'],
+    'pkg:npm/%40reya/cannon-safe-ui@0.0.0'
+  );
+  assert.deepEqual(sbom.components, []);
+  assert.deepEqual(sbom.dependencies, [
+    {
+      ref: 'pkg:npm/%40reya/cannon-safe-ui@0.0.0',
+      dependsOn: [],
+    },
+  ]);
 });
 
 test('atomically replaces a stale export without retaining undeclared files', async (context) => {
@@ -92,7 +110,13 @@ test('atomically replaces a stale export without retaining undeclared files', as
 
   assert.deepEqual(
     (await snapshot(output)).map((entry) => entry.path),
-    ['_headers', 'assets/app.css', 'index.html', 'release.json']
+    [
+      '_headers',
+      'assets/app.css',
+      'index.html',
+      'release.json',
+      'sbom.cdx.json',
+    ]
   );
   await assert.doesNotReject(() => scanExport(output));
 });
