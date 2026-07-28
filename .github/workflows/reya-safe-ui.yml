@@ -35,6 +35,8 @@ jobs:
       - run: pnpm --dir packages/reya-safe-ui --ignore-workspace install --frozen-lockfile --ignore-scripts
       - run: pnpm --dir packages/reya-safe-ui --ignore-workspace lint
       - run: pnpm --dir packages/reya-safe-ui --ignore-workspace test
+      - name: Prove Reya read clients remain dormant and fallback-free
+        run: pnpm --dir packages/reya-safe-ui --ignore-workspace verify:dormant
       - name: Build the disabled Reya profile
         run: pnpm --dir packages/reya-safe-ui --ignore-workspace build
         env:

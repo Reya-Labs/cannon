@@ -22,6 +22,8 @@ import { ActualRedisClientType, useRedis } from './redis';
 import { canonicalAbiSelector } from './abi-selector';
 import { assertRpcChain, createRpcClient } from './helpers/rpc';
 import { createQueue, Queue } from './queue';
+import { optionalPinningMetadataCids } from './queue/contracts';
+import { handleRegistryEventFailure, reportRegistryFailure, UnsupportedRegistryEventError } from './registry-event-failure';
 import { createIndexesIfNedeed } from './search-indexes';
 
 const BLOCK_BATCH_SIZE = 5000;
@@ -90,9 +92,22 @@ export const cannonChain: viem.Chain = {
 
 export const chains: viem.Chain[] = [cannonChain, ...Object.values(viemChains)];
 
-function sleep(t: number): Promise<void> {
+function sleep(t: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
-    setTimeout(resolve, t);
+    const finish = () => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    };
+    const timeout = setTimeout(finish, t);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      finish();
+    };
+    if (signal?.aborted) {
+      onAbort();
+    } else {
+      signal?.addEventListener('abort', onAbort, { once: true });
+    }
   });
 }
 
@@ -227,8 +242,8 @@ export async function handleCannonPublish(
     if (recordDeployStep[type]) {
       try {
         await recordDeployStep[type](redis, deployInfo.state[actionName], def, deployInfo.meta, packageRef, actionName);
-      } catch (err) {
-        console.log(`[warn] failed special handler for ${type} on action ${actionName}: ${err?.toString && err.toString()}`);
+      } catch (error) {
+        reportRegistryFailure('action', error);
       }
     } else {
       const batch = redis.multi();
@@ -305,8 +320,8 @@ export async function handleCannonPublish(
 
   try {
     await notify(packageRef, chainId);
-  } catch (err) {
-    console.error('[warn] notify failed:', err);
+  } catch (error) {
+    reportRegistryFailure('notification', error);
   }
 }
 
@@ -358,12 +373,23 @@ export async function getNewEvents(
   return { scanToBlock: Number(scanToBlock), currentBlock, scanToTimestamp: lastBlockTimestamp, events };
 }
 
+/**
+ * Scans both registry chains until shutdown or the consecutive-failure budget
+ * is exhausted.
+ *
+ * Aborting `signal` wakes supervised sleeps and prevents another scan
+ * iteration. Already-dispatched RPC, Redis, or queue calls finish before the
+ * current iteration observes cancellation. Normal return therefore means
+ * either cancellation or retry-budget exhaustion; {@link loop} distinguishes
+ * the two and turns exhaustion into a terminal process error.
+ */
 export async function scanChain(
   mainnetClient: viem.PublicClient,
   optimismClient: viem.PublicClient,
   registryContract: CannonContract,
   redis: ActualRedisClientType,
-  queue: Queue
+  queue: Queue,
+  signal?: AbortSignal
 ) {
   await createIndexesIfNedeed(redis as any);
 
@@ -376,7 +402,7 @@ export async function scanChain(
   );
 
   let consecutiveFailures = 0;
-  while (consecutiveFailures < MAX_FAIL) {
+  while (!signal?.aborted && consecutiveFailures < MAX_FAIL) {
     try {
       const [mainnetScan, optimismScan] = await Promise.all([
         await getNewEvents(mainnetClient, 1, redis as RedisClientType, registryContract),
@@ -386,7 +412,7 @@ export async function scanChain(
       if (mainnetScan.scanToBlock === mainnetScan.currentBlock && optimismScan.scanToBlock === optimismScan.currentBlock) {
         console.log('[REG] checking indexes');
         await createIndexesIfNedeed(redis as any);
-        await sleep(12000); // mainnet block time (optimism can wait a little)
+        await sleep(12000, signal); // mainnet block time (optimism can wait a little)
       }
 
       // remove any events older than the latest block scanned on either chain
@@ -450,13 +476,13 @@ export async function scanChain(
               const packageVersion = viem.hexToString(event.args.tag, { size: 32 });
               const deployUrl = event.args.deployUrl ?? event.args.url;
               const metaUrl = event.args.metaUrl ?? '';
+              const metadataCids = optionalPinningMetadataCids(metaUrl);
 
               const queueBatch = queue.createBatch();
-              queueBatch.add('PIN_PACKAGE', { cid: deployUrl });
-
-              if (metaUrl) {
-                queueBatch.add('PIN_CID', { cid: metaUrl });
-              }
+              queueBatch.add('PIN_PACKAGE', {
+                cid: deployUrl,
+                ...(metadataCids ? { metadataCids } : {}),
+              });
 
               await queueBatch.exec();
 
@@ -564,54 +590,57 @@ export async function scanChain(
               break;
             }
             default:
-              console.error('unrecognized event:', event);
-              process.exit(1);
+              throw new UnsupportedRegistryEventError('unsupported registry event');
           }
-        } catch (err) {
-          console.log('[REG] failure parsing', event, err);
-          // process this package later
-          await redis.lPush(rkey.RKEY_RETRY_PROCESS_PACKAGE, JSON.stringify(event));
+        } catch (error) {
+          await handleRegistryEventFailure(error, event, redis);
         }
       }
 
       await redis.set(rkey.RKEY_LAST_IDX + ':' + 1, mainnetScan.scanToBlock);
       await redis.set(rkey.RKEY_LAST_IDX + ':' + 10, optimismScan.scanToBlock);
       consecutiveFailures = 0;
-    } catch (err) {
-      console.error('failure while scanning cannon publishes:', err);
+    } catch (error) {
+      reportRegistryFailure('scan', error);
       consecutiveFailures++;
     }
 
     // prevent thrashing
-    await sleep(250);
+    await sleep(250, signal);
   }
 }
 
-export async function loop() {
-  const mainnetClient = createRpcClient('mainnet', config.MAINNET_PROVIDER_URL);
-  const optimismClient = createRpcClient('optimism', config.OPTIMISM_PROVIDER_URL);
-  await assertRpcChain(mainnetClient, viemChains.mainnet.id, 'mainnet');
-  await assertRpcChain(optimismClient, viemChains.optimism.id, 'optimism');
+export async function loop(options: { signal?: AbortSignal } = {}) {
+  let redis: Awaited<ReturnType<typeof useRedis>> | undefined;
+  let queue: Queue | undefined;
 
-  const redis = await useRedis(config.REDIS_URL);
-  const queue = createQueue();
+  try {
+    const mainnetClient = createRpcClient('mainnet', config.MAINNET_PROVIDER_URL);
+    const optimismClient = createRpcClient('optimism', config.OPTIMISM_PROVIDER_URL);
+    await assertRpcChain(mainnetClient, viemChains.mainnet.id, 'mainnet');
+    await assertRpcChain(optimismClient, viemChains.optimism.id, 'optimism');
 
-  // Initialize worker for pinning images
-  queue.createWorker();
+    redis = await useRedis(config.REDIS_URL);
+    queue = createQueue(config);
 
-  console.log('start scan loop');
+    console.log('start scan loop');
 
-  await scanChain(
-    mainnetClient,
-    optimismClient as any,
-    {
-      address: DEFAULT_REGISTRY_ADDRESS,
-      abi: CannonRegistryAbi,
-    },
-    redis,
-    queue
-  );
+    await scanChain(
+      mainnetClient,
+      optimismClient as any,
+      {
+        address: DEFAULT_REGISTRY_ADDRESS,
+        abi: CannonRegistryAbi,
+      },
+      redis,
+      queue,
+      options.signal
+    );
 
-  console.error('error limit exceeded');
-  process.exit(1);
+    if (!options.signal?.aborted) {
+      throw new Error('registry scan error limit exceeded');
+    }
+  } finally {
+    await Promise.allSettled([queue?.close(), redis?.quit()]);
+  }
 }

@@ -44,5 +44,5 @@ export interface CannonPackageArtifact {
   [key: string]: unknown;
 }
 
-export type HealthContext = Pick<RepoContext, 'rdb' | 'objectStoreRead' | 'objectStoreWrite'>;
+export type HealthContext = Pick<RepoContext, 'config' | 'rdb' | 'objectStoreRead' | 'objectStoreWrite'>;
 export type AuthenticationContext = Pick<RepoContext, 'config'>;
