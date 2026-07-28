@@ -15,37 +15,6 @@ import { verifySafeAppBackendWorkflows } from './verify-safe-app-backend-workflo
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultRepositoryRoot = resolve(dirname(scriptPath), '../..');
 
-const runtimeImagePaths = [
-  '.github/dependabot.yml',
-  '.github/scripts/generate-bundle-input-sbom.mjs',
-  '.github/scripts/generate-bundle-input-sbom.test.mjs',
-  '.github/scripts/generate-expected-runtime-sbom.sh',
-  '.github/scripts/generate-expected-runtime-sbom.test.mjs',
-  '.github/scripts/runtime-evidence-paths.test.mjs',
-  '.github/scripts/scan-runtime-image.sh',
-  '.github/scripts/validate-runtime-image-inventory.mjs',
-  '.github/scripts/validate-runtime-image-inventory.test.mjs',
-  '.github/scripts/verify-runtime-bundle-input.mjs',
-  '.github/scripts/verify-runtime-bundle-input.test.mjs',
-  '.github/scripts/verify-runtime-image.sh',
-  '.github/runtime-image-inventory.json',
-  '.github/workflows/runtime-image-security.yml',
-  '.github/workflows/runtime-publish.yml',
-  'docker/api.Dockerfile',
-  'docker/indexer.Dockerfile',
-  'docker/repo.Dockerfile',
-  'package.json',
-  'packages/api/**',
-  'packages/artifact-codec/**',
-  'packages/builder/**',
-  'packages/cli/**',
-  'packages/indexer/**',
-  'packages/repo/**',
-  'packages/safe-app-backend/**',
-  'pnpm-lock.yaml',
-  'pnpm-workspace.yaml',
-];
-
 const runtimePublishPaths = [
   '.github/dependabot.yml',
   '.github/scripts/generate-bundle-input-sbom.mjs',
@@ -67,6 +36,22 @@ const runtimePublishPaths = [
   'packages/repo/**',
   'pnpm-lock.yaml',
   'pnpm-workspace.yaml',
+];
+
+const runtimeValidationOnlyPaths = [
+  '.github/scripts/generate-bundle-input-sbom.test.mjs',
+  '.github/scripts/generate-expected-runtime-sbom.test.mjs',
+  '.github/scripts/runtime-evidence-paths.test.mjs',
+  '.github/scripts/validate-runtime-image-inventory.mjs',
+  '.github/scripts/validate-runtime-image-inventory.test.mjs',
+  '.github/scripts/verify-runtime-bundle-input.test.mjs',
+  '.github/runtime-image-inventory.json',
+  'packages/safe-app-backend/**',
+];
+
+const runtimeImagePaths = [
+  ...runtimePublishPaths,
+  ...runtimeValidationOnlyPaths,
 ];
 
 const workflowPolicies = new Map([
@@ -185,7 +170,7 @@ const workflowPolicies = new Map([
 const exactWorkflowDigests = new Map([
   [
     'runtime-image-security.yml',
-    '6abfc8e5af63fed8b317fc81befdd4f735b8abbf838aeae711f27fe7996a63fa',
+    '77f290fc49300b5cb39e35b9b0d3b74e30f4005084fee5fd923c5704efcb3d27',
   ],
   [
     'runtime-publish.yml',
