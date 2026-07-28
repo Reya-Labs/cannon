@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "runtimes": {
+    "repo": {
+      "status": "inactive",
+      "active": null,
+      "rollback": []
+    },
+    "indexer": {
+      "status": "inactive",
+      "active": null,
+      "rollback": []
+    },
+    "api": {
+      "status": "inactive",
+      "active": null,
+      "rollback": []
+    },
+    "safe-app-backend": {
+      "status": "inactive",
+      "active": null,
+      "rollback": []
+    }
+  }
+}

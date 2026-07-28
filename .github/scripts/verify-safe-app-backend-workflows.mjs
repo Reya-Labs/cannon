@@ -118,8 +118,8 @@ const EXPECTED_PUBLISH_WORKFLOW = {
           name: 'Verify the published manifest',
           env: {
             EXPECTED_BASE_DIGEST:
-              'sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2',
-            EXPECTED_BASE_NAME: 'node:22.23.1-alpine',
+              'sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b',
+            EXPECTED_BASE_NAME: 'docker.io/library/alpine:3.24.1',
             EXPECTED_BUILD_DATE:
               '${{ steps.image-metadata.outputs.build_date }}',
             EXPECTED_BUILD_REVISION:

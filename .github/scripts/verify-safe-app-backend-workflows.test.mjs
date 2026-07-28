@@ -187,3 +187,16 @@ test('rejects an unreviewed build context', () => {
     /exact reviewed schema/
   );
 });
+
+test('rejects a stale publisher runtime base contract', () => {
+  assert.throws(
+    () =>
+      verify((source) =>
+        source.replace(
+          'EXPECTED_BASE_NAME: docker.io/library/alpine:3.24.1',
+          'EXPECTED_BASE_NAME: node:22.23.1-alpine'
+        )
+      ),
+    /exact reviewed schema/
+  );
+});

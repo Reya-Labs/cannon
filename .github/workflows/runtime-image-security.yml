@@ -1,0 +1,646 @@
+name: Runtime image security
+
+on:
+  pull_request:
+    paths:
+      - '.github/dependabot.yml'
+      - '.github/scripts/generate-bundle-input-sbom.mjs'
+      - '.github/scripts/generate-bundle-input-sbom.test.mjs'
+      - '.github/scripts/generate-expected-runtime-sbom.sh'
+      - '.github/scripts/generate-expected-runtime-sbom.test.mjs'
+      - '.github/scripts/runtime-evidence-paths.test.mjs'
+      - '.github/scripts/scan-runtime-image.sh'
+      - '.github/scripts/validate-runtime-image-inventory.mjs'
+      - '.github/scripts/validate-runtime-image-inventory.test.mjs'
+      - '.github/scripts/verify-runtime-bundle-input.mjs'
+      - '.github/scripts/verify-runtime-bundle-input.test.mjs'
+      - '.github/scripts/verify-runtime-image.sh'
+      - '.github/runtime-image-inventory.json'
+      - '.github/workflows/runtime-image-security.yml'
+      - 'docker/api.Dockerfile'
+      - 'docker/indexer.Dockerfile'
+      - 'docker/repo.Dockerfile'
+      - 'package.json'
+      - 'packages/api/**'
+      - 'packages/builder/**'
+      - 'packages/cli/**'
+      - 'packages/indexer/**'
+      - 'packages/repo/**'
+      - 'packages/safe-app-backend/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+  push:
+    branches:
+      - dev
+      - main
+    paths:
+      - '.github/dependabot.yml'
+      - '.github/scripts/generate-bundle-input-sbom.mjs'
+      - '.github/scripts/generate-bundle-input-sbom.test.mjs'
+      - '.github/scripts/generate-expected-runtime-sbom.sh'
+      - '.github/scripts/generate-expected-runtime-sbom.test.mjs'
+      - '.github/scripts/runtime-evidence-paths.test.mjs'
+      - '.github/scripts/scan-runtime-image.sh'
+      - '.github/scripts/validate-runtime-image-inventory.mjs'
+      - '.github/scripts/validate-runtime-image-inventory.test.mjs'
+      - '.github/scripts/verify-runtime-bundle-input.mjs'
+      - '.github/scripts/verify-runtime-bundle-input.test.mjs'
+      - '.github/scripts/verify-runtime-image.sh'
+      - '.github/runtime-image-inventory.json'
+      - '.github/workflows/runtime-image-security.yml'
+      - 'docker/api.Dockerfile'
+      - 'docker/indexer.Dockerfile'
+      - 'docker/repo.Dockerfile'
+      - 'package.json'
+      - 'packages/api/**'
+      - 'packages/builder/**'
+      - 'packages/cli/**'
+      - 'packages/indexer/**'
+      - 'packages/repo/**'
+      - 'packages/safe-app-backend/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+  schedule:
+    - cron: '23 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Select a current-source build, one candidate digest, or the protected active/rollback inventory
+        required: true
+        default: build-current
+        type: choice
+        options:
+          - build-current
+          - candidate
+          - inventory
+      runtime:
+        description: Candidate mode only - image whose already-pushed digest should be scanned
+        required: false
+        default: safe-app-backend
+        type: choice
+        options:
+          - repo
+          - indexer
+          - api
+          - safe-app-backend
+      image_ref:
+        description: Candidate mode only - required ghcr.io/reya-labs IMAGE@sha256 digest
+        required: false
+        type: string
+      expected_revision:
+        description: Candidate mode only - required 40-character Cannon source revision
+        required: false
+        type: string
+
+concurrency:
+  group: runtime-image-security-${{ github.event_name }}-${{ (github.event_name == 'pull_request' || github.event_name == 'push') && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-scan:
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.mode == 'build-current'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runtime: repo
+            context: .
+            dockerfile: ./docker/repo.Dockerfile
+            package_json: packages/repo/package.json
+            command: '["node","index.js"]'
+          - runtime: indexer
+            context: .
+            dockerfile: ./docker/indexer.Dockerfile
+            package_json: packages/indexer/package.json
+            command: '["node","dist/registry/index.js"]'
+          - runtime: api
+            context: .
+            dockerfile: ./docker/api.Dockerfile
+            package_json: packages/api/package.json
+            command: '["node","index.js"]'
+          - runtime: safe-app-backend
+            context: packages/safe-app-backend
+            dockerfile: ./packages/safe-app-backend/Dockerfile
+            package_json: packages/safe-app-backend/package.json
+            command: '["node","dist/server.js"]'
+    env:
+      SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      IMAGE_REF: cannon-runtime-${{ matrix.runtime }}:${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Validate current-source build request
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CANDIDATE_EXPECTED_REVISION: ${{ inputs.expected_revision }}
+          CANDIDATE_IMAGE_REF: ${{ inputs.image_ref }}
+        run: |
+          test -z "$CANDIDATE_IMAGE_REF"
+          test -z "$CANDIDATE_EXPECTED_REVISION"
+
+      - name: Checkout exact image source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_REVISION }}
+          persist-credentials: false
+
+      - name: Configure isolated evidence paths
+        id: paths
+        env:
+          RUNTIME_KIND: ${{ matrix.runtime }}
+        run: |
+          evidence_directory="${RUNNER_TEMP}/cannon-runtime-security-${RUNTIME_KIND}"
+          expected_directory="${RUNNER_TEMP}/cannon-runtime-expected-${RUNTIME_KIND}"
+          {
+            printf 'EVIDENCE_DIRECTORY=%s\n' "$evidence_directory"
+            printf 'EXPECTED_DIRECTORY=%s\n' "$expected_directory"
+          } >> "$GITHUB_ENV"
+          printf 'evidence_directory=%s\n' "$evidence_directory" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Resolve immutable image metadata
+        id: metadata
+        env:
+          PACKAGE_JSON: ${{ matrix.package_json }}
+        run: |
+          name="$(jq -er '.name' "$PACKAGE_JSON")"
+          version="$(jq -er '.version' "$PACKAGE_JSON")"
+          source_date_epoch="$(git show -s --format=%ct "$SOURCE_REVISION")"
+          created="$(date -u --date="@${source_date_epoch}" '+%Y-%m-%dT%H:%M:%SZ')"
+          test -n "$name"
+          test "$version" != "unknown"
+          test -n "$source_date_epoch"
+          test -n "$created"
+          {
+            echo "name=$name"
+            echo "version=$version"
+            echo "source_date_epoch=$source_date_epoch"
+            echo "created=$created"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build exact linux/amd64 image
+        env:
+          BUILD_CONTEXT: ${{ matrix.context }}
+          CREATED: ${{ steps.metadata.outputs.created }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          SOURCE_DATE_EPOCH: ${{ steps.metadata.outputs.source_date_epoch }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          docker buildx version
+          docker buildx build \
+            --build-arg "BUILD_DATE=${CREATED}" \
+            --build-arg "BUILD_REVISION=${SOURCE_REVISION}" \
+            --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
+            --build-arg "VERSION=${VERSION}" \
+            --file "$DOCKERFILE" \
+            --load \
+            --platform linux/amd64 \
+            --provenance=false \
+            --tag "$IMAGE_REF" \
+            "$BUILD_CONTEXT"
+
+      - name: Verify runtime contract
+        env:
+          EXPECTED_COMMAND: ${{ matrix.command }}
+          EXPECTED_CREATED: ${{ steps.metadata.outputs.created }}
+          EXPECTED_VERSION: ${{ steps.metadata.outputs.version }}
+          RUNTIME_KIND: ${{ matrix.runtime }}
+        run: |
+          .github/scripts/verify-runtime-image.sh \
+            "$IMAGE_REF" \
+            "$RUNTIME_KIND" \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            "$SOURCE_REVISION" \
+            "$EXPECTED_VERSION" \
+            "$EXPECTED_COMMAND" \
+            "$EXPECTED_CREATED"
+
+      - name: Generate independent expected bundle-input closure
+        if: matrix.runtime != 'safe-app-backend'
+        env:
+          RUNTIME_KIND: ${{ matrix.runtime }}
+        run: |
+          .github/scripts/generate-expected-runtime-sbom.sh \
+            "$PWD" \
+            "$SOURCE_REVISION" \
+            "$RUNTIME_KIND" \
+            "$EXPECTED_DIRECTORY/${RUNTIME_KIND}.cdx.json"
+
+      - name: Generate and scan complete runtime evidence
+        env:
+          COMPONENT_NAME: ${{ steps.metadata.outputs.name }}
+          COMPONENT_VERSION: ${{ steps.metadata.outputs.version }}
+          RUNTIME_KIND: ${{ matrix.runtime }}
+        run: |
+          if [[ "$RUNTIME_KIND" == "safe-app-backend" ]]; then
+            expected_bundle_input=absent
+          else
+            expected_bundle_input="$EXPECTED_DIRECTORY/${RUNTIME_KIND}.cdx.json"
+          fi
+          .github/scripts/scan-runtime-image.sh \
+            "$IMAGE_REF" \
+            "$RUNTIME_KIND" \
+            "$COMPONENT_NAME" \
+            "$COMPONENT_VERSION" \
+            "$EVIDENCE_DIRECTORY" \
+            "$expected_bundle_input"
+
+      - name: Record scan summary
+        if: always()
+        env:
+          RUNTIME_KIND: ${{ matrix.runtime }}
+        run: |
+          summary="${EVIDENCE_DIRECTORY}/scan-summary-${RUNTIME_KIND}.json"
+          if test -s "$summary"; then
+            {
+              echo "### ${RUNTIME_KIND}"
+              echo
+              echo '```json'
+              jq . "$summary"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Seal scan evidence manifest
+        if: always()
+        env:
+          RUNTIME_KIND: ${{ matrix.runtime }}
+        run: |
+          evidence_directory="$EVIDENCE_DIRECTORY"
+          test -d "$evidence_directory"
+          test ! -L "$evidence_directory"
+          evidence_directory="$(cd "$evidence_directory" && pwd -P)"
+          test -z "$(
+            find "$evidence_directory" \
+              -mindepth 1 \
+              -maxdepth 1 \
+              ! -type f \
+              -print \
+              -quit
+          )"
+          manifest_temp="$(mktemp "${evidence_directory}.SHA256SUMS.XXXXXX")"
+          cleanup_manifest() {
+            rm -f "$manifest_temp"
+          }
+          trap cleanup_manifest EXIT
+          (
+            cd "$evidence_directory"
+            find . \
+              -maxdepth 1 \
+              -type f \
+              ! -name SHA256SUMS \
+              -printf '%P\0' \
+              | sort -z \
+              | xargs -0 -r sha256sum \
+              > "$manifest_temp"
+            test -s "$manifest_temp"
+            sha256sum --check "$manifest_temp"
+          )
+          mv "$manifest_temp" "$evidence_directory/SHA256SUMS"
+          trap - EXIT
+
+      - name: Upload immutable scan evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          if-no-files-found: error
+          name: runtime-security-${{ matrix.runtime }}-${{ env.SOURCE_REVISION }}
+          path: ${{ steps.paths.outputs.evidence_directory }}
+          retention-days: 30
+
+  prepare-exact-digest-scans:
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.mode == 'candidate' || inputs.mode == 'inventory'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      has_scans: ${{ steps.request.outputs.has_scans }}
+      matrix: ${{ steps.request.outputs.matrix }}
+    env:
+      IMAGE_REF: ${{ inputs.image_ref }}
+      EXPECTED_REVISION: ${{ inputs.expected_revision }}
+      RUNTIME_KIND: ${{ inputs.runtime }}
+      TRUSTED_REF: ${{ github.ref }}
+      TRUSTED_REF_PROTECTED: ${{ github.ref_protected }}
+      TRUSTED_REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Validate trusted workflow ref
+        run: |
+          test "$TRUSTED_REPOSITORY" = "Reya-Labs/cannon"
+          test "$TRUSTED_REF" = "refs/heads/dev"
+          test "$TRUSTED_REF_PROTECTED" = "true"
+
+      - name: Checkout trusted verification policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve protected exact-digest inventory
+        id: request
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUEST_MODE: ${{ inputs.mode }}
+        run: |
+          if [[ "$EVENT_NAME" == "schedule" || "$REQUEST_MODE" == "inventory" ]]; then
+            test -z "$IMAGE_REF"
+            test -z "$EXPECTED_REVISION"
+            matrix="$(
+              node .github/scripts/validate-runtime-image-inventory.mjs \
+                .github/runtime-image-inventory.json
+            )"
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" && "$REQUEST_MODE" == "candidate" ]]; then
+            matrix="$(
+              node .github/scripts/validate-runtime-image-inventory.mjs \
+                --manual \
+                "$RUNTIME_KIND" \
+                "$IMAGE_REF" \
+                "$EXPECTED_REVISION"
+            )"
+          else
+            echo "unsupported exact-digest scan mode" >&2
+            exit 2
+          fi
+          jq -e '
+            type == "object" and
+            (keys == ["include"]) and
+            (.include | type) == "array"
+          ' <<<"$matrix" >/dev/null
+          has_scans="$(jq -r '(.include | length) > 0' <<<"$matrix")"
+          echo "Resolved $(jq -r '.include | length' <<<"$matrix") exact digest scan(s)."
+          {
+            echo "has_scans=$has_scans"
+            echo "matrix=$matrix"
+          } >> "$GITHUB_OUTPUT"
+
+  scan-pushed-digest:
+    needs: prepare-exact-digest-scans
+    if: needs.prepare-exact-digest-scans.outputs.has_scans == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare-exact-digest-scans.outputs.matrix) }}
+    permissions:
+      attestations: read
+      contents: read
+      packages: read
+    env:
+      EXPECTED_REVISION: ${{ matrix.expected_revision }}
+      IMAGE_REF: ${{ matrix.image_ref }}
+      RUNTIME_KIND: ${{ matrix.runtime }}
+      RUNTIME_SLOT: ${{ matrix.slot }}
+      SIGNER_DIGEST: ${{ matrix.signer_digest }}
+      SIGNER_WORKFLOW: ${{ matrix.signer_workflow }}
+      TRUSTED_REF: ${{ github.ref }}
+      TRUSTED_REF_PROTECTED: ${{ github.ref_protected }}
+      TRUSTED_REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Validate exact digest request and approved publisher
+        run: |
+          test "$TRUSTED_REPOSITORY" = "Reya-Labs/cannon"
+          test "$TRUSTED_REF" = "refs/heads/dev"
+          test "$TRUSTED_REF_PROTECTED" = "true"
+          case "$RUNTIME_KIND" in
+            safe-app-backend)
+              test "$SIGNER_WORKFLOW" = \
+                "Reya-Labs/cannon/.github/workflows/safe-app-backend-publish.yml"
+              ;;
+            *)
+              echo "runtime has no approved publisher workflow: $RUNTIME_KIND" >&2
+              exit 1
+              ;;
+          esac
+          case "$RUNTIME_SLOT" in
+            candidate|active|rollback-1|rollback-2) ;;
+            *)
+              echo "unsupported runtime inventory slot: $RUNTIME_SLOT" >&2
+              exit 1
+              ;;
+          esac
+          expected_prefix="ghcr.io/reya-labs/${RUNTIME_KIND}@sha256:"
+          case "$IMAGE_REF" in
+            "$expected_prefix"[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
+              ;;
+            *)
+              echo "image_ref must be the selected Reya image at an immutable sha256 digest" >&2
+              exit 1
+              ;;
+          esac
+          digest="${IMAGE_REF##*@sha256:}"
+          test "${#digest}" -eq 64
+          test -z "${digest//[0-9a-f]/}"
+          test "${#EXPECTED_REVISION}" -eq 40
+          test -z "${EXPECTED_REVISION//[0-9a-f]/}"
+          test "$SIGNER_DIGEST" = "$EXPECTED_REVISION"
+
+      - name: Configure isolated evidence paths
+        id: paths
+        run: |
+          evidence_directory="${RUNNER_TEMP}/cannon-runtime-security-${RUNTIME_KIND}-${RUNTIME_SLOT}"
+          expected_directory="${RUNNER_TEMP}/cannon-runtime-expected-${RUNTIME_KIND}-${RUNTIME_SLOT}"
+          {
+            printf 'EVIDENCE_DIRECTORY=%s\n' "$evidence_directory"
+            printf 'EXPECTED_DIRECTORY=%s\n' "$expected_directory"
+          } >> "$GITHUB_ENV"
+          printf 'evidence_directory=%s\n' "$evidence_directory" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Checkout trusted verification policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          path: policy
+          persist-credentials: false
+
+      - name: Checkout exact image source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: source
+          ref: ${{ env.EXPECTED_REVISION }}
+          persist-credentials: false
+
+      - name: Require source revision in protected dev history
+        run: |
+          test "$(git -C source rev-parse HEAD)" = "$EXPECTED_REVISION"
+          git -C policy cat-file -e "${EXPECTED_REVISION}^{commit}"
+          git -C policy merge-base --is-ancestor "$EXPECTED_REVISION" HEAD
+
+      - name: Log in to GHCR read-only
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Verify protected-dev build provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          provenance_directory="$(
+            mktemp -d "${RUNNER_TEMP}/cannon-provenance.XXXXXX"
+          )"
+          attestation_file="$(
+            printf '%s/attestation-%s.json' \
+              "$provenance_directory" \
+              "$RUNTIME_KIND"
+          )"
+          gh attestation verify "oci://${IMAGE_REF}" \
+            --repo "$TRUSTED_REPOSITORY" \
+            --signer-workflow "$SIGNER_WORKFLOW" \
+            --signer-digest "$SIGNER_DIGEST" \
+            --source-digest "$EXPECTED_REVISION" \
+            --source-ref "$TRUSTED_REF" \
+            --deny-self-hosted-runners \
+            --format json \
+            > "$attestation_file"
+          test -s "$attestation_file"
+          test -f "$attestation_file"
+          test ! -L "$attestation_file"
+          chmod 0444 "$attestation_file"
+          printf 'ATTESTATION_FILE=%s\n' "$attestation_file" >> "$GITHUB_ENV"
+
+      - name: Pull exact linux/amd64 digest
+        run: docker pull --platform linux/amd64 "$IMAGE_REF"
+
+      - name: Verify pushed image provenance and runtime contract
+        run: |
+          case "$RUNTIME_KIND" in
+            repo)
+              expected_command='["node","index.js"]'
+              package_json=source/packages/repo/package.json
+              ;;
+            indexer)
+              expected_command='["node","dist/registry/index.js"]'
+              package_json=source/packages/indexer/package.json
+              ;;
+            api)
+              expected_command='["node","index.js"]'
+              package_json=source/packages/api/package.json
+              ;;
+            safe-app-backend)
+              expected_command='["node","dist/server.js"]'
+              package_json=source/packages/safe-app-backend/package.json
+              ;;
+          esac
+          component_name="$(jq -er '.name' "$package_json")"
+          version="$(jq -er '.version' "$package_json")"
+          source_date_epoch="$(git -C source show -s --format=%ct "$EXPECTED_REVISION")"
+          created="$(date -u --date="@${source_date_epoch}" '+%Y-%m-%dT%H:%M:%SZ')"
+          test -n "$component_name"
+          test "$version" != "unknown"
+          test -n "$source_date_epoch"
+          test -n "$created"
+          policy/.github/scripts/verify-runtime-image.sh \
+            "$IMAGE_REF" \
+            "$RUNTIME_KIND" \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            "$EXPECTED_REVISION" \
+            "$version" \
+            "$expected_command" \
+            "$created"
+
+      - name: Generate independent expected bundle-input closure
+        if: matrix.runtime != 'safe-app-backend'
+        run: |
+          policy/.github/scripts/generate-expected-runtime-sbom.sh \
+            "$PWD/source" \
+            "$EXPECTED_REVISION" \
+            "$RUNTIME_KIND" \
+            "$EXPECTED_DIRECTORY/${RUNTIME_KIND}.cdx.json"
+
+      - name: Generate and scan complete pushed-digest evidence
+        run: |
+          case "$RUNTIME_KIND" in
+            repo)
+              package_json=source/packages/repo/package.json
+              ;;
+            indexer)
+              package_json=source/packages/indexer/package.json
+              ;;
+            api)
+              package_json=source/packages/api/package.json
+              ;;
+            safe-app-backend)
+              package_json=source/packages/safe-app-backend/package.json
+              ;;
+          esac
+          component_name="$(jq -er '.name' "$package_json")"
+          version="$(jq -er '.version' "$package_json")"
+          if [[ "$RUNTIME_KIND" == "safe-app-backend" ]]; then
+            expected_bundle_input=absent
+          else
+            expected_bundle_input="$EXPECTED_DIRECTORY/${RUNTIME_KIND}.cdx.json"
+          fi
+          policy/.github/scripts/scan-runtime-image.sh \
+            "$IMAGE_REF" \
+            "$RUNTIME_KIND" \
+            "$component_name" \
+            "$version" \
+            "$EVIDENCE_DIRECTORY" \
+            "$expected_bundle_input"
+
+      - name: Seal digest evidence manifest
+        if: always()
+        run: |
+          evidence_directory="$EVIDENCE_DIRECTORY"
+          test -d "$evidence_directory"
+          test ! -L "$evidence_directory"
+          evidence_directory="$(cd "$evidence_directory" && pwd -P)"
+          test -n "${ATTESTATION_FILE:-}"
+          test -s "$ATTESTATION_FILE"
+          test -f "$ATTESTATION_FILE"
+          test ! -L "$ATTESTATION_FILE"
+          attestation_destination="$(
+            printf '%s/attestation-%s.json' \
+              "$evidence_directory" \
+              "$RUNTIME_KIND"
+          )"
+          test ! -e "$attestation_destination"
+          test ! -L "$attestation_destination"
+          ln "$ATTESTATION_FILE" "$attestation_destination"
+          rm "$ATTESTATION_FILE"
+          rmdir "$(dirname "$ATTESTATION_FILE")"
+          test -z "$(
+            find "$evidence_directory" \
+              -mindepth 1 \
+              -maxdepth 1 \
+              ! -type f \
+              -print \
+              -quit
+          )"
+          manifest_temp="$(mktemp "${evidence_directory}.SHA256SUMS.XXXXXX")"
+          cleanup_manifest() {
+            rm -f "$manifest_temp"
+          }
+          trap cleanup_manifest EXIT
+          (
+            cd "$evidence_directory"
+            find . \
+              -maxdepth 1 \
+              -type f \
+              ! -name SHA256SUMS \
+              -printf '%P\0' \
+              | sort -z \
+              | xargs -0 -r sha256sum \
+              > "$manifest_temp"
+            test -s "$manifest_temp"
+            sha256sum --check "$manifest_temp"
+          )
+          mv "$manifest_temp" "$evidence_directory/SHA256SUMS"
+          trap - EXIT
+
+      - name: Upload immutable digest evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          if-no-files-found: error
+          name: pushed-runtime-security-${{ env.RUNTIME_KIND }}-${{ env.RUNTIME_SLOT }}-${{ env.EXPECTED_REVISION }}
+          path: ${{ steps.paths.outputs.evidence_directory }}
+          retention-days: 90

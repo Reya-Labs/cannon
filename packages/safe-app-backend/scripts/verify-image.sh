@@ -51,6 +51,11 @@ assert_label org.opencontainers.image.version "${EXPECTED_VERSION}"
 docker create --name "${container_name}" \
   --env EXPECTED_BUILD_REVISION \
   --env EXPECTED_SOURCE_DATE_EPOCH \
+  --network none \
+  --read-only \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --pids-limit 64 \
   --entrypoint /usr/local/bin/verify-runtime \
   "${image_ref}" >/dev/null
 docker start "${container_name}" >/dev/null
