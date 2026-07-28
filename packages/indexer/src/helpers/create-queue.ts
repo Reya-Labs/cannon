@@ -1,5 +1,6 @@
 import { Job as BullJob, Queue as BullQueue, Worker as BullWorker } from 'bullmq';
 import { parseRedisUrl } from './redis';
+import { createRetryableResourceCloser } from '../shutdown';
 
 export interface QueueOptions {
   redisUrl: string;
@@ -9,7 +10,12 @@ export interface QueueOptions {
 }
 
 export interface WorkerOptions {
+  autorun?: boolean;
   concurrency: number;
+}
+
+function safeJobId(value: string | undefined): string {
+  return value && value.length <= 128 && /^[A-Za-z0-9:_-]+$/.test(value) ? value : 'redacted';
 }
 
 export interface DefaultJobContext<JobName extends string, JobData = any> {
@@ -27,18 +33,22 @@ export interface QueueJobAttributes<JobName extends string, JobData = any> {
   opts?: { jobId: string };
 }
 
-export interface JobSchema<JobName extends string, JobData, JobContext extends DefaultJobContext<JobName, JobData>> {
+export interface JobActionSchema<JobName extends string, JobData, JobContext extends DefaultJobContext<JobName, JobData>> {
   name: JobName;
   action: (data: JobData, ctx: JobContext) => QueueJobAttributes<JobName, JobData>;
+}
+
+export interface JobHandlerSchema<JobName extends string, JobData, JobContext extends DefaultJobContext<JobName, JobData>> {
+  name: JobName;
   handler: (data: JobData, ctx: JobContext) => Promise<void>;
 }
 
-interface ParsedJobsSchemas<JobName extends string, JobData, JobContext extends DefaultJobContext<JobName, JobData>> {
-  jobs: JobSchema<JobName, JobData, JobContext>[];
+interface ParsedJobActions<JobName extends string, JobData, JobContext extends DefaultJobContext<JobName, JobData>> {
+  jobs: JobActionSchema<JobName, JobData, JobContext>[];
   ctx: JobContext;
 }
 
-export function createJobs<T extends JobSchema<string, any, DefaultJobContext<string, any>>, GivenJobContext>(
+export function createJobs<T extends JobActionSchema<string, any, DefaultJobContext<string, any>>, GivenJobContext>(
   jobs: T[],
   ctx: GivenJobContext = {} as GivenJobContext
 ) {
@@ -49,16 +59,15 @@ export function createJobs<T extends JobSchema<string, any, DefaultJobContext<st
   return {
     jobs,
     ctx: ctx as JobContext,
-  } satisfies ParsedJobsSchemas<JobName, JobData, JobContext>;
+  } satisfies ParsedJobActions<JobName, JobData, JobContext>;
 }
 
-export function createQueue<T extends ParsedJobsSchemas<string, any, DefaultJobContext<string, any>>>(
+export function createQueue<T extends ParsedJobActions<string, any, DefaultJobContext<string, any>>>(
   jobs: T,
   queueOpts: QueueOptions
 ) {
   type QueueJobName = T['jobs'][number]['name'];
   type QueueJobData = Parameters<T['jobs'][number]['action']>[0];
-  type QueueJob = BullJob<QueueJobData, void, QueueJobName>;
   type QueueContext = T['ctx'] & DefaultJobContext<QueueJobName, QueueJobData>;
 
   const connection = parseRedisUrl(queueOpts.redisUrl);
@@ -73,6 +82,11 @@ export function createQueue<T extends ParsedJobsSchemas<string, any, DefaultJobC
       },
     },
   });
+  queue.on('error', () => {
+    // BullMQ requires an error listener; keep connection details and job data out of logs.
+    // eslint-disable-next-line no-console
+    console.error(`[queue][${queueOpts.queueName}] Redis connection error`);
+  });
 
   const jobCtx = { ...jobs.ctx, queue, add, createBatch } as unknown as QueueContext;
 
@@ -80,7 +94,7 @@ export function createQueue<T extends ParsedJobsSchemas<string, any, DefaultJobC
     const actionCreator = jobs.jobs.find((j) => j.name === name)?.action;
     if (!actionCreator) throw new Error(`Unknown job name: ${name}`);
     const job = actionCreator(data, jobCtx);
-    if (!job) throw new Error(`Missing action response for job: ${name} ${data}`);
+    if (!job) throw new Error(`Missing action response for job: ${name}`);
     return job;
   }
 
@@ -105,13 +119,28 @@ export function createQueue<T extends ParsedJobsSchemas<string, any, DefaultJobC
   }
 
   const workers: BullWorker<QueueJobData, any, QueueJobName>[] = [];
-  function createWorker(workerOpts?: WorkerOptions) {
+  let closingStarted = false;
+  function createWorker(
+    jobHandlers: JobHandlerSchema<QueueJobName, QueueJobData, QueueContext>[],
+    workerOpts?: WorkerOptions
+  ) {
+    if (closingStarted) throw new Error('queue is closing');
+
+    const handlerNames = jobHandlers.map(({ name }) => name);
+    const missingHandlers = jobs.jobs.map(({ name }) => name).filter((name) => !handlerNames.includes(name as QueueJobName));
+    if (missingHandlers.length) {
+      throw new Error(`Missing queue handlers: ${missingHandlers.join(', ')}`);
+    }
+    if (new Set(handlerNames).size !== handlerNames.length) {
+      throw new Error('Duplicate queue handlers are not allowed');
+    }
+
     const concurrency = workerOpts?.concurrency || queueOpts?.defaultConcurrency || 1;
 
     const worker = new BullWorker<QueueJobData, any, QueueJobName>(
       queueOpts.queueName,
       async (job) => {
-        const jobDef = jobs.jobs.find((j) => j.name === job.name);
+        const jobDef = jobHandlers.find((candidate) => candidate.name === job.name);
 
         if (!jobDef) {
           throw new Error(`Unknown job name: ${job.name}`);
@@ -120,6 +149,7 @@ export function createQueue<T extends ParsedJobsSchemas<string, any, DefaultJobC
         await jobDef.handler(job.data, jobCtx);
       },
       {
+        autorun: workerOpts?.autorun ?? true,
         connection,
         concurrency,
       }
@@ -127,14 +157,21 @@ export function createQueue<T extends ParsedJobsSchemas<string, any, DefaultJobC
 
     workers.push(worker);
 
-    worker.on('completed', (job: QueueJob) => {
+    worker.on('error', () => {
       // eslint-disable-next-line no-console
-      console.log(`[worker][${queueOpts.queueName}] completed: `, job.name, job.data.cid);
+      console.error(`[worker][${queueOpts.queueName}] Redis connection error`);
     });
 
-    worker.on('failed', (job: QueueJob | undefined, err: Error) => {
+    worker.on('completed', (job) => {
       // eslint-disable-next-line no-console
-      console.log(`[worker][${queueOpts.queueName}] failed: `, job?.name, job?.data.cid, err);
+      console.log(`[worker][${queueOpts.queueName}] completed queue job ${safeJobId(job?.id)}`);
+    });
+
+    worker.on('failed', (job) => {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[worker][${queueOpts.queueName}] failed queue job ${safeJobId(job?.id)} (attempt ${job?.attemptsMade ?? 0})`
+      );
     });
 
     return worker;
@@ -155,9 +192,20 @@ export function createQueue<T extends ParsedJobsSchemas<string, any, DefaultJobC
     } while (pending > 0);
   }
 
-  async function close() {
-    await Promise.all(workers.map((w) => w.close()));
-    await queue.close();
+  let forceWorkerClose = false;
+  const closeResources = createRetryableResourceCloser(
+    () => [...workers, queue],
+    'queue cleanup failed',
+    (resource) =>
+      workers.includes(resource as BullWorker<QueueJobData, any, QueueJobName>)
+        ? (resource as BullWorker<QueueJobData, any, QueueJobName>).close(forceWorkerClose)
+        : resource.close()
+  );
+
+  async function close(forceWorkers = false) {
+    closingStarted = true;
+    forceWorkerClose ||= forceWorkers;
+    await closeResources();
   }
 
   return { queue, add, createBatch, createWorker, pendingCount, waitForIdle, close };

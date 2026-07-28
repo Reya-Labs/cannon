@@ -1,11 +1,11 @@
 import { createQueue as createQueueHelper } from '../helpers/create-queue';
-import { config } from '../config';
-import { pinningJobs } from './pinning';
+import type { QueueConfig } from '../queue-config';
+import { pinningJobContracts } from './contracts';
 
 export type Queue = ReturnType<typeof createQueue>;
 
-export function createQueue() {
-  return createQueueHelper(pinningJobs, {
+export function createQueue(config: QueueConfig) {
+  return createQueueHelper(pinningJobContracts, {
     redisUrl: config.REDIS_URL,
     queueName: config.QUEUE_NAME,
     retries: config.QUEUE_RETRIES,

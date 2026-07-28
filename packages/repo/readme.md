@@ -27,8 +27,9 @@ store rather than `CANNON_SETTINGS` or browser configuration.
 
 Run separate reader and writer workloads. The reader mounts only
 `POST|HEAD /api/v0/cat` and `/health`; it does not initialize Redis, load the API
-token, or mount the upload route. The writer mounts only `POST /api/v0/add` and
-`/health`. Route separation is a second boundary in addition to cloud IAM.
+token, or mount the upload route. The writer mounts `POST /api/v0/add`,
+`/health`, and authenticated `GET /health/write` for artifact-worker readiness.
+Route separation is a second boundary in addition to cloud IAM.
 Leave writer CORS disabled unless an explicitly reviewed browser publisher is
 required. Browser-facing readers should allow only the exact deployment
 origins; CLI and server-to-server requests do not require CORS.
@@ -104,6 +105,14 @@ API_TOKEN_SECRET=someSecret npx tsx src/scripts/validateToken.ts "someToken"
 Directory uploads (`?wrap-with-directory=true`) are deliberately unsupported
 and return 501. Reya hosts website bundles through its normal static-asset
 pipeline, so the artifact service does not require Pinata credentials.
+
+The isolated artifact worker uses
+`POST /api/v0/add?expected-cid=<CID>&local=true&to-files=/<CID>`. The writer
+independently computes the upload CID, returns 422 without writing when it does
+not match, and verifies identical bytes on replay. A matching `expected-cid`
+allows the authenticated worker to store non-package closure members such as
+on-chain metadata; ordinary uploads without it retain the existing package and
+Redis admission checks.
 
 ## Integrity failure recovery
 
