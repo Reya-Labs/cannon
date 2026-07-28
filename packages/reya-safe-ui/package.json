@@ -1,0 +1,17 @@
+{
+  "name": "@reya/cannon-safe-ui",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fail-closed static shell for the Reya Cannon signer",
+  "type": "module",
+  "packageManager": "pnpm@10.11.0",
+  "engines": {
+    "node": "22.23.1"
+  },
+  "scripts": {
+    "build": "node src/build.mjs",
+    "lint": "node scripts/lint.mjs",
+    "scan": "node scripts/scan-export.mjs dist",
+    "test": "node --test"
+  }
+}

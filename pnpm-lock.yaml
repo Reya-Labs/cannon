@@ -783,6 +783,8 @@ importers:
         specifier: ^0.11.0
         version: 0.11.0
 
+  packages/reya-safe-ui: {}
+
   packages/safe-app-backend:
     dependencies:
       express:

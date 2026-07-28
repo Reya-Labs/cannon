@@ -29,6 +29,27 @@ REDIS_URL=redis://127.0.0.1:6379 pnpm --filter backend test
 
 The integration suite requires a disposable Redis/Valkey instance and uses a unique key prefix per test. It exercises concurrent writers through independent Redis clients.
 
+## Image publication and activation
+
+Pull-request CI and registry publication are deliberately separate:
+
+- `.github/workflows/safe-app-backend.yml` is read-only and reusable. It installs, audits, lints, builds and tests the backend, builds the runtime image, scans it and runs positive and negative image-policy checks.
+- `.github/workflows/safe-app-backend-publish.yml` has only a `push` trigger for `dev`. It reuses the read-only CI workflow before the publishing job can receive write permissions. There is no manual or pull-request publication path.
+- The publishing job additionally requires the exact `Reya-Labs/cannon` repository, the protected `dev` ref, a successful CI dependency, the `cannon-image-publish` environment and repository variable `CANNON_SAFE_PUBLISH_ENABLED` set exactly to `true`. An absent variable is fail-closed.
+
+Do not set `CANNON_SAFE_PUBLISH_ENABLED=true` until all of these prerequisites are complete:
+
+1. PRO-729 has supplied the accepted runtime-base and vulnerability evidence.
+2. PRO-731 has installed the organization ruleset/required-workflow control from a protected source. The in-repository policy test is regression evidence, not the platform security boundary.
+3. `dev` is protected against direct/unreviewed pushes and requires the Safe backend checks.
+4. The `cannon-image-publish` environment exists, is limited to `dev`, has the approved required reviewers and does not permit an administrator bypass inconsistent with Reya policy.
+5. GHCR package ownership and job-token permissions have been verified without adding a long-lived registry credential.
+6. The exact head has passed the backend suite, image scan, runtime-content checks and local non-publishing image build.
+
+Set the repository variable last. To stop new publications, remove it or set it to any value other than lowercase `true`; already published manifests remain immutable deployment inputs.
+
+Image metadata is derived from source: the package version comes from this package's `package.json`, the revision is the full checked-out Git commit, and both the OCI creation time and `SOURCE_DATE_EPOCH` come from that commit's timestamp. Verification rejects label drift, revision drift, package managers, TypeScript and other build/test toolchains in the runtime image. Deploy only the workflow's `ghcr.io/reya-labs/safe-app-backend@sha256:...` output, never a mutable tag.
+
 ## Required configuration
 
 | Variable            | Contract                                                                                                                                                   |
