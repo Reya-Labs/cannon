@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-floating-promises -- node:test registration is intentionally synchronous. */
+/* eslint-disable @typescript-eslint/no-floating-promises, no-console -- node:test registration is synchronous and console capture verifies redaction. */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import * as rkey from '../src/db';
