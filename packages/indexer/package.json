@@ -6,9 +6,17 @@
   "private": true,
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "bundle": "pnpm run bundle:registry && pnpm run bundle:worker",
+    "bundle:registry": "rm -rf ./dist/registry && ncc build src/index.ts --transpile-only -o dist/registry && node scripts/assert-registry-bundle.cjs dist/registry",
+    "bundle:worker": "rm -rf ./dist/artifact-worker && ncc build src/worker.ts --transpile-only -o dist/artifact-worker",
+    "assert:registry-inbox-dormant": "node --require ts-node/register scripts/assert-registry-inbox-dormant.ts",
     "clean": "rm -rf ./dist",
     "test": "NODE_ENV=test node --test --require ts-node/register test/*.test.ts",
-    "start": "node dist/index.js",
+    "test:registry-inbox": "bash scripts/test-registry-inbox-integration.sh",
+    "start": "node dist/registry/index.js",
+    "start-artifact-worker": "node dist/artifact-worker/index.js",
+    "start:compiled": "node dist/index.js",
+    "start-artifact-worker:compiled": "node dist/worker.js",
     "start-4byte-directory": "node dist/4byte-directory.js",
     "dev": "ts-node src/index.ts"
   },
@@ -21,8 +29,6 @@
   },
   "dependencies": {
     "@usecannon/builder": "workspace:*",
-    "@usecannon/cli": "workspace:*",
-    "@usecannon/repo": "workspace:*",
     "bullmq": "^5.31.2",
     "dotenv": "^16.4.5",
     "envalid": "^8.0.0",
@@ -34,6 +40,7 @@
     "@types/connect-busboy": "^1.0.3",
     "@types/lodash": "^4.17.16",
     "@types/morgan": "^1.9.9",
+    "@vercel/ncc": "0.44.1",
     "ts-node": "^10.9.2"
   }
 }

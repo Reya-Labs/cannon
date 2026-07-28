@@ -1,25 +1,48 @@
-import { Router } from 'express';
+import { type Request, type RequestHandler, Router } from 'express';
 import basicAuth from 'express-basic-auth';
 import prometheus from 'express-prom-bundle';
-import { config } from '../config';
+import { Registry } from 'prom-client';
+import type { ApiConfig } from '../config';
 
-const metrics: Router = Router();
+function normalizeMetricPath(req: Request): string {
+  return typeof req.route?.path === 'string' ? req.route.path : '/unmatched';
+}
 
-metrics.get(
-  '/metrics',
-  basicAuth({
+function normalizeMetricLabels(labels: Record<string, number | string>): void {
+  if (typeof labels.method === 'string' && !['GET', 'HEAD', 'OPTIONS'].includes(labels.method)) {
+    labels.method = 'OTHER';
+  }
+}
+
+/**
+ * Creates the metrics route on the API listener using ApiConfig's
+ * METRICS_USER and METRICS_PASSWORD for HTTP Basic authentication.
+ *
+ * Route and method normalization keep label cardinality finite.
+ */
+export function createMetricsRouter(config: ApiConfig): Router {
+  const metrics = Router();
+  const registry = new Registry();
+
+  // express-basic-auth still resolves the workspace's hoisted Express 4
+  // declarations; confine that type mismatch to its runtime-compatible boundary.
+  const authenticateMetrics = basicAuth({
+    challenge: true,
     users: { [config.METRICS_USER]: config.METRICS_PASSWORD },
-  })
-);
+  }) as unknown as RequestHandler;
+  metrics.use('/metrics', authenticateMetrics);
 
-const metricsMiddleware = prometheus({
-  customLabels: { serviceName: 'cannon-api' },
-  includeMethod: true,
-  includePath: true,
-  metricsPath: '/metrics',
-  normalizePath: [['^/packages/.*', '/customer/#packageName']],
-});
+  metrics.use(
+    prometheus({
+      customLabels: { serviceName: 'cannon-api' },
+      includeMethod: true,
+      includePath: true,
+      metricsPath: '/metrics',
+      normalizePath: normalizeMetricPath,
+      promRegistry: registry,
+      transformLabels: normalizeMetricLabels,
+    })
+  );
 
-metrics.use(metricsMiddleware);
-
-export { metrics };
+  return metrics;
+}

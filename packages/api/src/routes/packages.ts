@@ -1,6 +1,6 @@
 import { Request, Response, Router } from 'express';
 import { BadRequestError, NotFoundError } from '../errors';
-import { isChainId, isFullPackageRef, isPackageName } from '../helpers';
+import { isChainId, isFullPackageRef, isPackageName, parseChainIds } from '../helpers';
 import { findPackageByFullRef, findPackagesByName } from '../queries/packages';
 
 const packages: Router = Router();
@@ -12,6 +12,7 @@ packages.get('/packages/:packageName', async (req: Request, res: Response) => {
 
   const result = await findPackagesByName({
     packageName: req.params.packageName,
+    chainIds: parseChainIds(req.query.chainIds),
   });
 
   res.json({

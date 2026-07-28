@@ -1,12 +1,23 @@
 import { Server } from 'node:http';
 import cors from 'cors';
-import express, { Express } from 'express';
+import express, { Express, RequestHandler } from 'express';
 import morgan from 'morgan';
 import { rateLimit } from 'express-rate-limit';
 import helmet from 'helmet';
 import * as routes from './routes';
 
 import type { RepoContext } from './types';
+
+const SAFE_REQUEST_LOG_FORMAT =
+  ':remote-addr - :remote-user :method :safe-path HTTP/:http-version :status :res[content-length] - :response-time ms';
+
+morgan.token('safe-path', (req) => {
+  try {
+    return new URL(req.url ?? '/', 'http://repo.invalid').pathname;
+  } catch {
+    return '/invalid-request-path';
+  }
+});
 
 export function createApp(ctx: RepoContext): { app: Express; start: () => Promise<Server> } {
   const app = express();
@@ -24,7 +35,8 @@ export function createApp(ctx: RepoContext): { app: Express; start: () => Promis
     app.enable('trust proxy');
   }
 
-  app.use(morgan('short'));
+  // Query strings can contain unvalidated expected CIDs; never copy them into logs.
+  app.use(morgan(SAFE_REQUEST_LOG_FORMAT));
   if (corsAllowedOrigins.length > 0) {
     app.use(
       cors({
@@ -37,15 +49,16 @@ export function createApp(ctx: RepoContext): { app: Express; start: () => Promis
 
   app.get('/favicon.ico', (req, res) => res.status(204));
 
-  app.use(
-    rateLimit({
-      windowMs: ctx.config.RATE_LIMIT_WINDOW,
-      limit: ctx.config.RATE_LIMIT_MAX,
-      standardHeaders: 'draft-7',
-      legacyHeaders: false,
-      validate: { trustProxy: !ctx.config.TRUST_PROXY },
-    })
-  );
+  // The workspace also contains Express 5 types; keep this beta-Express service
+  // on its local RequestHandler boundary until its separate runtime upgrade.
+  const limiter = rateLimit({
+    windowMs: ctx.config.RATE_LIMIT_WINDOW,
+    limit: ctx.config.RATE_LIMIT_MAX,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    validate: { trustProxy: !ctx.config.TRUST_PROXY },
+  }) as unknown as RequestHandler;
+  app.use(limiter);
 
   if (writerEnabled) {
     if (!ctx.rdb || !ctx.objectStoreWrite) {
@@ -71,6 +84,7 @@ export function createApp(ctx: RepoContext): { app: Express; start: () => Promis
 
   app.use(
     routes.health({
+      config: ctx.config,
       rdb: ctx.rdb,
       objectStoreRead: ctx.objectStoreRead,
       objectStoreWrite: ctx.objectStoreWrite,

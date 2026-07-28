@@ -3,6 +3,7 @@ import { AggregateGroupByReducers, AggregateSteps } from 'redis';
 import * as viem from 'viem';
 import * as keys from '../db/keys';
 import { isChainId, isContractName } from '../helpers';
+import { warnMalformedDocument } from '../logging';
 import { useRedis } from '../redis';
 import { ApiContract } from '../types';
 
@@ -17,7 +18,7 @@ function _parseAggregateResult(doc: ContractQueryResult) {
   return doc;
 }
 
-async function _aggregateContracts(query: string): Promise<ContractQueryResult[]> {
+async function _aggregateContracts(query: string, limit: number): Promise<ContractQueryResult[]> {
   const redis = await useRedis();
 
   const data: ContractQueryResult[] = [];
@@ -33,7 +34,13 @@ async function _aggregateContracts(query: string): Promise<ContractQueryResult[]
           property: '@contractName',
         },
       },
+      {
+        type: AggregateSteps.LIMIT,
+        from: 0,
+        size: limit,
+      },
     ],
+    TIMEOUT: 1_000,
   })) as {
     total: number;
     results: ContractQueryResult[];
@@ -43,12 +50,7 @@ async function _aggregateContracts(query: string): Promise<ContractQueryResult[]
     const parsed = _parseAggregateResult(doc);
 
     if (!parsed) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        new Error(
-          `Could not parse "${doc && JSON.stringify(doc)}" on query "FT.AGGREGATE ${keys.RKEY_ABI_SEARCHABLE} ${query}"`
-        )
-      );
+      warnMalformedDocument('contract');
       continue;
     }
 
@@ -58,8 +60,18 @@ async function _aggregateContracts(query: string): Promise<ContractQueryResult[]
   return data;
 }
 
-async function _queryContracts(params: { query: string; limit?: number }) {
-  const results = await _aggregateContracts(params.query);
+/**
+ * Applies an optional chain constraint to a complete RediSearch contract query.
+ *
+ * The base query is grouped so an OR expression cannot escape the chain
+ * constraint through RediSearch operator precedence.
+ */
+export function scopeContractQuery(query: string, chainIds?: number[]): string {
+  return chainIds?.length ? `(${query}),@chainId:{${chainIds.join('|')}}` : query;
+}
+
+async function _queryContracts(params: { query: string; limit?: number; chainIds?: number[] }) {
+  const results = await _aggregateContracts(scopeContractQuery(params.query, params.chainIds), params.limit ?? 20);
 
   const data = results.map((doc) => {
     const ref = new PackageReference(doc.package);
@@ -83,14 +95,19 @@ async function _queryContracts(params: { query: string; limit?: number }) {
   };
 }
 
-export async function findContractsByAddress(params: { address: viem.Address; limit: number }) {
+export async function findContractsByAddress(params: { address: viem.Address; limit: number; chainIds?: number[] }) {
   const contractAddress = viem.getAddress(params.address);
-  return _queryContracts({ query: `@address:{${contractAddress}}`, limit: params.limit });
+  return _queryContracts({
+    query: `@address:{${contractAddress}}`,
+    limit: params.limit,
+    chainIds: params.chainIds,
+  });
 }
 
-export async function searchContracts(params: { query: string; limit: number }) {
+export async function searchContracts(params: { query: string; limit: number; chainIds?: number[] }) {
   return _queryContracts({
     query: `@contractName:'${params.query}' | @contractName:${params.query}* | @contractName:*${params.query}*`,
     limit: params.limit,
+    chainIds: params.chainIds,
   });
 }

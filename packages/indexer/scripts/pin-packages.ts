@@ -1,11 +1,10 @@
 import { extractValidCid } from '@usecannon/builder';
-import { createQueue } from '../src/queue';
+import { startArtifactWorker } from '../src/worker';
 
 async function main() {
   const cids = process.argv.slice(2).map(extractValidCid).filter(Boolean);
 
-  const queue = createQueue();
-  queue.createWorker();
+  const { queue } = await startArtifactWorker(process.env, { waitUntilReady: true });
 
   const batch = queue.createBatch();
   for (const cid of cids) batch.add('PIN_PACKAGE', { cid });

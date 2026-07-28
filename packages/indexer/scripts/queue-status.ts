@@ -1,7 +1,8 @@
 import { createQueue } from '../src/queue';
+import { loadQueueConfig } from '../src/queue-config';
 
 async function main() {
-  const queue = createQueue();
+  const queue = createQueue(loadQueueConfig(process.env));
   const counts = await queue.queue.getJobCounts();
 
   // eslint-disable-next-line no-console

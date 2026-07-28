@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import connectBusboy from 'connect-busboy';
-import { getContentCID, getIpfsCid, uncompress } from '@usecannon/builder/dist/src/ipfs';
+import { getContentCID, getIpfsCid, parseIpfsCid, uncompress } from '@usecannon/builder/dist/src/ipfs';
 import { RKEY_FRESH_UPLOAD_HASHES, RKEY_PKG_HASHES } from '../db';
 import { InvalidUploadError, readRequestFile, UploadTooLargeError } from '../helpers/read-request-file';
 import { DeploymentInfo } from '@usecannon/builder';
@@ -32,7 +32,7 @@ async function readUpload(req: RepoRequest, res: Response, ctx: AddContext) {
       return null;
     }
 
-    console.error('upload read error', err);
+    console.error('upload read failed');
     res.status(400).end('invalid upload data');
     return null;
   }
@@ -44,6 +44,17 @@ async function handleFileUpload(req: RepoRequest, res: Response, ctx: AddContext
   if (!file) return;
 
   const cid = await getContentCID(file);
+  const expectedCidQuery = req.query['expected-cid'];
+  if (Array.isArray(expectedCidQuery)) {
+    return res.status(400).end('expected-cid must be provided once');
+  }
+  const expectedCid = expectedCidQuery === undefined ? null : parseIpfsCid(expectedCidQuery);
+  if (expectedCidQuery !== undefined && !expectedCid) {
+    return res.status(400).end('invalid expected-cid');
+  }
+  if (expectedCid && expectedCid !== cid) {
+    return res.status(422).end('upload CID does not match expected CID');
+  }
 
   const exists = await ctx.objectStoreWrite.objectExists(cid);
 
@@ -62,7 +73,9 @@ async function handleFileUpload(req: RepoRequest, res: Response, ctx: AddContext
   const now = Math.floor(Date.now() / 1000) + RKEY_FRESH_GRACE_PERIOD;
 
   const isSavable =
-    (await ctx.rdb.zScore(RKEY_FRESH_UPLOAD_HASHES, cid)) !== null || (await ctx.rdb.zScore(RKEY_PKG_HASHES, cid)) !== null;
+    expectedCid === cid ||
+    (await ctx.rdb.zScore(RKEY_FRESH_UPLOAD_HASHES, cid)) !== null ||
+    (await ctx.rdb.zScore(RKEY_PKG_HASHES, cid)) !== null;
 
   // if IPFS hash is not already allowed, lets see if this is a cannon package
   if (!isSavable) {
@@ -72,14 +85,14 @@ async function handleFileUpload(req: RepoRequest, res: Response, ctx: AddContext
       const miscIpfsHash = getIpfsCid(pkgData.miscUrl);
 
       if (!miscIpfsHash) {
-        throw new Error(`Invalid miscUrl in package data for "${cid}": "${pkgData.miscUrl}"`);
+        throw new Error(`Invalid miscUrl in package data for "${cid}"`);
       }
 
       // as a special step here, we also save the misc url (we dont want to save it anywhere else)
       await ctx.rdb.zAdd(RKEY_FRESH_UPLOAD_HASHES, { score: now, value: miscIpfsHash }, { NX: true });
     } catch (err) {
       // pkg is not savable
-      console.log('cannon package reading fail', err);
+      console.log('cannon package upload rejected');
       return res.status(400).end('does not appear to be cannon package');
     }
   }
@@ -90,8 +103,8 @@ async function handleFileUpload(req: RepoRequest, res: Response, ctx: AddContext
   try {
     await ctx.objectStoreWrite.putObject(cid, file);
     return res.json({ Hash: cid }).end();
-  } catch (err) {
-    console.error('cannon package upload to object storage failed', err);
+  } catch {
+    console.error('cannon package upload to object storage failed');
     return res.status(500).end('file write error');
   }
 }
