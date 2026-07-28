@@ -1,0 +1,82 @@
+name: Reya Safe UI
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+  push:
+    branches:
+      - dev
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reya-safe-ui:
+    name: Build and verify disabled signer shell
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: reya-safe-ui-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          cache: pnpm
+          cache-dependency-path: packages/reya-safe-ui/pnpm-lock.yaml
+      - run: pnpm --dir packages/reya-safe-ui --ignore-workspace install --frozen-lockfile --ignore-scripts
+      - run: pnpm --dir packages/reya-safe-ui --ignore-workspace lint
+      - run: pnpm --dir packages/reya-safe-ui --ignore-workspace test
+      - name: Build the disabled Reya profile
+        run: pnpm --dir packages/reya-safe-ui --ignore-workspace build
+        env:
+          REYA_SAFE_UI_ACTIVATION: disabled
+          REYA_SAFE_UI_BUILD_SHA: ${{ github.sha }}
+          REYA_SAFE_UI_CHAIN_ID: '1729'
+          REYA_SAFE_UI_PROFILE: reya-mainnet
+      - name: Reject undeclared files and hosted runtime dependencies
+        run: pnpm --dir packages/reya-safe-ui --ignore-workspace scan
+      - name: Capture tested release metadata
+        id: release
+        working-directory: packages/reya-safe-ui
+        run: |
+          {
+            echo "asset_digest=$(jq -r '.export.assetDigest' dist/release.json)"
+            echo "config_digest=$(jq -r '.build.configDigest' dist/release.json)"
+            echo "source_digest=$(jq -r '.build.sourceDigest' dist/release.json)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Upload the exact tested export
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: reya-safe-ui-${{ github.sha }}
+          path: packages/reya-safe-ui/dist
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
+          overwrite: false
+          include-hidden-files: false
+      - name: Record immutable release evidence
+        env:
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+          ASSET_DIGEST: ${{ steps.release.outputs.asset_digest }}
+          CONFIG_DIGEST: ${{ steps.release.outputs.config_digest }}
+          SOURCE_DIGEST: ${{ steps.release.outputs.source_digest }}
+        run: |
+          {
+            echo '## Disabled Reya Safe UI'
+            echo
+            echo "- Git revision: \`${GITHUB_SHA}\`"
+            echo "- Source digest: \`${SOURCE_DIGEST}\`"
+            echo "- Configuration digest: \`${CONFIG_DIGEST}\`"
+            echo "- Asset digest: \`${ASSET_DIGEST}\`"
+            echo "- GitHub artifact digest: \`${ARTIFACT_DIGEST}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
