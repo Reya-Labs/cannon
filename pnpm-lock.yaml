@@ -277,11 +277,11 @@ importers:
         specifier: ^8.14.1
         version: 8.15.0
       axios:
-        specifier: ^1.9.0
-        version: 1.9.0(debug@4.4.0)
+        specifier: 1.18.1
+        version: 1.18.1(debug@4.4.3)
       axios-retry:
         specifier: ^4.5.0
-        version: 4.5.0(axios@1.9.0)
+        version: 4.5.0(axios@1.18.1)
       buffer:
         specifier: ^6.0.3
         version: 6.0.3
@@ -290,19 +290,19 @@ importers:
         version: 4.1.2
       debug:
         specifier: ^4.4.0
-        version: 4.4.0(supports-color@8.1.1)
+        version: 4.4.3(supports-color@8.1.1)
       deep-freeze:
         specifier: ^0.0.1
         version: 0.0.1
       form-data:
-        specifier: ^4.0.2
-        version: 4.0.2
+        specifier: 4.0.6
+        version: 4.0.6
       fuse.js:
         specifier: ^7.1.0
         version: 7.1.0
       lodash:
-        specifier: ^4.17.21
-        version: 4.17.21
+        specifier: 4.18.1
+        version: 4.18.1
       promise-events:
         specifier: ^0.2.4
         version: 0.2.4
@@ -559,8 +559,8 @@ importers:
         specifier: ^8.0.0
         version: 8.0.0
       lodash:
-        specifier: ^4.17.21
-        version: 4.17.21
+        specifier: 4.18.1
+        version: 4.18.1
       redis:
         specifier: ^4.6.13
         version: 4.7.0
@@ -17922,6 +17922,21 @@ packages:
   jsonwebtoken@9.0.3:
     resolution: {integrity: sha512-MT/xP0CrubFRNLNKvxJ2BYfy53Zkm++5bX9dtuPbqAeQpTVe0MQTFhao8+Cp//EmJp244xt6Drw/GVEGCUj40g==}
     engines: {node: '>=12', npm: '>=6'}
+  axios@1.18.1:
+    resolution: {integrity: sha512-3nTvFlvpn9Zu/RkHUqtc7/+al4UpRW5az71ap5zccp6e8RAYEzhMTecX8Dz1wWDYrPpUoB1HAQEGEAEvUr7S9g==}
+  follow-redirects@1.16.0:
+    resolution: {integrity: sha512-y5rN/uOsadFT/JfYwhxRS5R7Qce+g3zG97+JrtFZlC9klX/W5hD7iiLzScI4nZqUS7DNUdhPgw4xI8W2LuXlUw==}
+    engines: {node: '>=4.0'}
+    peerDependencies:
+      debug: '*'
+    peerDependenciesMeta:
+      debug:
+        optional: true
+  lodash@4.18.1:
+    resolution: {integrity: sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==}
+  proxy-from-env@2.1.0:
+    resolution: {integrity: sha512-cJ+oHTW1VAEa8cJslgmUZrc+sjRKgAKl3Zyse6+PV38hZe/V6Z14TbCuXcan9F9ghlz4QrFr2c92TNF82UkYHA==}
+    engines: {node: '>=10'}
 snapshots:
 
   '@adobe/css-tools@4.4.2': {}
@@ -40282,3 +40297,26 @@ snapshots:
       lodash.once: 4.1.1
       ms: 2.1.3
       semver: 7.8.3
+  axios-retry@4.5.0(axios@1.18.1):
+    dependencies:
+      axios: 1.18.1(debug@4.4.3)
+      is-retry-allowed: 2.2.0
+  axios@1.18.1(debug@4.4.3):
+    dependencies:
+      follow-redirects: 1.16.0(debug@4.4.3)
+      form-data: 4.0.6
+      https-proxy-agent: 5.0.1
+      proxy-from-env: 2.1.0
+    transitivePeerDependencies:
+      - debug
+      - supports-color
+  debug@4.4.3(supports-color@8.1.1):
+    dependencies:
+      ms: 2.1.3
+    optionalDependencies:
+      supports-color: 8.1.1
+  follow-redirects@1.16.0(debug@4.4.3):
+    optionalDependencies:
+      debug: 4.4.3(supports-color@8.1.1)
+  lodash@4.18.1: {}
+  proxy-from-env@2.1.0: {}
