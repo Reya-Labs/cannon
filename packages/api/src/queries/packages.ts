@@ -1,90 +1,142 @@
 import { PackageReference } from '@usecannon/builder';
 import { distance } from 'fastest-levenshtein';
-import { AggregateGroupByReducers, AggregateSteps } from 'redis';
+import { AggregateGroupByReducers, AggregateSteps, type RedisClientType } from 'redis';
 import * as keys from '../db/keys';
 import { findPackageByTag, transformPackage, transformPackageWithTag } from '../db/transformers';
 import { NotFoundError, ServerError } from '../errors';
 import { isRedisTagOfPackage, parsePackageName, parseTextQuery } from '../helpers';
+import { warnMalformedDocument } from '../logging';
 import { useRedis } from '../redis';
 import { ApiDocument, ApiNamespace, ApiPackage, RedisDocument, RedisPackage, RedisTag } from '../types';
-import { getChainIds } from './chains';
+import { getChainIds, MAX_CHAIN_RESULTS } from './chains';
 
 const DEFAULT_LIMIT = 500;
+export const MAX_NAMESPACE_RESULTS = 100;
 
-async function _queryPackages(params: { query: string; limit?: number; includeNamespaces?: boolean }) {
-  const redis = await useRedis();
-  const batch = redis.multi();
+function parseNamespaceCount(value: unknown): number | undefined {
+  const normalized =
+    typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : typeof value === 'string' ? value : '';
+  if (!/^[1-9][0-9]*$/.test(normalized)) return undefined;
 
-  batch.ft.search(keys.RKEY_PACKAGE_SEARCHABLE, params.query, {
-    SORTBY: { BY: 'timestamp', DIRECTION: 'DESC' },
-    LIMIT: { from: 0, size: params.limit || DEFAULT_LIMIT },
-  });
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
 
-  if (params.includeNamespaces) {
-    batch.ft.aggregate(keys.RKEY_PACKAGE_SEARCHABLE, params.query, {
-      STEPS: [
-        {
-          type: AggregateSteps.GROUPBY,
-          properties: '@name',
-          REDUCE: {
-            type: AggregateGroupByReducers.COUNT,
-            AS: 'count',
+export function createPackageQueryExecutor(getRedis: () => Promise<RedisClientType> = useRedis) {
+  return async function queryPackages(params: {
+    query: string;
+    limit?: number;
+    includeNamespaces?: boolean;
+    includePackages?: boolean;
+  }) {
+    const redis = await getRedis();
+    const batch = redis.multi();
+    const namespaceLimit = Math.min(params.limit ?? DEFAULT_LIMIT, MAX_NAMESPACE_RESULTS);
+
+    if (params.includePackages !== false) {
+      batch.ft.search(keys.RKEY_PACKAGE_SEARCHABLE, params.query, {
+        SORTBY: { BY: 'timestamp', DIRECTION: 'DESC' },
+        LIMIT: { from: 0, size: params.limit || DEFAULT_LIMIT },
+        TIMEOUT: 1_000,
+      });
+    }
+
+    if (params.includeNamespaces) {
+      batch.ft.aggregate(keys.RKEY_PACKAGE_SEARCHABLE, params.query, {
+        STEPS: [
+          {
+            type: AggregateSteps.GROUPBY,
+            properties: '@name',
+            REDUCE: {
+              type: AggregateGroupByReducers.COUNT,
+              AS: 'count',
+            },
           },
-        },
-      ],
-    });
-  }
-
-  const [packagesResults, namespacesResults] = (await batch.exec()) as any[];
-
-  const data: ApiDocument[] = [];
-
-  if (!packagesResults) {
-    throw new ServerError('Could not connect to packages');
-  }
-
-  if (namespacesResults) {
-    for (const namespace of namespacesResults.results) {
-      if (!namespace.name) continue;
-
-      data.push({
-        type: 'namespace',
-        name: namespace.name,
-        count: namespace.count,
-      } satisfies ApiNamespace);
+          {
+            type: AggregateSteps.LIMIT,
+            from: 0,
+            size: namespaceLimit,
+          },
+        ],
+        TIMEOUT: 1_000,
+      });
     }
-  }
 
-  for (const { value } of packagesResults.documents) {
-    const item = value as unknown as RedisDocument;
+    const results = (await batch.exec()) as any[];
+    let resultIndex = 0;
+    const packagesResults = params.includePackages !== false ? results[resultIndex++] : undefined;
+    const namespacesResults = params.includeNamespaces ? results[resultIndex] : undefined;
 
-    if (item.type === 'package') {
-      data.push(transformPackage(item));
-    } else if (item.type === 'tag') {
-      const pkg = findPackageByTag(packagesResults.documents as any, item);
+    const data: ApiDocument[] = [];
 
-      if (!pkg) {
-        // eslint-disable-next-line no-console
-        console.warn(new Error(`Package not found for tag "${JSON.stringify(item)}"`));
-        continue;
+    if (params.includePackages !== false && !packagesResults) {
+      throw new ServerError('Could not connect to packages');
+    }
+
+    if (namespacesResults) {
+      const namespaceDocuments = Array.isArray(namespacesResults.results)
+        ? namespacesResults.results.slice(0, namespaceLimit)
+        : [];
+      for (const namespace of namespaceDocuments) {
+        if (!namespace.name) continue;
+        const count = parseNamespaceCount(namespace.count);
+        if (count === undefined) {
+          warnMalformedDocument('namespace');
+          continue;
+        }
+
+        data.push({
+          type: 'namespace',
+          name: namespace.name,
+          count,
+        } satisfies ApiNamespace);
       }
-
-      data.push(transformPackageWithTag(pkg, item));
     }
-  }
 
-  return {
-    total: packagesResults.total + (namespacesResults?.total || 0),
-    data,
-  } satisfies {
-    total: number;
-    data: ApiDocument[];
+    for (const { value } of packagesResults?.documents ?? []) {
+      const item = value as unknown as RedisDocument;
+
+      if (item.type === 'package') {
+        const pkg = transformPackage(item);
+        if (!pkg) {
+          warnMalformedDocument('package');
+          continue;
+        }
+        data.push(pkg);
+      } else if (item.type === 'tag') {
+        const pkg = findPackageByTag(packagesResults.documents as any, item);
+
+        if (!pkg) {
+          warnMalformedDocument('tag');
+          continue;
+        }
+
+        const taggedPackage = transformPackageWithTag(pkg, item);
+        if (!taggedPackage) {
+          warnMalformedDocument('tag');
+          continue;
+        }
+        data.push(taggedPackage);
+      }
+    }
+
+    return {
+      total: data.length,
+      data,
+    } satisfies {
+      total: number;
+      data: ApiDocument[];
+    };
   };
 }
 
-export async function findPackagesByName(params: { packageName: string }) {
+const queryPackages = createPackageQueryExecutor();
+
+export async function findPackagesByName(params: { packageName: string; chainIds?: number[] }) {
   const packageName = parsePackageName(params.packageName);
-  const results = await _queryPackages({ query: `@exactName:{${packageName}}` });
+  const queries = [`@exactName:{${packageName}}`];
+  if (params.chainIds?.length) queries.push(`@chainId:{${params.chainIds.join('|')}}`);
+  const results = await queryPackages({ query: queries.join(',') });
 
   if (!results.total) {
     throw new NotFoundError(`Package "${packageName}" not found`);
@@ -104,64 +156,111 @@ export async function findPackageByFullRef(params: { fullPackageRef: string; cha
   if (!tagDoc?.name) return null;
 
   if (tagDoc.type === 'package') {
-    return transformPackage(tagDoc);
+    const pkg = transformPackage(tagDoc);
+    if (!pkg) warnMalformedDocument('package');
+    return pkg ?? null;
   }
 
   if (tagDoc.type !== 'tag') {
     throw new Error(`Invalid data found when looking at "${queryKey}"`);
   }
 
-  const packageRef = PackageReference.from(tagDoc.name, tagDoc.versionOfTag, tagDoc.preset);
+  let packageRef: PackageReference;
+  try {
+    packageRef = PackageReference.from(tagDoc.name, tagDoc.versionOfTag, tagDoc.preset);
+  } catch {
+    warnMalformedDocument('tag');
+    return null;
+  }
   const packageDoc = (await redis.hGetAll(
     `${keys.RKEY_PACKAGE_SEARCHABLE}:${packageRef.fullPackageRef}#${tagDoc.chainId}`
   )) as unknown as RedisPackage;
 
   if (!packageDoc?.name) return null;
 
-  return transformPackageWithTag(packageDoc, tagDoc);
+  const pkg = transformPackageWithTag(packageDoc, tagDoc);
+  if (!pkg) warnMalformedDocument('tag');
+  return pkg ?? null;
 }
 
-export async function findPackagesByPartialRef(params: { packageRef: string }) {
-  const redis = await useRedis();
-  const chainIds = await getChainIds();
+export function createPartialPackageRefQuery(
+  getRedis: () => Promise<RedisClientType> = useRedis,
+  getIndexedChainIds: () => Promise<number[]> = getChainIds
+) {
+  return async function queryPartialPackageRef(params: { packageRef: string; chainIds?: number[] }) {
+    const redis = await getRedis();
+    const indexedChainIds = (await getIndexedChainIds()).slice(0, MAX_CHAIN_RESULTS);
+    const requestedChainIds = params.chainIds?.length ? new Set(params.chainIds) : undefined;
+    const chainIds = requestedChainIds
+      ? indexedChainIds.filter((chainId) => requestedChainIds.has(chainId))
+      : indexedChainIds;
 
-  const ref = new PackageReference(params.packageRef);
+    const ref = new PackageReference(params.packageRef);
 
-  const batch = redis.multi();
+    const batch = redis.multi();
 
-  for (const chainId of chainIds) {
-    batch.hGetAll(`${keys.RKEY_PACKAGE_SEARCHABLE}:${ref.fullPackageRef}#${chainId}`);
-  }
+    for (const chainId of chainIds) {
+      batch.hGetAll(`${keys.RKEY_PACKAGE_SEARCHABLE}:${ref.fullPackageRef}#${chainId}`);
+    }
 
-  const results: (RedisPackage | RedisTag)[] = ((await batch.exec()) as any).filter((doc: any) => !!doc?.name);
+    const results: (RedisPackage | RedisTag)[] = ((await batch.exec()) as any)
+      .filter((doc: any) => !!doc?.name)
+      .slice(0, MAX_CHAIN_RESULTS);
 
-  const tags = results.filter((doc) => doc.type === 'tag') as RedisTag[];
-  const tagsBatch = redis.multi();
-  for (const tag of tags) {
-    const { fullPackageRef } = PackageReference.from(tag.name, tag.versionOfTag, tag.preset);
-    tagsBatch.hGetAll(`${keys.RKEY_PACKAGE_SEARCHABLE}:${fullPackageRef}#${tag.chainId}`);
-  }
+    const tags = results.filter((doc) => doc.type === 'tag').slice(0, MAX_CHAIN_RESULTS) as RedisTag[];
+    const tagsBatch = redis.multi();
+    for (const tag of tags) {
+      let fullPackageRef: string;
+      try {
+        fullPackageRef = PackageReference.from(tag.name, tag.versionOfTag, tag.preset).fullPackageRef;
+      } catch {
+        warnMalformedDocument('tag');
+        continue;
+      }
+      tagsBatch.hGetAll(`${keys.RKEY_PACKAGE_SEARCHABLE}:${fullPackageRef}#${tag.chainId}`);
+    }
 
-  const tagsResults: RedisPackage[] = ((await tagsBatch.exec()) as any).filter((doc: any) => !!doc?.name);
+    const tagsResults: RedisPackage[] = ((await tagsBatch.exec()) as any).filter((doc: any) => !!doc?.name);
 
-  const data = results
-    .map((doc) => {
+    const data: ApiPackage[] = [];
+    for (const doc of results) {
       if (doc.type === 'tag') {
         const pkg = tagsResults.find((pkg) => isRedisTagOfPackage(pkg, doc));
-        return pkg && transformPackage(pkg);
+        if (!pkg) continue;
+
+        const transformed = transformPackage(pkg);
+        if (!transformed) {
+          warnMalformedDocument('package');
+          continue;
+        }
+
+        data.push(transformed);
+        continue;
       }
 
-      return doc;
-    })
-    .filter((doc) => !!doc) as ApiPackage[];
+      const transformed = transformPackage(doc);
+      if (!transformed) {
+        warnMalformedDocument('package');
+        continue;
+      }
 
-  return {
-    total: data.length,
-    data,
-  } satisfies {
-    total: number;
-    data: ApiPackage[];
+      data.push(transformed);
+    }
+
+    return {
+      total: data.length,
+      data,
+    } satisfies {
+      total: number;
+      data: ApiPackage[];
+    };
   };
+}
+
+const queryPartialPackageRef = createPartialPackageRefQuery();
+
+export async function findPackagesByPartialRef(params: { packageRef: string; chainIds?: number[] }) {
+  return queryPartialPackageRef(params);
 }
 
 export async function searchPackages(params: {
@@ -169,6 +268,7 @@ export async function searchPackages(params: {
   limit?: number;
   chainIds?: number[];
   includeNamespaces: boolean;
+  includePackages: boolean;
 }) {
   const q = parseTextQuery(params.query);
 
@@ -181,10 +281,11 @@ export async function searchPackages(params: {
 
   if (params.chainIds?.length) queries.push(`@chainId:{${params.chainIds.join('|')}}`);
 
-  const result = await _queryPackages({
+  const result = await queryPackages({
     query: queries.join(',') || '*',
     limit: params.limit,
     includeNamespaces: params.includeNamespaces,
+    includePackages: params.includePackages,
   });
 
   // Sort results by showing first the more close ones to the expected one

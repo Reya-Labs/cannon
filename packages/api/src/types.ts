@@ -26,14 +26,14 @@ export interface RedisTag {
 }
 
 export interface RedisFunction {
-  type: 'function';
+  type: 'function' | 'error';
   name: string;
   selector: string;
   timestamp: string;
-  package: string;
-  chainId: string;
-  address: Address;
-  contractName: string;
+  package?: string;
+  chainId?: string;
+  address?: Address;
+  contractName?: string;
 }
 
 export type RedisDocument = RedisPackage | RedisTag;
@@ -52,8 +52,8 @@ export interface ApiPackage {
   preset: string;
   chainId: number;
   deployUrl: IpfsUrl;
-  metaUrl: IpfsUrl;
-  miscUrl: IpfsUrl;
+  metaUrl: IpfsUrl | '';
+  miscUrl?: IpfsUrl;
   timestamp: number;
 }
 
@@ -68,7 +68,7 @@ export interface ApiContract {
 }
 
 export interface ApiSelectorResult {
-  type: 'function' | 'event' | 'error';
+  type: 'function' | 'error';
   name: string;
   selector: string;
   contractName?: string;

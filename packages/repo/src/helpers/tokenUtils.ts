@@ -12,8 +12,9 @@ export function verifyToken(token: string, secret: string): Record<string, any> 
   try {
     const payload = jwt.verify(token, secret) as Record<string, any>;
     return payload;
-  } catch (error) {
-    console.error('Token verification error:', error);
+  } catch {
+    // Never echo bearer-token-derived parser errors into logs.
+    console.error('Token verification failed');
     return null;
   }
 }

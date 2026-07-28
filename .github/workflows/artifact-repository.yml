@@ -44,6 +44,8 @@ jobs:
       - run: pnpm --filter @usecannon/cli exec jest src/settings.test.ts src/loader.test.ts src/helpers.test.ts --runInBand
       - run: pnpm --filter @usecannon/repo build
       - run: pnpm --filter @usecannon/indexer build
+      - run: pnpm --filter @usecannon/indexer assert:registry-inbox-dormant
+      - run: pnpm --filter @usecannon/indexer test:registry-inbox
       - run: pnpm --filter @usecannon/repo test
         env:
           TEST_REDIS_URL: redis://127.0.0.1:6379

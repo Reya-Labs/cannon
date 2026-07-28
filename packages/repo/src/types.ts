@@ -32,5 +32,5 @@ export interface CatContext {
   objectStoreRead: ObjectStoreReadClient;
 }
 
-export type HealthContext = Pick<RepoContext, 'rdb' | 'objectStoreRead' | 'objectStoreWrite'>;
+export type HealthContext = Pick<RepoContext, 'config' | 'rdb' | 'objectStoreRead' | 'objectStoreWrite'>;
 export type AuthenticationContext = Pick<RepoContext, 'config'>;
