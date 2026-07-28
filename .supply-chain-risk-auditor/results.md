@@ -9,6 +9,13 @@
 - **Repositories Scanned**: 15 repositories
 - **Total Dependencies**: 15 direct production dependencies
 - **Scan Duration**: 25 minutes
+- **Source Commit**: `49621615413931082433aa578ed25a7d613e47b4`
+- **Lockfile SHA-256**: `4b3b8b608a40af74f673121e0f20f76dede33b7aae1f823afecf0d91e88a5f0c`
+- **Production Bundle-Input SBOM SHA-256**: `174b42ba10111a1119dde58c43fd9b00b7f604c600e38fb62f9a6a0e8fa3927b`
+- **Production Bundle-Input Components**: 270
+- **Vulnerability Scanner**: Grype 0.116.0 (`docker.io/anchore/grype@sha256:fd4ab4d1042b522c896e73bdf09ab8bf384fa417df99d6dd0d6e1008c7e7c821`)
+- **Image SBOM Generator**: Syft 1.48.0 (`docker.io/anchore/syft@sha256:b4f1df79f97b817682d8b5ff941eb6bfe74f6172553a5e312c75bbc2eabc405c`)
+- **Advisory Database Snapshot**: Grype schema `v6.1.9`, built `2026-07-28T07:06:26Z`, archive checksum `sha256:be16eead44bdc512bb877fb2f7b0cae1b6366d2d52cc79e24a2107520cf29cc4`
 
 ---
 
