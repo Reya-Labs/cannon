@@ -11,12 +11,10 @@ export async function useRedis(redisUrl: string): Promise<ActualRedisClientType>
   const client: ActualRedisClientType = createClient({
     url: redisUrl,
     socket: {
-      reconnectStrategy: (retries, err) => {
-        // After 5 retries, halt the server
+      reconnectStrategy: (retries) => {
+        // Let the owning process unwind through its normal shutdown path.
         if (retries > 5) {
-          // eslint-disable-next-line no-console
-          console.error(err);
-          process.exit(1);
+          return new Error('Redis reconnect limit exceeded');
         }
 
         return 5_000; // retry after 5 secs
@@ -29,9 +27,9 @@ export async function useRedis(redisUrl: string): Promise<ActualRedisClientType>
     console.log(' · redis connected ·');
   });
 
-  client.on('error', (err) => {
+  client.on('error', () => {
     // eslint-disable-next-line no-console
-    console.error(err);
+    console.error('redis connection error');
   });
 
   await client.connect();

@@ -1,5 +1,7 @@
-import { CleanedEnv, CleanedEnvAccessors, cleanEnv, EnvError, num, str } from 'envalid';
+import { CleanedEnv, CleanedEnvAccessors, cleanEnv, EnvError, str } from 'envalid';
 import 'dotenv/config';
+import { loadQueueConfig } from './queue-config';
+import type { QueueConfig } from './queue-config';
 
 const registryConfigSpecs = {
   NODE_ENV: str({
@@ -8,22 +10,13 @@ const registryConfigSpecs = {
     devDefault: 'development',
   }),
   IPFS_URL: str({ devDefault: 'http://127.0.0.1:5001' }),
-  REDIS_URL: str({ devDefault: 'redis://localhost:6379' }),
   NOTIFY_PKGS: str({ default: '' }),
   MAINNET_PROVIDER_URL: str({ default: '', devDefault: 'http://127.0.0.1:8545' }),
   OPTIMISM_PROVIDER_URL: str({ default: '', devDefault: 'http://127.0.0.1:9545' }),
-  QUEUE_NAME: str({ default: 'pinner-queue' }),
-  QUEUE_CONCURRENCY: num({ default: 5 }),
-  QUEUE_RETRIES: num({ default: 5 }),
-  S3_ENDPOINT: str({ devDefault: '' }),
-  S3_BUCKET: str({ devDefault: 'cannon' }),
-  S3_FOLDER: str({ devDefault: 'repo-v2' }),
-  S3_REGION: str({ devDefault: 'us-east-1' }),
-  S3_KEY: str({ devDefault: '' }),
-  S3_SECRET: str({ devDefault: '' }),
 };
 
-export type RegistryConfig = Omit<CleanedEnv<typeof registryConfigSpecs>, keyof CleanedEnvAccessors>;
+type RegistrySpecificConfig = Omit<CleanedEnv<typeof registryConfigSpecs>, keyof CleanedEnvAccessors>;
+export type RegistryConfig = RegistrySpecificConfig & QueueConfig;
 
 function validateProviderUrl(name: string, value: string, productionLike: boolean): string {
   if (!value.trim()) {
@@ -82,6 +75,7 @@ export function loadRegistryConfig(environment: unknown = process.env): Registry
 
   return Object.freeze({
     ...config,
+    ...loadQueueConfig(environment),
     MAINNET_PROVIDER_URL: mainnetProviderUrl,
     OPTIMISM_PROVIDER_URL: optimismProviderUrl,
   }) as RegistryConfig;

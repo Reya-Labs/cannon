@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { getIpfsCid, uncompress } from '../../builder/src/ipfs';
+import { getContentCID, getIpfsCid, uncompress } from '../../builder/src/ipfs';
 import { bootstrap } from './helpers/bootstrap';
 import { loadFixture } from './helpers/fixtures';
 import { RKEY_FRESH_UPLOAD_HASHES } from '../src/db';
@@ -49,6 +49,41 @@ describe('POST /api/v0/add', function () {
 
   it('should return 400 when no data is provided', async function () {
     await addRequest().expect(400, 'no upload data');
+  });
+
+  it('allows an authenticated facade to upload arbitrary bytes only when the expected CID matches', async function () {
+    const data = Buffer.from('on-chain metadata');
+    const cid = await getContentCID(data);
+
+    await addRequest().query({ 'expected-cid': cid }).attach('file', data).expect(200, { Hash: cid });
+    expect(Buffer.from(await ctx.objectStoreWrite.getObject(cid))).toEqual(data);
+  });
+
+  it('rejects malformed, repeated, and mismatched expected CIDs', async function () {
+    const data = Buffer.from('on-chain metadata');
+    const cid = await getContentCID(data);
+    const otherCid = await getContentCID(Buffer.from('different metadata'));
+
+    await addRequest().query({ 'expected-cid': 'not-a-cid' }).attach('file', data).expect(400, 'invalid expected-cid');
+    await addRequest()
+      .query({ 'expected-cid': [cid, cid] })
+      .attach('file', data)
+      .expect(400, 'expected-cid must be provided once');
+    await addRequest()
+      .query({ 'expected-cid': otherCid })
+      .attach('file', data)
+      .expect(422, 'upload CID does not match expected CID');
+    await expect(ctx.objectStoreWrite.objectExists(cid)).resolves.toBe(false);
+  });
+
+  it('keeps expected-CID replay idempotent', async function () {
+    const data = Buffer.from('replayed metadata');
+    const cid = await getContentCID(data);
+
+    for (let replay = 0; replay < 2; replay++) {
+      await addRequest().query({ 'expected-cid': cid }).attach('file', data).expect(200, { Hash: cid });
+    }
+    expect(Buffer.from(await ctx.objectStoreWrite.getObject(cid))).toEqual(data);
   });
 
   it('should return 400 when trying to add non cannon package', async function () {
