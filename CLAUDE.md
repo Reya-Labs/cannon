@@ -9,10 +9,10 @@ Cannon is a DevOps tool for EVM chains designed for testing, deploying, and publ
 ## Common Commands
 
 ### Development Setup
-- `pnpm i` - Install all dependencies (requires Node.js ≥18 and pnpm ≥9)
-- `pnpm build` - Build core packages (@usecannon/builder, @usecannon/cli, hardhat-cannon, @usecannon/api)
+- `pnpm i` - Install all dependencies (requires Node.js ≥20 and pnpm ≥9)
+- `pnpm build` - Build core packages (@usecannon/artifact-codec, @usecannon/builder, @usecannon/cli, hardhat-cannon, @usecannon/api)
 - `pnpm build:website` - Build website and dependencies
-- `pnpm watch` - Watch mode for builder and CLI packages
+- `pnpm watch` - Build and watch the artifact codec (TypeScript and Rollup), builder, and CLI packages
 - `pnpm clean` - Clean all dist folders
 
 ### Testing and Quality
@@ -47,6 +47,7 @@ Cannon is a DevOps tool for EVM chains designed for testing, deploying, and publ
 
 ### Package-specific Commands
 Each package has its own scripts:
+- Artifact codec: `pnpm test`, `pnpm build`, `pnpm watch`, `pnpm test:browser-bundle`
 - CLI: `pnpm test`, `pnpm test-e2e`, `pnpm build`, `pnpm watch`
 - Builder: `pnpm test`, `pnpm build:node`, `pnpm build:browser`, `pnpm watch`
 - Website: `pnpm dev`, `pnpm build`, `pnpm test`, `pnpm e2e`
@@ -59,6 +60,7 @@ Each package has its own scripts:
 ## Architecture
 
 ### Core Packages
+- **@usecannon/artifact-codec** - Browser-safe, Kubo-compatible Cannon artifact encoding and CID computation
 - **@usecannon/builder** - Core engine that processes cannonfiles and builds chain data
 - **@usecannon/cli** - Command-line interface providing cannon commands
 - **hardhat-cannon** - Hardhat plugin wrapping CLI with project defaults
@@ -119,6 +121,7 @@ source = "external-package:1.0.0"
 ### Workspace Structure
 ```
 packages/
+├── artifact-codec/ # Artifact encoding and CID computation
 ├── builder/        # Core deployment engine
 ├── cli/           # Command-line interface
 ├── hardhat-cannon/ # Hardhat integration
@@ -135,7 +138,7 @@ examples/          # Sample projects and usage demos
 ### Commit Conventions
 - Follow ConventionalCommits format: `<type>(scope): <subject>`
 - Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
-- Scopes: `builder`, `cli`, `hardhat-cannon`, `api`, `website`, `registry`
+- Scopes: `artifact-codec`, `builder`, `cli`, `hardhat-cannon`, `api`, `website`, `registry`
 - Breaking changes: Use `!` suffix (e.g., `feat!:`, `fix!:`)
 
 ### Code Style
@@ -145,7 +148,7 @@ examples/          # Sample projects and usage demos
 - Use pnpm workspaces for package management
 
 ### Dependencies
-- Main runtime: Node.js ≥18, pnpm ≥9
+- Main runtime: Node.js ≥20, pnpm ≥9
 - Key libraries: viem (Ethereum), commander (CLI), Next.js (website)
 - Testing: Jest for unit tests, Cypress for e2e tests
 - Build tools: TypeScript, Rollup, Lerna
@@ -211,7 +214,7 @@ cannon run synthetix-omnibus:3.10.1 --chain-id 1
 
 - Use `pnpm` exclusively (enforced by preinstall hook)
 - Packages use workspace protocol for internal dependencies
-- Builder supports both Node.js and browser environments via Rollup
+- Builder supports both Node.js and browser environments via Rollup and consumes the shared artifact codec
 - CLI includes extensive e2e tests using Bats framework
 - Website uses contentlayer for documentation processing
 - Registry contracts support both Ethereum mainnet and Optimism

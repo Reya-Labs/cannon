@@ -95,8 +95,7 @@ We bump and publish manually using lerna's [version and publish](https://lerna.j
 
 We can also use [changesets](https://github.com/changesets/changesets) to manage versions on our monorepo.
 
-Currently our [release workflow](.github/workflows/release.yml) on our CI handles bumping package versions and publishing releases to npm through lerna.
-It only publishes releases if any changeset PR's have been added to the commit history merged into main.
+Automated npm publication is intentionally disabled in the Reya fork. Changesets record coupled version intent, while publication remains a manual/upstream action by an operator with authority for the `@usecannon` scope. The root publish commands run the local artifact release contract and serialize Lerna's dependency-topological publication.
 
 To trigger a new version bump run the following command (from the root of the repo):
 

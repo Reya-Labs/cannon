@@ -1,5 +1,6 @@
 /.github/ @arturbeg @bogdan-reya
 /docker/ @arturbeg @bogdan-reya
+/packages/artifact-codec/ @arturbeg @bogdan-reya
 /packages/safe-app-backend/ @arturbeg @bogdan-reya
 /.changeset/ @arturbeg @bogdan-reya
 /.npmrc @arturbeg @bogdan-reya

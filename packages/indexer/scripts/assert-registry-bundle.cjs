@@ -36,7 +36,7 @@ const bundleFiles = filesUnder(bundleDirectory);
 const relativeFiles = bundleFiles
   .map((file) => path.relative(bundleDirectory, file).split(path.sep).join('/'))
   .sort();
-const expectedFiles = ['index.js', 'rabin.wasm'];
+const expectedFiles = ['index.js'];
 if (JSON.stringify(relativeFiles) !== JSON.stringify(expectedFiles)) {
   throw new Error(
     `registry bundle contains unexpected files: ${relativeFiles.join(', ')}`

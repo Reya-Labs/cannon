@@ -1,58 +1,26 @@
 import axios, { AxiosResponse } from 'axios';
 import axiosRetry from 'axios-retry';
+import { compress, getContentCID, uncompress } from '@usecannon/artifact-codec';
 import { Buffer } from 'buffer';
 import Debug from 'debug';
 import FormData from 'form-data';
-import pako from 'pako';
-import Hash from 'typestub-ipfs-only-hash';
+
+export {
+  compress,
+  extractValidCid,
+  getContentCID,
+  getContentUrl,
+  getIpfsCid,
+  getIpfsUrl,
+  parseIpfsCid,
+  uncompress,
+} from '@usecannon/artifact-codec';
 
 export interface Headers {
   [key: string]: string | string[] | number | boolean | null;
 }
 
 const debug = Debug('cannon:builder:ipfs');
-
-export function compress(data: string) {
-  return pako.deflate(data);
-}
-
-export function uncompress(data: any) {
-  return pako.inflate(data, { to: 'string' });
-}
-
-export async function getContentCID(value: string | Buffer): Promise<string> {
-  return Hash.of(value);
-}
-
-export async function getContentUrl(content?: any): Promise<string | null> {
-  if (!content) return null;
-  const buffer = compress(JSON.stringify(content));
-  const cid = await getContentCID(Buffer.from(buffer));
-  return `ipfs://${cid}`;
-}
-
-const STRICT_CID_REGEX = /^(?<cid>[a-zA-Z0-9]{46})$/;
-export function parseIpfsCid(cid: any) {
-  if (typeof cid !== 'string' || !cid) return null;
-  return cid.trim().match(STRICT_CID_REGEX)?.groups?.cid || null;
-}
-
-const CID_REGEX = /^(?:ipfs:\/\/)?(?<cid>[a-zA-Z0-9]{46})$/;
-export function getIpfsCid(str: any): string | null {
-  if (typeof str !== 'string' || !str) return null;
-  return str.trim().match(CID_REGEX)?.groups?.cid || null;
-}
-
-export function getIpfsUrl(str: any): string | null {
-  const cid = getIpfsCid(str);
-  return cid ? `ipfs://${cid}` : null;
-}
-
-export function extractValidCid(str: any): string {
-  const cid = getIpfsCid(str);
-  if (!cid) throw new Error(`Invalid CID ${str}`);
-  return cid;
-}
 
 export async function prepareFormData(info: any) {
   const data = JSON.stringify(info);

@@ -22,15 +22,18 @@ RUN rm -rf /usr/local/lib/node_modules/npm \
     && pnpm add --global --ignore-scripts --offline /tmp/ncc.tgz \
     && rm /tmp/ncc.tgz
 COPY ./pnpm-workspace.yaml ./package.json ./pnpm-lock.yaml ./
+COPY ./packages/artifact-codec/package.json ./packages/artifact-codec/tsconfig.json ./packages/artifact-codec/rollup.config.mjs ./packages/artifact-codec/
 COPY ./packages/builder/package.json ./packages/builder/tsconfig.json ./packages/builder/tsconfig.build.json ./packages/builder/
 COPY ./packages/cli/package.json ./packages/cli/tsconfig.json ./packages/cli/tsconfig.build.json ./packages/cli/
 COPY ./packages/api/package.json ./packages/api/tsconfig.json ./packages/api/
 
-RUN pnpm i --frozen-lockfile --ignore-scripts --no-optional -r --filter @usecannon/builder --filter @usecannon/cli --filter @usecannon/api
+RUN pnpm i --frozen-lockfile --ignore-scripts --no-optional -r --filter @usecannon/artifact-codec --filter @usecannon/builder --filter @usecannon/cli --filter @usecannon/api
+COPY ./packages/artifact-codec/ ./packages/artifact-codec/
 COPY ./packages/builder/ ./packages/builder/
 COPY ./packages/cli/ ./packages/cli/
 COPY ./packages/api/ ./packages/api/
 
+RUN pnpm run -r --filter @usecannon/artifact-codec build
 RUN pnpm run -r --filter @usecannon/builder build:node
 RUN ncc build ./packages/api/src/index.ts -o ./packages/api/dist
 COPY ./.github/scripts/generate-bundle-input-sbom.mjs /usr/local/lib/generate-bundle-input-sbom.mjs

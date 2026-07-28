@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { uncompress } from '../../builder/src/ipfs';
+import { uncompress } from '@usecannon/artifact-codec';
 import { bootstrap } from './helpers/bootstrap';
 import { loadFixture } from './helpers/fixtures';
 
@@ -49,6 +49,7 @@ describe('POST /api/v0/cat', function () {
       })
       .expect(200);
 
+    expect(Buffer.from(res.body)).toEqual(data);
     const result = JSON.parse(uncompress(res.body));
     expect(result).toEqual(content);
   });

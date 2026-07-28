@@ -22,14 +22,14 @@ RUN rm -rf /usr/local/lib/node_modules/npm \
     && pnpm add --global --ignore-scripts --offline /tmp/ncc.tgz \
     && rm /tmp/ncc.tgz
 COPY ./pnpm-workspace.yaml ./package.json ./pnpm-lock.yaml ./
-COPY ./packages/builder/package.json ./packages/builder/tsconfig.json ./packages/builder/tsconfig.build.json ./packages/builder/
+COPY ./packages/artifact-codec/package.json ./packages/artifact-codec/tsconfig.json ./packages/artifact-codec/rollup.config.mjs ./packages/artifact-codec/
 COPY ./packages/repo/package.json ./packages/repo/tsconfig.json ./packages/repo/
 
-RUN pnpm i --frozen-lockfile --ignore-scripts --no-optional -r --filter @usecannon/builder --filter @usecannon/repo
-COPY ./packages/builder/ ./packages/builder/
+RUN pnpm i --frozen-lockfile --ignore-scripts --no-optional -r --filter @usecannon/artifact-codec --filter @usecannon/repo
+COPY ./packages/artifact-codec/ ./packages/artifact-codec/
 COPY ./packages/repo/ ./packages/repo/
 
-RUN pnpm run -r --filter @usecannon/builder build:node
+RUN pnpm run -r --filter @usecannon/artifact-codec build
 RUN ncc build ./packages/repo/src/index.ts -o ./packages/repo/dist
 COPY ./.github/scripts/generate-bundle-input-sbom.mjs /usr/local/lib/generate-bundle-input-sbom.mjs
 RUN pnpm --filter @usecannon/repo list --prod --no-optional --depth Infinity --json \
@@ -62,7 +62,7 @@ ARG BUILD_REVISION=unknown
 
 LABEL org.opencontainers.image.source="https://github.com/Reya-Labs/cannon" \
       org.opencontainers.image.description="Cannon IPFS Repo Service with Kubo interface for fetching and pinning cannon packages" \
-      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later" \
       org.opencontainers.image.title="Cannon IPFS Repo Service" \
       org.opencontainers.image.vendor="Reya Labs" \
       org.opencontainers.image.version="${VERSION}" \

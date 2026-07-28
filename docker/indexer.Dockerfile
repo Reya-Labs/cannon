@@ -22,13 +22,16 @@ RUN rm -rf /usr/local/lib/node_modules/npm \
     && pnpm add --global --ignore-scripts --offline /tmp/ncc.tgz \
     && rm /tmp/ncc.tgz
 COPY ./pnpm-workspace.yaml ./package.json ./pnpm-lock.yaml ./
+COPY ./packages/artifact-codec/package.json ./packages/artifact-codec/tsconfig.json ./packages/artifact-codec/rollup.config.mjs ./packages/artifact-codec/
 COPY ./packages/builder/package.json ./packages/builder/tsconfig.json ./packages/builder/tsconfig.build.json ./packages/builder/
 COPY ./packages/indexer/package.json ./packages/indexer/tsconfig.build.json ./packages/indexer/
 
-RUN pnpm i --frozen-lockfile --ignore-scripts --no-optional -r --filter @usecannon/builder --filter @usecannon/indexer
+RUN pnpm i --frozen-lockfile --ignore-scripts --no-optional -r --filter @usecannon/artifact-codec --filter @usecannon/builder --filter @usecannon/indexer
+COPY ./packages/artifact-codec/ ./packages/artifact-codec/
 COPY ./packages/builder/ ./packages/builder/
 COPY ./packages/indexer/ ./packages/indexer/
 
+RUN pnpm run -r --filter @usecannon/artifact-codec build
 RUN pnpm run -r --filter @usecannon/builder build:node
 RUN pnpm --filter @usecannon/indexer exec tsc -p tsconfig.build.json --noEmit
 RUN ncc build ./packages/indexer/src/index.ts --transpile-only -o ./packages/indexer/dist/registry \
