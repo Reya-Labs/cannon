@@ -32,7 +32,7 @@ NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID=non-secret-build-placeholder \
 
 The Redis override is only a local test-harness workaround because dependency install scripts were disabled on the test machine. It is not a production setting. The website build emits a static export in `packages/website/out` and passed with upstream warnings about Contentlayer, ESLint, Sentry tunnelling, and disabled minification; these warnings must be resolved or explicitly accepted in PRO-694.
 
-Upstream PR CI does not cover all of this surface. Root `pnpm build` omits the website, Safe backend, repository and indexer; root `pnpm test` excludes the repository. The Safe backend has no test script. Reya must add explicit package and image gates rather than treating upstream's green checks as self-host readiness.
+Upstream PR CI does not cover all of this surface. Root `pnpm build` omits the website, Safe backend, repository and indexer; root `pnpm test` excludes the repository. Reya's root Safe backend workflow now runs the package tests and image gates explicitly, but the other self-host surfaces still need equivalent coverage. Do not treat upstream's green checks as self-host readiness.
 
 ## Proposed service boundary
 
@@ -187,7 +187,7 @@ The static website supports a build-time `NEXT_PUBLIC_API_URL`, while artifact a
 
 PRO-694 must parameterize these defaults, remove or feature-gate the direct `ipfs.io` fallback, vendor/bundle and digest-pin Ganache rather than executing third-party CDN code in signer browsers, decide whether runtime configuration is required, remove or explicitly allow every remaining hosted dependency, and validate CSP/wallet behavior from the deployed Cloudflare origin. Its offline browser smoke test must deny all public IPFS and external script/CDN traffic. The current Sentry tunnel option cannot work with a static export.
 
-The repository has no coherent self-host release today: root CI omits critical packages, the checked-in Compose mapping/configuration is inconsistent with the repo service, the Safe backend's nested workflow is not loaded by GitHub Actions, and server images are manual-only. Reya should publish immutable images/assets with upstream SHA, Reya SHA and digest in a self-host release manifest.
+The repository does not yet have a coherent self-host release. The Safe backend now has root-level read-only CI and a separate default-off, protected-`dev` publisher, but activation remains blocked on its documented PRO-729 runtime evidence and PRO-731 platform-enforced workflow/ruleset controls. Root CI still omits other critical packages, and the checked-in Compose mapping/configuration is inconsistent with the repo service. Reya should publish immutable images/assets with upstream SHA, Reya SHA and digest in a self-host release manifest.
 
 ## Migration and recovery acceptance criteria
 

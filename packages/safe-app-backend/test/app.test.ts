@@ -195,12 +195,16 @@ describe.skipIf(!redisUrl)('safe staging API', () => {
   });
 
   it('separates liveness from dependency-aware readiness', async () => {
-    await request(primaryApp).get('/livez').expect(200);
-    await request(primaryApp).get('/readyz').expect(200);
+    const expectedHealth = {
+      status: 'ok',
+      version: process.env.BUILD_REVISION ?? 'unknown',
+    };
+    await request(primaryApp).get('/livez').expect(200, expectedHealth);
+    await request(primaryApp).get('/readyz').expect(200, expectedHealth);
 
     client.available = false;
     now += testConfig.readinessCacheMs + 1;
-    await request(primaryApp).get('/livez').expect(200);
+    await request(primaryApp).get('/livez').expect(200, expectedHealth);
     const response = await request(primaryApp).get('/readyz').expect(503);
     expect(response.body).toEqual({
       error: { code: 'not_ready', message: 'a required dependency is not ready' },
