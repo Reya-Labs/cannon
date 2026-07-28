@@ -16,53 +16,13 @@ The registry bundle never imports or starts either worker. Worker startup or run
 
 Production and staging require explicit `MAINNET_PROVIDER_URL` and `OPTIMISM_PROVIDER_URL` values using non-loopback HTTPS or WSS endpoints. Startup verifies chain IDs 1 and 10 before connecting to Redis or starting the queue worker. The image has no production RPC fallback.
 
-## Registry/artifact-worker isolation
+## Registry durability foundations (not active)
 
-Deploy the registry and artifact worker as separately supervised workloads
-against the same `REDIS_URL` and `QUEUE_NAME`. Keep activation held until the
-worker health check passes against both facades and Redis.
+`registry-event-envelope.ts` and `registry-checkpoint.ts` define the first versioned, JSON-safe durability contracts for the registry indexer. They are intentionally not imported by the current registry loop. Activating them before the durable inbox, atomic projection and reorg checks exist would mix the legacy `reg:*` queues/checkpoints with the new format and could create partial processing semantics.
 
-The worker has no S3 or GCS configuration. It requires:
+The eventual integration must use a fresh versioned Redis namespace. Before scanning from an existing checkpoint, it must fetch that checkpoint's block and verify the stored block hash; only an absent checkpoint is a cold-start signal. A valid checkpoint resumes from the following block. Durable ingestion must also impose explicit serialized-envelope, URL, publisher-count and batch-size bounds before parsing or deduplicating untrusted persisted state; those limits belong to the inbox design and are not active in these format-only helpers.
 
-- `ARTIFACT_SOURCE_URL`: an explicit reader-facade origin implementing bounded
-  Kubo-compatible `POST /api/v0/cat?arg=<cid>` reads;
-- `ARTIFACT_WRITER_URL`: an explicit Reya writer-facade origin;
-- `ARTIFACT_WRITER_TOKEN`: the bearer token used only for writer health and
-  `POST /api/v0/add?expected-cid=<cid>` requests;
-- the shared Redis and queue configuration.
-
-Production and staging facade URLs must be non-loopback HTTPS origins. The
-worker rejects redirects, applies deadlines, streams responses into explicit
-bounds, independently recomputes every CID, and discovers the complete package
-closure before writing. A package job mirrors the root, every recursive import,
-every `miscUrl`, and each non-empty on-chain metadata CID. Writer responses are
-reconciled as an exact set, including missing and extra members. Dependencies
-are written before the root publication boundary, and replays are idempotent.
-
-Every queue attempt has an aggregate `ARTIFACT_JOB_TIMEOUT_MS` deadline and
-active reads/writes are cancelled on worker shutdown. Resource controls are
-configurable with `ARTIFACT_FETCH_TIMEOUT_MS`,
-`ARTIFACT_WRITE_TIMEOUT_MS`, `ARTIFACT_READINESS_TIMEOUT_MS`,
-`ARTIFACT_MAX_FETCH_BYTES`, `ARTIFACT_MAX_NODE_BYTES`,
-`ARTIFACT_MAX_COMPRESSED_BYTES`, `ARTIFACT_MAX_INFLATED_BYTES`,
-`ARTIFACT_MAX_CLOSURE_BYTES`, `ARTIFACT_MAX_CLOSURE_INFLATED_BYTES`,
-`ARTIFACT_MAX_CLOSURE_NODES`, `ARTIFACT_MAX_HEALTH_RESPONSE_BYTES`,
-`ARTIFACT_MAX_WRITE_RESPONSE_BYTES`, and `ARTIFACT_WORKER_PAYLOAD_BUDGET_BYTES`.
-The default queue concurrency is one.
-Startup rejects configurations where concurrency multiplied by the conservative
-per-job payload estimate (retained closure plus transient node and inflate/JSON
-copies) exceeds the payload budget. Container memory must additionally cover
-the Node.js runtime and operational headroom.
-
-Legacy unversioned jobs remain valid and retain their original job IDs. New
-package jobs may include normalized `metadataCids`; their deterministic job ID
-includes the metadata set so a second publication of the same root with
-different metadata cannot be discarded as a duplicate.
-
-Both process entrypoints handle `SIGINT` and `SIGTERM` by closing their owned
-Redis, queue, and worker resources. The image build asserts after NCC that the
-registry bundle contains no artifact handler, writer token, object-store SDK, or
-`@usecannon/repo` code.
+The legacy `PackagePublish` event did not contain fee data. Its V1 envelope therefore uses `feePaid: null`; consumers must preserve that as unknown rather than treating it as a zero payment.
 
 ## Optional 4byte enrichment
 
