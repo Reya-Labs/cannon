@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { buildExport } from '../src/build.mjs';
+import { digestFiles, sha256 } from '../src/config.mjs';
 import { scanExport } from '../scripts/scan-export.mjs';
 
 const ENV = Object.freeze({
@@ -127,5 +128,39 @@ test('rejects release metadata whose config digest does not match its profile', 
   await assert.rejects(
     () => scanExport(output),
     /release config digest does not match the validated profile/
+  );
+});
+
+test('rejects a deployed component hidden in the static SBOM', async (context) => {
+  const output = await fixture(context);
+  const sbomPath = path.join(output, 'sbom.cdx.json');
+  const releasePath = path.join(output, 'release.json');
+  const sbom = JSON.parse(await readFile(sbomPath, 'utf8'));
+  sbom.components.push({
+    type: 'library',
+    name: 'hidden-runtime',
+    version: '1.0.0',
+  });
+  const sbomBytes = Buffer.from(`${JSON.stringify(sbom, null, 2)}\n`);
+  await writeFile(sbomPath, sbomBytes);
+
+  const release = JSON.parse(await readFile(releasePath, 'utf8'));
+  const entry = release.export.files.find(
+    ({ path: relativePath }) => relativePath === 'sbom.cdx.json'
+  );
+  entry.bytes = sbomBytes.length;
+  entry.digest = sha256(sbomBytes);
+  const assets = await Promise.all(
+    release.export.files.map(async ({ path: relativePath }) => ({
+      path: relativePath,
+      bytes: await readFile(path.join(output, relativePath)),
+    }))
+  );
+  release.export.assetDigest = digestFiles(assets);
+  await writeFile(releasePath, `${JSON.stringify(release, null, 2)}\n`);
+
+  await assert.rejects(
+    () => scanExport(output),
+    /SBOM deployed components must be empty/
   );
 });
