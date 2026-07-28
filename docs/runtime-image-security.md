@@ -167,9 +167,9 @@ gh workflow run runtime-image-security.yml \
 The job accepts only the selected
 `ghcr.io/reya-labs/<runtime>@sha256:<digest>` form, checks out the declared
 source revision, derives its package version and commit timestamp, and then
-verifies and scans the pulled `linux/amd64` manifest. Manual requests for
-`repo`, `indexer`, or `api` are rejected before registry authentication until
-their approved publishers exist.
+verifies and scans the pulled `linux/amd64` manifest. Manual requests are
+accepted only for runtimes with an approved protected publisher mapping; any
+runtime without one is rejected before registry authentication.
 
 To rebuild and scan all four images from the exact protected source selected by
 the workflow, use:
@@ -273,12 +273,13 @@ destinations, missing revisions, unknown fields, and runtimes without approved
 publishers fail closed.
 
 The four entries now record activation candidates and separately published
-rollback images. Here, `status: active` means that both digests are accepted for
-recurring protected-inventory verification. It does not deploy either digest or
-assert that a production workload is running it. Production activation still
-requires the independently approved DevOps digest change and manual sync below.
-In particular, the historical repository digest below is not accepted merely
-because it is present in an inert DevOps change.
+rollback images. Here, `status: active` means that the active digest and each
+accepted rollback digest are eligible for recurring protected-inventory
+verification. It does not deploy any digest or assert that a production
+workload is running it. Production activation still requires the independently
+approved DevOps digest change and manual sync below. In particular, the
+historical repository digest below is not accepted merely because it is present
+in an inert DevOps change.
 
 PRO-748 and every later activation must use this order:
 
