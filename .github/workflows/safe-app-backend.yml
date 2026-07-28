@@ -7,20 +7,19 @@ on:
       - main
   push:
     branches:
-      - dev
       - main
-
-concurrency:
-  group: safe-app-backend-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_call:
 
 permissions:
   contents: read
 
 jobs:
   safe-app-backend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
+    concurrency:
+      group: safe-app-backend-ci-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     services:
       redis:
         image: redis:7.4.2-alpine@sha256:02419de7eddf55aa5bcf49efb74e88fa8d931b4d77c07eff8a6b2144472b6952
@@ -32,18 +31,65 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22.11.0
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          cache-dependency-path: packages/safe-app-backend/pnpm-lock.yaml
+      - run: pnpm --dir packages/safe-app-backend --ignore-workspace install --frozen-lockfile --ignore-scripts
       - run: pnpm --dir packages/safe-app-backend --ignore-workspace audit --prod --audit-level high
-      - run: pnpm --filter backend lint
-      - run: pnpm --filter backend build
-      - run: pnpm --filter backend test
+      - run: pnpm --dir packages/safe-app-backend --ignore-workspace lint
+      - run: pnpm --dir packages/safe-app-backend --ignore-workspace build
+      - run: pnpm --dir packages/safe-app-backend --ignore-workspace test
         env:
+          BUILD_REVISION: ${{ github.sha }}
           REDIS_URL: redis://127.0.0.1:6379
-      - run: docker build --tag safe-app-backend:ci packages/safe-app-backend
-      - run: docker run --rm --entrypoint node safe-app-backend:ci -e "require('./dist/server.js')"
+      - name: Verify the publication workflow policy
+        run: |
+          node .github/scripts/verify-safe-app-backend-workflows.mjs
+          node --test .github/scripts/verify-safe-app-backend-workflows.test.mjs
+      - name: Derive source-addressed image metadata
+        id: image-metadata
+        env:
+          IMAGE_REVISION: ${{ github.sha }}
+        run: >-
+          bash packages/safe-app-backend/scripts/image-metadata.sh
+          "${IMAGE_REVISION}" >> "${GITHUB_OUTPUT}"
+      - name: Build the release image locally
+        env:
+          IMAGE_BUILD_DATE: ${{ steps.image-metadata.outputs.build_date }}
+          IMAGE_REVISION: ${{ steps.image-metadata.outputs.revision }}
+          IMAGE_SOURCE_DATE_EPOCH: ${{ steps.image-metadata.outputs.source_date_epoch }}
+          IMAGE_VERSION: ${{ steps.image-metadata.outputs.version }}
+        run: >-
+          docker build
+          --build-arg "VERSION=${IMAGE_VERSION}"
+          --build-arg "BUILD_REVISION=${IMAGE_REVISION}"
+          --build-arg "BUILD_DATE=${IMAGE_BUILD_DATE}"
+          --build-arg "SOURCE_DATE_EPOCH=${IMAGE_SOURCE_DATE_EPOCH}"
+          --tag safe-app-backend:ci
+          packages/safe-app-backend
+      - name: Reject fixed high or critical image vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: safe-app-backend:ci
+          version: v0.72.0
+          scanners: vuln
+          vuln-type: os,library
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+      - name: Verify runtime identity and embedded revision
+        env:
+          EXPECTED_BASE_DIGEST: sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2
+          EXPECTED_BASE_NAME: node:22.23.1-alpine
+          EXPECTED_BUILD_DATE: ${{ steps.image-metadata.outputs.build_date }}
+          EXPECTED_BUILD_REVISION: ${{ steps.image-metadata.outputs.revision }}
+          EXPECTED_SOURCE: https://github.com/Reya-Labs/cannon
+          EXPECTED_SOURCE_DATE_EPOCH: ${{ steps.image-metadata.outputs.source_date_epoch }}
+          EXPECTED_VERSION: ${{ steps.image-metadata.outputs.version }}
+        run: bash packages/safe-app-backend/scripts/test-image-verification.sh safe-app-backend:ci
