@@ -101,8 +101,8 @@ assert.deepEqual(
     );
     const originalInventory = readFileSync(inventoryPath, 'utf8');
     const invalidInventory = originalInventory.replace(
-      '"status": "inactive"',
-      '"status": "active"'
+      '"status": "active"',
+      '"status": "invalid"'
     );
     assert.notEqual(
       invalidInventory,
@@ -1075,8 +1075,8 @@ assertRejected(
   (root) =>
     replace(
       join(root, '.github/runtime-image-inventory.json'),
-      '"status": "inactive"',
-      '"status": "active"'
+      '"status": "active"',
+      '"status": "inactive"'
     ),
   'source must exactly match the reviewed policy digest'
 );

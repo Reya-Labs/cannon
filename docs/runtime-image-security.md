@@ -167,9 +167,9 @@ gh workflow run runtime-image-security.yml \
 The job accepts only the selected
 `ghcr.io/reya-labs/<runtime>@sha256:<digest>` form, checks out the declared
 source revision, derives its package version and commit timestamp, and then
-verifies and scans the pulled `linux/amd64` manifest. Manual requests for
-`repo`, `indexer`, or `api` are rejected before registry authentication until
-their approved publishers exist.
+verifies and scans the pulled `linux/amd64` manifest. Manual requests are
+accepted only for runtimes with an approved protected publisher mapping; any
+runtime without one is rejected before registry authentication.
 
 To rebuild and scan all four images from the exact protected source selected by
 the workflow, use:
@@ -196,12 +196,14 @@ candidate digest and revision inputs and resolves only the checked-in protected
 inventory; candidate mode requires one explicit immutable digest and exact
 source revision.
 
-The repository currently contains a protected publisher only for
-`safe-app-backend`. The retired generic Docker workflow must not be restored.
-Before `repo`, `indexer`, or `api` can be activated, their separately reviewed
-publisher path must create the same GitHub-verifiable protected-dev SLSA
-provenance. A registry digest produced without it is intentionally unusable by
-this gate. Ownership is:
+The repository contains separate protected publishers for the four runtimes.
+`safe-app-backend` is published by
+`.github/workflows/safe-app-backend-publish.yml`; `repo`, `indexer`, and `api`
+are published by `.github/workflows/runtime-publish.yml`. Both paths create
+GitHub-verifiable protected-dev SLSA provenance for the exact digest. The
+retired generic Docker workflow must not be restored, and a registry digest
+produced outside the selected runtime's approved publisher remains
+intentionally unusable by this gate. Ownership is:
 
 - PRO-714: `safe-app-backend` publication;
 - PRO-723: `api` and `indexer` immutable publication; and
@@ -270,9 +272,14 @@ mapping in the validator. Duplicate digests, mutable tags, wrong registry
 destinations, missing revisions, unknown fields, and runtimes without approved
 publishers fail closed.
 
-All four entries are initially inactive because no Cannon runtime is activated
-through this mechanism yet. In particular, the historical repository digest
-below is not accepted merely because it is present in an inert DevOps change.
+The four entries now record activation candidates and separately published
+rollback images. Here, `status: active` means that the active digest and each
+accepted rollback digest are eligible for recurring protected-inventory
+verification. It does not deploy any digest or assert that a production
+workload is running it. Production activation still requires the independently
+approved DevOps digest change and manual sync below. In particular, the
+historical repository digest below is not accepted merely because it is present
+in an inert DevOps change.
 
 PRO-748 and every later activation must use this order:
 
@@ -309,10 +316,8 @@ contains npm and Yarn, and its build attestation names a retired feature branch
 rather than protected `dev`. The exact protected-dev attestation gate therefore
 rejects it.
 
-None of the four images currently has an accepted live rollback digest.
-Production activation remains blocked until each activated service records a
-separately built, protected-dev-attested digest that passes the same runtime and
-zero-HIGH/CRITICAL policy. Restoring the historical digest requires an explicit
-incident decision through the normal reviewed DevOps and manual deployment
-path; it must not be presented as the routine safe rollback, rebuilt, or
-retagged.
+Each selected runtime now has a separately built, protected-dev-attested
+rollback digest in the canonical inventory. The historical digest remains
+quarantined and is not one of them. Restoring it requires an explicit incident
+decision through the normal reviewed DevOps and manual deployment path; it must
+not be presented as the routine safe rollback, rebuilt, or retagged.

@@ -2,24 +2,56 @@
   "schemaVersion": 1,
   "runtimes": {
     "repo": {
-      "status": "inactive",
-      "active": null,
-      "rollback": []
+      "status": "active",
+      "active": {
+        "imageRef": "ghcr.io/reya-labs/repo@sha256:7f521939b0ba0a4e562b9568ceb205468f05edca8ff625b55f2d545bac9850a5",
+        "sourceRevision": "23088b8d280801160ca635cac267f6edc2e43dae"
+      },
+      "rollback": [
+        {
+          "imageRef": "ghcr.io/reya-labs/repo@sha256:09af76876ba2ad1d4aa4d488d5cc61152fed2dc31fdff7d8fa038b155bc3512f",
+          "sourceRevision": "da4847d1ae5024fe60281c3439b72a145cadf211"
+        }
+      ]
     },
     "indexer": {
-      "status": "inactive",
-      "active": null,
-      "rollback": []
+      "status": "active",
+      "active": {
+        "imageRef": "ghcr.io/reya-labs/indexer@sha256:e0ffca8cadbccea18e47b76f26406a92e174060bd281d9b5b5c6800f915af129",
+        "sourceRevision": "23088b8d280801160ca635cac267f6edc2e43dae"
+      },
+      "rollback": [
+        {
+          "imageRef": "ghcr.io/reya-labs/indexer@sha256:af20e0a70ec95a3bb8b23651adf7fe04cef61c5dd578f56d4b34927b4517a401",
+          "sourceRevision": "da4847d1ae5024fe60281c3439b72a145cadf211"
+        }
+      ]
     },
     "api": {
-      "status": "inactive",
-      "active": null,
-      "rollback": []
+      "status": "active",
+      "active": {
+        "imageRef": "ghcr.io/reya-labs/api@sha256:be588a1f0ffaf8bca2677d510df377fa34e81e039e3c03c0cfa8d9643856d719",
+        "sourceRevision": "23088b8d280801160ca635cac267f6edc2e43dae"
+      },
+      "rollback": [
+        {
+          "imageRef": "ghcr.io/reya-labs/api@sha256:c5a503badd1c228d966a7074cd7fb0e4b280afc3302d1079b3d6dab00806f4f5",
+          "sourceRevision": "da4847d1ae5024fe60281c3439b72a145cadf211"
+        }
+      ]
     },
     "safe-app-backend": {
-      "status": "inactive",
-      "active": null,
-      "rollback": []
+      "status": "active",
+      "active": {
+        "imageRef": "ghcr.io/reya-labs/safe-app-backend@sha256:eab9ca59af62e3ad7113ee37199c497b3201d150933a64130f7ba0c0fd77cf3b",
+        "sourceRevision": "23088b8d280801160ca635cac267f6edc2e43dae"
+      },
+      "rollback": [
+        {
+          "imageRef": "ghcr.io/reya-labs/safe-app-backend@sha256:bcc892b8c8ed7ae62adb89e5863260f501e4f43e2aec34773beb3c82280aa2d9",
+          "sourceRevision": "2b39580fe1af9aa8d211419fefce9743dc7fa580"
+        }
+      ]
     }
   }
 }

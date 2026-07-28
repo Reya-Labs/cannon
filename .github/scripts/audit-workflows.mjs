@@ -182,7 +182,7 @@ const exactWorkflowDigests = new Map([
 const exactPolicyFileDigests = new Map([
   [
     '.github/runtime-image-inventory.json',
-    '7cf7e511a0a1d13dfeb3651de63b273518dc10071e1f5bb8a75cf560a8f80664',
+    '37bccb92667fb8b0ebcb7b034b470b4ef85858cf508e9cff36a1a4428c05cbfd',
   ],
   [
     '.github/scripts/generate-bundle-input-sbom.mjs',
