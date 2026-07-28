@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url';
 export const runtimeNames = ['repo', 'indexer', 'api', 'safe-app-backend'];
 
 export const approvedPublisherWorkflows = new Map([
+  ['repo', 'Reya-Labs/cannon/.github/workflows/runtime-publish.yml'],
+  ['indexer', 'Reya-Labs/cannon/.github/workflows/runtime-publish.yml'],
+  ['api', 'Reya-Labs/cannon/.github/workflows/runtime-publish.yml'],
   [
     'safe-app-backend',
     'Reya-Labs/cannon/.github/workflows/safe-app-backend-publish.yml',

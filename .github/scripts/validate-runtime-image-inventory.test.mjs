@@ -242,25 +242,44 @@ assertRejected(
   'duplicates another inventory digest'
 );
 
-assertRejected(
-  'active runtime without an approved signer mapping',
-  (inventory) => {
-    inventory.runtimes.repo = {
-      status: 'active',
-      active: {
-        imageRef: image('repo', 'a'),
-        sourceRevision: revision('b'),
+for (const runtime of ['repo', 'indexer', 'api']) {
+  const inventory = baseline();
+  inventory.runtimes[runtime] = {
+    status: 'active',
+    active: {
+      imageRef: image(runtime, 'a'),
+      sourceRevision: revision('b'),
+    },
+    rollback: [
+      {
+        imageRef: image(runtime, 'c'),
+        sourceRevision: revision('d'),
       },
-      rollback: [
-        {
-          imageRef: image('repo', 'c'),
-          sourceRevision: revision('d'),
-        },
-      ],
-    };
-  },
-  'repo has no approved publisher workflow'
-);
+    ],
+  };
+  assert.deepEqual(validateRuntimeImageInventory(inventory), {
+    include: [
+      {
+        runtime,
+        slot: 'active',
+        image_ref: image(runtime, 'a'),
+        expected_revision: revision('b'),
+        signer_workflow:
+          'Reya-Labs/cannon/.github/workflows/runtime-publish.yml',
+        signer_digest: revision('b'),
+      },
+      {
+        runtime,
+        slot: 'rollback-1',
+        image_ref: image(runtime, 'c'),
+        expected_revision: revision('d'),
+        signer_workflow:
+          'Reya-Labs/cannon/.github/workflows/runtime-publish.yml',
+        signer_digest: revision('d'),
+      },
+    ],
+  });
+}
 
 assert.deepEqual(
   validateManualRuntimeImageRequest(
@@ -283,14 +302,21 @@ assert.deepEqual(
   }
 );
 
-assert.throws(
-  () =>
-    validateManualRuntimeImageRequest(
-      'repo',
-      image('repo', 'a'),
-      revision('b')
-    ),
-  /repo has no approved publisher workflow/u
+assert.deepEqual(
+  validateManualRuntimeImageRequest('repo', image('repo', 'a'), revision('b')),
+  {
+    include: [
+      {
+        runtime: 'repo',
+        slot: 'candidate',
+        image_ref: image('repo', 'a'),
+        expected_revision: revision('b'),
+        signer_workflow:
+          'Reya-Labs/cannon/.github/workflows/runtime-publish.yml',
+        signer_digest: revision('b'),
+      },
+    ],
+  }
 );
 
 console.log('Runtime image inventory validation tests passed.');
