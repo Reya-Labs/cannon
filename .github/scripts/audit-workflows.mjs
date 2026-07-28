@@ -42,6 +42,7 @@ const runtimeValidationOnlyPaths = [
   '.github/scripts/generate-bundle-input-sbom.test.mjs',
   '.github/scripts/generate-expected-runtime-sbom.test.mjs',
   '.github/scripts/runtime-evidence-paths.test.mjs',
+  '.github/scripts/runtime-publication-record.test.mjs',
   '.github/scripts/validate-runtime-image-inventory.mjs',
   '.github/scripts/validate-runtime-image-inventory.test.mjs',
   '.github/scripts/verify-runtime-bundle-input.test.mjs',
@@ -170,11 +171,11 @@ const workflowPolicies = new Map([
 const exactWorkflowDigests = new Map([
   [
     'runtime-image-security.yml',
-    '77f290fc49300b5cb39e35b9b0d3b74e30f4005084fee5fd923c5704efcb3d27',
+    '384ce590cdfb365f589fde7e2f3742e7190245db1eb455119c4a5ac3c9c91a70',
   ],
   [
     'runtime-publish.yml',
-    'cbb5c69dcd07b50022cc02fc2789feeffe8b3b6ba66dff67e5639282b4b26496',
+    '7a8fca329cd30f6ef2887a4b33325c66c6383c5d6e143f8df506edb86fe750d8',
   ],
 ]);
 
@@ -244,6 +245,7 @@ const allowedActionUses = new Set([
   'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020',
   'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
   'actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6',
+  'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
   'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
   'aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25',
   'cypress-io/github-action@f790eee7a50d9505912f50c2095510be7de06aa7',
@@ -943,8 +945,8 @@ const auditRuntimePublisher = (
     );
   }
 
-  if (!Array.isArray(publisherJob?.steps) || publisherJob.steps.length !== 8) {
-    errors.push(`${displayPath}: publisher must contain exactly eight steps`);
+  if (!Array.isArray(publisherJob?.steps) || publisherJob.steps.length !== 10) {
+    errors.push(`${displayPath}: publisher must contain exactly ten steps`);
   } else {
     for (const [index, step] of publisherJob.steps.entries()) {
       if (isRecord(step) && 'uses' in step) {
@@ -968,6 +970,7 @@ const auditRuntimePublisher = (
         'docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c',
         'docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a',
         'actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6',
+        'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
       ])
     ) {
       errors.push(

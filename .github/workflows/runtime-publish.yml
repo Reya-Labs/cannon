@@ -162,13 +162,133 @@ jobs:
           push-to-registry: true
           create-storage-record: true
 
-      - name: Record the immutable image reference
+      - name: Create immutable publication record
+        id: publication
         env:
           IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
           RUNTIME_KIND: ${{ matrix.runtime }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          CREATED: ${{ steps.metadata.outputs.created }}
         run: |
+          case "$RUNTIME_KIND" in
+            repo|indexer|api) ;;
+            *) exit 1 ;;
+          esac
+          if ! [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            exit 1
+          fi
+          if ! [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]; then
+            exit 1
+          fi
+          if ! [[ "$CREATED" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+            exit 1
+          fi
+          if ! [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
+            exit 1
+          fi
+          if ! [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+            exit 1
+          fi
+          test "$IMAGE_NAME" = "ghcr.io/reya-labs/${RUNTIME_KIND}"
+          test -n "$VERSION"
+
+          umask 077
+          record_directory="${RUNNER_TEMP}/cannon-runtime-publication-${RUNTIME_KIND}"
+          test ! -e "$record_directory"
+          install -d -m 0700 "$record_directory"
+          record_path="${record_directory}/publication.json"
+          record_temp="$(mktemp "${record_path}.XXXXXX")"
+          cleanup_record() {
+            rm -f "$record_temp"
+          }
+          trap cleanup_record EXIT
+
+          jq \
+            --null-input \
+            --sort-keys \
+            --arg runtime "$RUNTIME_KIND" \
+            --arg image_ref "${IMAGE_NAME}@${IMAGE_DIGEST}" \
+            --arg image_digest "$IMAGE_DIGEST" \
+            --arg source_revision "$SOURCE_REVISION" \
+            --arg version "$VERSION" \
+            --arg created "$CREATED" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
+            '{
+              schemaVersion: 1,
+              runtime: $runtime,
+              imageRef: $image_ref,
+              imageDigest: $image_digest,
+              sourceRevision: $source_revision,
+              version: $version,
+              created: $created,
+              platform: "linux/amd64",
+              publisher: {
+                repository: $repository,
+                workflow: "Reya-Labs/cannon/.github/workflows/runtime-publish.yml",
+                workflowRevision: $source_revision,
+                runId: $run_id,
+                runAttempt: $run_attempt,
+                runUrl: $run_url
+              }
+            }' > "$record_temp"
+
+          jq --exit-status \
+            --arg runtime "$RUNTIME_KIND" \
+            --arg image_ref "${IMAGE_NAME}@${IMAGE_DIGEST}" \
+            --arg source_revision "$SOURCE_REVISION" \
+            '
+              .schemaVersion == 1 and
+              .runtime == $runtime and
+              .imageRef == $image_ref and
+              .sourceRevision == $source_revision and
+              .platform == "linux/amd64" and
+              (.publisher.repository == "Reya-Labs/cannon") and
+              (.publisher.workflow ==
+                "Reya-Labs/cannon/.github/workflows/runtime-publish.yml") and
+              (.publisher.workflowRevision == $source_revision)
+            ' "$record_temp" > /dev/null
+
+          mv "$record_temp" "$record_path"
+          trap - EXIT
+          sha256sum "$record_path"
+          {
+            echo "record_directory=$record_directory"
+            echo "record_path=$record_path"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable publication record
+        id: publication_artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          compression-level: 0
+          if-no-files-found: error
+          name: runtime-publication-${{ matrix.runtime }}-${{ env.SOURCE_REVISION }}-attempt-${{ github.run_attempt }}
+          overwrite: false
+          path: ${{ steps.publication.outputs.record_directory }}
+          retention-days: 90
+
+      - name: Record the immutable image reference
+        env:
+          ARTIFACT_DIGEST: ${{ steps.publication_artifact.outputs.artifact-digest }}
+          ARTIFACT_URL: ${{ steps.publication_artifact.outputs.artifact-url }}
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
+          RUNTIME_KIND: ${{ matrix.runtime }}
+        run: |
+          if ! [[ "$ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]]; then
+            exit 1
+          fi
+          if ! [[ "$ARTIFACT_URL" == "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/"* ]]; then
+            exit 1
+          fi
           {
             echo "## ${RUNTIME_KIND} image"
             echo
             echo "\`${IMAGE_NAME}@${IMAGE_DIGEST}\`"
+            echo
+            echo "Publication record: [artifact](${ARTIFACT_URL})"
+            echo
+            echo "Publication artifact digest: \`sha256:${ARTIFACT_DIGEST}\`"
           } >> "$GITHUB_STEP_SUMMARY"
