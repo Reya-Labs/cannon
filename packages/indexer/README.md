@@ -11,6 +11,14 @@ The registry entrypoint never imports or starts the enrichment worker. A deploym
 
 Production and staging require explicit `MAINNET_PROVIDER_URL` and `OPTIMISM_PROVIDER_URL` values using non-loopback HTTPS or WSS endpoints. Startup verifies chain IDs 1 and 10 before connecting to Redis or starting the queue worker. The image has no production RPC fallback.
 
+## Registry durability foundations (not active)
+
+`registry-event-envelope.ts` and `registry-checkpoint.ts` define the first versioned, JSON-safe durability contracts for the registry indexer. They are intentionally not imported by the current registry loop. Activating them before the durable inbox, atomic projection and reorg checks exist would mix the legacy `reg:*` queues/checkpoints with the new format and could create partial processing semantics.
+
+The eventual integration must use a fresh versioned Redis namespace. Before scanning from an existing checkpoint, it must fetch that checkpoint's block and verify the stored block hash; only an absent checkpoint is a cold-start signal. A valid checkpoint resumes from the following block. Durable ingestion must also impose explicit serialized-envelope, URL, publisher-count and batch-size bounds before parsing or deduplicating untrusted persisted state; those limits belong to the inbox design and are not active in these format-only helpers.
+
+The legacy `PackagePublish` event did not contain fee data. Its V1 envelope therefore uses `feePaid: null`; consumers must preserve that as unknown rather than treating it as a zero payment.
+
 ## Optional 4byte enrichment
 
 Enrichment is disabled by default. Running the worker without `FOURBYTE_ENABLED=true` exits successfully without connecting to Redis or making a network request.
