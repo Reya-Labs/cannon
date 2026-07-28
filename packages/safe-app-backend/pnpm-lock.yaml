@@ -60,6 +60,9 @@ importers:
       vitest:
         specifier: 2.1.9
         version: 2.1.9(@types/node@22.14.0)
+      yaml:
+        specifier: 2.7.1
+        version: 2.7.1
 
 packages:
 
@@ -1126,6 +1129,11 @@ packages:
       utf-8-validate:
         optional: true
 
+  yaml@2.7.1:
+    resolution: {integrity: sha512-10ULxpnOCQXxJvBgxsn9ptjq6uviG/htZKk9veJGhlqn3w/DxQ631zFF+nlQXLwmImeS5amR2dl2U8sg6U9jsQ==}
+    engines: {node: '>= 14'}
+    hasBin: true
+
   yn@3.1.1:
     resolution: {integrity: sha512-Ux4ygGWsu2c7isFWe8Yu1YluJmqVhxqK2cLXNQA5AcC3QfbGNpM7fu0Y8b/z16pXLnFxZYvWhd3fhBY9DLmC6Q==}
     engines: {node: '>=6'}
@@ -2144,6 +2152,8 @@ snapshots:
   wrappy@1.0.2: {}
 
   ws@8.21.0: {}
+
+  yaml@2.7.1: {}
 
   yn@3.1.1: {}
 

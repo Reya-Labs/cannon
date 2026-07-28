@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { parseDocument } from 'yaml';
+
+const requireFromSafeAppBackend = createRequire(
+  new URL('../../packages/safe-app-backend/package.json', import.meta.url)
+);
+const { parseDocument } = requireFromSafeAppBackend('yaml');
 
 const CI_PATH = '.github/workflows/safe-app-backend.yml';
 const PUBLISH_PATH = '.github/workflows/safe-app-backend-publish.yml';
