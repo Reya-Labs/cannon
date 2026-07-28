@@ -1,6 +1,6 @@
 import { Server } from 'node:http';
 import cors from 'cors';
-import express, { Express } from 'express';
+import express, { Express, RequestHandler } from 'express';
 import morgan from 'morgan';
 import { rateLimit } from 'express-rate-limit';
 import helmet from 'helmet';
@@ -37,15 +37,16 @@ export function createApp(ctx: RepoContext): { app: Express; start: () => Promis
 
   app.get('/favicon.ico', (req, res) => res.status(204));
 
-  app.use(
-    rateLimit({
-      windowMs: ctx.config.RATE_LIMIT_WINDOW,
-      limit: ctx.config.RATE_LIMIT_MAX,
-      standardHeaders: 'draft-7',
-      legacyHeaders: false,
-      validate: { trustProxy: !ctx.config.TRUST_PROXY },
-    })
-  );
+  // The workspace also contains Express 5 types; keep this beta-Express service
+  // on its local RequestHandler boundary until its separate runtime upgrade.
+  const limiter = rateLimit({
+    windowMs: ctx.config.RATE_LIMIT_WINDOW,
+    limit: ctx.config.RATE_LIMIT_MAX,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    validate: { trustProxy: !ctx.config.TRUST_PROXY },
+  }) as unknown as RequestHandler;
+  app.use(limiter);
 
   if (writerEnabled) {
     if (!ctx.rdb || !ctx.objectStoreWrite) {

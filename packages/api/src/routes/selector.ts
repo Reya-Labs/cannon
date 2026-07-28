@@ -1,17 +1,14 @@
-import * as viem from 'viem';
 import { Request, Response, Router } from 'express';
-import { BadRequestError } from '../errors';
+import { parseChainIds, parseSelectors, parseSelectorType } from '../helpers';
 import { findSelector } from '../queries/selectors';
 import { ApiSelectorResult } from '../types';
 
 const selector: Router = Router();
 
 selector.get('/selector', async (req: Request, res: Response) => {
-  if (typeof req.query.q !== 'string') {
-    throw new BadRequestError('Query selector not specified');
-  }
-  const selectors = req.query.q.split(',') as viem.Hex[];
-  const type = req.query.type as 'function' | 'event' | 'error';
+  const selectors = parseSelectors(req.query.q);
+  const type = parseSelectorType(req.query.type);
+  const chainIds = parseChainIds(req.query.chainIds);
 
   const results: Record<string, ApiSelectorResult[]> = {};
 
@@ -21,6 +18,7 @@ selector.get('/selector', async (req: Request, res: Response) => {
         selector,
         type,
         limit: 10,
+        chainIds,
       })
     ).data;
   }
