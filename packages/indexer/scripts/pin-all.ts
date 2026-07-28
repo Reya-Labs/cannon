@@ -3,7 +3,7 @@ import { DEFAULT_REGISTRY_ADDRESS } from '@usecannon/builder';
 import { createRpcClient } from '../src/helpers/rpc';
 import { batches } from '../src/helpers/batches';
 import { config } from '../src/config';
-import { createQueue } from '../src/queue';
+import { startArtifactWorker } from '../src/worker';
 
 const packagePublishEvents = viem.parseAbi([
   'event PackagePublish(bytes32 indexed name, bytes32[] indexed tags, bytes32 variant, string url, address owner)',
@@ -18,8 +18,7 @@ const START_IDS = {
 };
 
 async function main() {
-  const queue = createQueue();
-  queue.createWorker();
+  const { queue } = await startArtifactWorker(process.env, { waitUntilReady: true });
 
   const mainnetClient = createRpcClient('mainnet', config.MAINNET_PROVIDER_URL);
   const optimismClient = createRpcClient('optimism', config.OPTIMISM_PROVIDER_URL);

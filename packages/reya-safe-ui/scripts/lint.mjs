@@ -8,7 +8,7 @@ const PACKAGE_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..'
 );
-const SOURCE_DIRECTORIES = ['scripts', 'src', 'test'];
+const SOURCE_DIRECTORIES = ['scripts', 'src', 'test', 'test-support'];
 
 async function filesIn(directory) {
   const entries = await readdir(directory, { withFileTypes: true });

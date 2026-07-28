@@ -1,11 +1,16 @@
 # Cannon indexer workloads
 
-The indexer image contains two independent entrypoints:
+The indexer image contains three independent entrypoints:
 
-- `node dist/registry/index.js` is the default, canonical registry indexer.
+- `node dist/registry/index.js` runs only the credential-free registry producer.
+- `node dist/artifact-worker/index.js` runs only the artifact mirror worker.
 - `node dist/4byte-directory/index.js` is the optional, one-shot 4byte enrichment worker.
 
-The registry entrypoint never imports or starts the enrichment worker. A deployment can therefore deny 4byte egress without affecting registry progress.
+`pnpm start` and `pnpm start-artifact-worker` target the NCC bundle paths.
+After a TypeScript-only `pnpm build`, use `pnpm start:compiled` or
+`pnpm start-artifact-worker:compiled` instead.
+
+The registry bundle never imports or starts either worker. Worker startup or runtime failure therefore cannot stop registry scanning or enqueueing.
 
 ## Registry configuration
 

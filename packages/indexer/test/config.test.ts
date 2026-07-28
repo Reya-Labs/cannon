@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { loadFourByteConfig } from '../src/4byte-config';
 import { loadRegistryConfig } from '../src/config';
+import { loadArtifactWorkerConfig } from '../src/worker-config';
 
 function validRegistryEnvironment(): Record<string, string> {
   return {
@@ -11,12 +12,6 @@ function validRegistryEnvironment(): Record<string, string> {
     NODE_ENV: 'production',
     OPTIMISM_PROVIDER_URL: 'wss://optimism.example.com/rpc',
     REDIS_URL: 'rediss://redis.example.com:6379',
-    S3_BUCKET: 'cannon',
-    S3_ENDPOINT: 'https://objects.example.com',
-    S3_FOLDER: 'repo-v2',
-    S3_KEY: 'read-write-key',
-    S3_REGION: 'us-east-1',
-    S3_SECRET: 'read-write-secret',
   };
 }
 
@@ -33,6 +28,13 @@ describe('registry configuration', () => {
 
     assert.equal(config.MAINNET_PROVIDER_URL, 'https://mainnet.example.com/rpc');
     assert.equal(config.OPTIMISM_PROVIDER_URL, 'wss://optimism.example.com/rpc');
+  });
+
+  it('does not require privileged object-storage credentials', () => {
+    const config = loadRegistryConfig(validRegistryEnvironment());
+
+    assert.equal('S3_KEY' in config, false);
+    assert.equal('S3_SECRET' in config, false);
   });
 
   it('returns canonical provider URLs for transport selection', () => {
@@ -93,6 +95,163 @@ describe('registry configuration', () => {
         }),
       /must be distinct/
     );
+  });
+});
+
+describe('artifact worker configuration', () => {
+  function validWorkerEnvironment() {
+    return {
+      ARTIFACT_SOURCE_URL: 'https://artifacts.example.com',
+      ARTIFACT_WRITER_TOKEN: 'writer-token',
+      ARTIFACT_WRITER_URL: 'https://writer.example.com',
+      NODE_ENV: 'production',
+      REDIS_URL: 'rediss://redis.example.com:6379',
+    };
+  }
+
+  it('requires explicit source, authenticated writer, and Redis endpoints without object-store credentials', () => {
+    const config = loadArtifactWorkerConfig(validWorkerEnvironment());
+
+    assert.equal(config.ARTIFACT_SOURCE_URL, 'https://artifacts.example.com');
+    assert.equal(config.ARTIFACT_WRITER_URL, 'https://writer.example.com');
+    assert.equal('S3_KEY' in config, false);
+    assert.equal('S3_SECRET' in config, false);
+    assert.equal('GCS_PROJECT_ID' in config, false);
+  });
+
+  it('fails closed without any required facade setting', () => {
+    for (const name of ['ARTIFACT_SOURCE_URL', 'ARTIFACT_WRITER_URL', 'ARTIFACT_WRITER_TOKEN'] as const) {
+      const environment: Record<string, string> = validWorkerEnvironment();
+      delete environment[name];
+      assert.throws(() => loadArtifactWorkerConfig(environment), new RegExp(name));
+    }
+  });
+
+  it('rejects unsafe production facade endpoints', () => {
+    for (const sourceUrl of [
+      'http://artifacts.example.com',
+      'https://user:secret@artifacts.example.com',
+      'https://artifacts.example.com/api',
+      'https://127.0.0.1',
+      'https://[::ffff:0.0.0.0]',
+      'https://[::ffff:127.0.0.1]',
+      'https://service.localhost',
+      'https://service.localhost.',
+    ]) {
+      assert.throws(
+        () =>
+          loadArtifactWorkerConfig({
+            ...validWorkerEnvironment(),
+            ARTIFACT_SOURCE_URL: sourceUrl,
+          }),
+        /non-loopback HTTPS/
+      );
+    }
+  });
+
+  it('allows explicit loopback HTTP facades for tests and development', () => {
+    const config = loadArtifactWorkerConfig({
+      ...validWorkerEnvironment(),
+      ARTIFACT_SOURCE_URL: 'http://127.0.0.1:8081',
+      ARTIFACT_WRITER_URL: 'http://localhost:8082',
+      NODE_ENV: 'test',
+    });
+
+    assert.equal(config.ARTIFACT_SOURCE_URL, 'http://127.0.0.1:8081');
+    assert.equal(config.ARTIFACT_WRITER_URL, 'http://localhost:8082');
+  });
+
+  it('requires distinct reader and writer facade origins', () => {
+    assert.throws(
+      () =>
+        loadArtifactWorkerConfig({
+          ...validWorkerEnvironment(),
+          ARTIFACT_WRITER_URL: 'https://artifacts.example.com',
+        }),
+      /must be distinct/
+    );
+  });
+
+  it('rejects writer tokens with surrounding whitespace', () => {
+    assert.throws(
+      () =>
+        loadArtifactWorkerConfig({
+          ...validWorkerEnvironment(),
+          ARTIFACT_WRITER_TOKEN: ' writer-secret',
+        }),
+      /surrounding whitespace/
+    );
+  });
+
+  it('enforces integer and relational resource bounds', () => {
+    assert.throws(
+      () =>
+        loadArtifactWorkerConfig({
+          ...validWorkerEnvironment(),
+          ARTIFACT_MAX_CLOSURE_NODES: '0',
+        }),
+      /ARTIFACT_MAX_CLOSURE_NODES/
+    );
+    assert.throws(
+      () =>
+        loadArtifactWorkerConfig({
+          ...validWorkerEnvironment(),
+          ARTIFACT_MAX_HEALTH_RESPONSE_BYTES: '0',
+        }),
+      /ARTIFACT_MAX_HEALTH_RESPONSE_BYTES/
+    );
+    assert.throws(
+      () =>
+        loadArtifactWorkerConfig({
+          ...validWorkerEnvironment(),
+          ARTIFACT_MAX_FETCH_BYTES: '10',
+          ARTIFACT_MAX_NODE_BYTES: '11',
+        }),
+      /ARTIFACT_MAX_NODE_BYTES must not exceed/
+    );
+    assert.throws(
+      () =>
+        loadArtifactWorkerConfig({
+          ...validWorkerEnvironment(),
+          ARTIFACT_MAX_CLOSURE_INFLATED_BYTES: '100',
+          ARTIFACT_MAX_INFLATED_BYTES: '101',
+        }),
+      /ARTIFACT_MAX_INFLATED_BYTES must not exceed/
+    );
+    assert.throws(
+      () =>
+        loadArtifactWorkerConfig({
+          ...validWorkerEnvironment(),
+          ARTIFACT_JOB_TIMEOUT_MS: `${15 * 60_000 + 1}`,
+        }),
+      /ARTIFACT_JOB_TIMEOUT_MS must not exceed/
+    );
+  });
+
+  it('admits only the concurrency that fits the configured payload budget', () => {
+    const defaults = loadArtifactWorkerConfig(validWorkerEnvironment());
+    assert.equal(defaults.QUEUE_CONCURRENCY, 1);
+    assert.equal(defaults.ARTIFACT_WORKER_PAYLOAD_BUDGET_BYTES, 256 * 1024 * 1024);
+
+    assert.throws(
+      () =>
+        loadArtifactWorkerConfig({
+          ...validWorkerEnvironment(),
+          QUEUE_CONCURRENCY: '2',
+        }),
+      /exceed ARTIFACT_WORKER_PAYLOAD_BUDGET_BYTES/
+    );
+
+    const twoSmallJobs = loadArtifactWorkerConfig({
+      ...validWorkerEnvironment(),
+      ARTIFACT_MAX_CLOSURE_BYTES: `${32 * 1024 * 1024}`,
+      ARTIFACT_MAX_COMPRESSED_BYTES: `${8 * 1024 * 1024}`,
+      ARTIFACT_MAX_FETCH_BYTES: `${8 * 1024 * 1024}`,
+      ARTIFACT_MAX_INFLATED_BYTES: `${16 * 1024 * 1024}`,
+      ARTIFACT_MAX_NODE_BYTES: `${8 * 1024 * 1024}`,
+      QUEUE_CONCURRENCY: '2',
+    });
+    assert.equal(twoSmallJobs.QUEUE_CONCURRENCY, 2);
   });
 });
 
