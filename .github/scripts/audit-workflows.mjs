@@ -150,7 +150,7 @@ const workflowPolicies = new Map([
 const exactWorkflowDigests = new Map([
   [
     'runtime-image-security.yml',
-    'db4cd9dd977a9333eb2998f091daf9a63749f769e014f322948f68bc3246ee9b',
+    '7f1ec9c45d072e353780f779c1f3b692b0548a597e8dc178bbc5a93f2c9cd2ba',
   ],
 ]);
 

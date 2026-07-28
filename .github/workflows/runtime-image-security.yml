@@ -119,7 +119,7 @@ jobs:
             context: .
             dockerfile: ./docker/indexer.Dockerfile
             package_json: packages/indexer/package.json
-            command: '["node","index.js"]'
+            command: '["node","dist/registry/index.js"]'
           - runtime: api
             context: .
             dockerfile: ./docker/api.Dockerfile
@@ -517,7 +517,7 @@ jobs:
               package_json=source/packages/repo/package.json
               ;;
             indexer)
-              expected_command='["node","index.js"]'
+              expected_command='["node","dist/registry/index.js"]'
               package_json=source/packages/indexer/package.json
               ;;
             api)
