@@ -1,0 +1,174 @@
+name: Publish Cannon runtime images
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - '.github/dependabot.yml'
+      - '.github/scripts/generate-bundle-input-sbom.mjs'
+      - '.github/scripts/generate-expected-runtime-sbom.sh'
+      - '.github/scripts/scan-runtime-image.sh'
+      - '.github/scripts/verify-runtime-bundle-input.mjs'
+      - '.github/scripts/verify-runtime-image.sh'
+      - '.github/workflows/runtime-image-security.yml'
+      - '.github/workflows/runtime-publish.yml'
+      - 'docker/api.Dockerfile'
+      - 'docker/indexer.Dockerfile'
+      - 'docker/repo.Dockerfile'
+      - 'package.json'
+      - 'packages/api/**'
+      - 'packages/artifact-codec/**'
+      - 'packages/builder/**'
+      - 'packages/cli/**'
+      - 'packages/indexer/**'
+      - 'packages/repo/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-runtime:
+    if: >-
+      vars.CANNON_RUNTIME_PUBLISH_ENABLED == 'true' &&
+      github.repository == 'Reya-Labs/cannon' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/dev' &&
+      github.ref_protected
+    permissions:
+      attestations: read
+      contents: read
+      packages: read
+    uses: ./.github/workflows/runtime-image-security.yml
+
+  publish-runtime:
+    needs: validate-runtime
+    if: >-
+      needs.validate-runtime.result == 'success' &&
+      vars.CANNON_RUNTIME_PUBLISH_ENABLED == 'true' &&
+      github.repository == 'Reya-Labs/cannon' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/dev' &&
+      github.ref_protected
+    environment: cannon-image-publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    concurrency:
+      group: cannon-runtime-publish-${{ matrix.runtime }}-${{ github.sha }}
+      cancel-in-progress: false
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runtime: repo
+            dockerfile: ./docker/repo.Dockerfile
+            package_json: packages/repo/package.json
+            image_name: ghcr.io/reya-labs/repo
+            command: '["node","index.js"]'
+          - runtime: indexer
+            dockerfile: ./docker/indexer.Dockerfile
+            package_json: packages/indexer/package.json
+            image_name: ghcr.io/reya-labs/indexer
+            command: '["node","dist/registry/index.js"]'
+          - runtime: api
+            dockerfile: ./docker/api.Dockerfile
+            package_json: packages/api/package.json
+            image_name: ghcr.io/reya-labs/api
+            command: '["node","index.js"]'
+    env:
+      IMAGE_NAME: ${{ matrix.image_name }}
+      SOURCE_REVISION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Derive source-addressed image metadata
+        id: metadata
+        env:
+          PACKAGE_JSON: ${{ matrix.package_json }}
+        run: |
+          version="$(jq -er '.version' "$PACKAGE_JSON")"
+          source_date_epoch="$(git show -s --format=%ct "$SOURCE_REVISION")"
+          created="$(date -u --date="@${source_date_epoch}" '+%Y-%m-%dT%H:%M:%SZ')"
+          test "$version" != "unknown"
+          test -n "$source_date_epoch"
+          test -n "$created"
+          {
+            echo "version=$version"
+            echo "source_date_epoch=$source_date_epoch"
+            echo "created=$created"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build and publish the source-addressed image
+        id: push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          pull: true
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:${{ env.SOURCE_REVISION }}
+          build-args: |
+            VERSION=${{ steps.metadata.outputs.version }}
+            BUILD_REVISION=${{ env.SOURCE_REVISION }}
+            BUILD_DATE=${{ steps.metadata.outputs.created }}
+            SOURCE_DATE_EPOCH=${{ steps.metadata.outputs.source_date_epoch }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Verify the published manifest
+        env:
+          EXPECTED_COMMAND: ${{ matrix.command }}
+          EXPECTED_CREATED: ${{ steps.metadata.outputs.created }}
+          EXPECTED_VERSION: ${{ steps.metadata.outputs.version }}
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
+          RUNTIME_KIND: ${{ matrix.runtime }}
+        run: |
+          image_ref="${IMAGE_NAME}@${IMAGE_DIGEST}"
+          docker pull --platform linux/amd64 "$image_ref"
+          .github/scripts/verify-runtime-image.sh \
+            "$image_ref" \
+            "$RUNTIME_KIND" \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            "$SOURCE_REVISION" \
+            "$EXPECTED_VERSION" \
+            "$EXPECTED_COMMAND" \
+            "$EXPECTED_CREATED"
+
+      - name: Attest the published manifest
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-version: ${{ steps.metadata.outputs.version }}
+          push-to-registry: true
+          create-storage-record: true
+
+      - name: Record the immutable image reference
+        env:
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
+          RUNTIME_KIND: ${{ matrix.runtime }}
+        run: |
+          {
+            echo "## ${RUNTIME_KIND} image"
+            echo
+            echo "\`${IMAGE_NAME}@${IMAGE_DIGEST}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

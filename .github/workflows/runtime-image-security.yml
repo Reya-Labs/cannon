@@ -17,6 +17,7 @@ on:
       - '.github/scripts/verify-runtime-image.sh'
       - '.github/runtime-image-inventory.json'
       - '.github/workflows/runtime-image-security.yml'
+      - '.github/workflows/runtime-publish.yml'
       - 'docker/api.Dockerfile'
       - 'docker/indexer.Dockerfile'
       - 'docker/repo.Dockerfile'
@@ -49,6 +50,7 @@ on:
       - '.github/scripts/verify-runtime-image.sh'
       - '.github/runtime-image-inventory.json'
       - '.github/workflows/runtime-image-security.yml'
+      - '.github/workflows/runtime-publish.yml'
       - 'docker/api.Dockerfile'
       - 'docker/indexer.Dockerfile'
       - 'docker/repo.Dockerfile'
@@ -93,6 +95,7 @@ on:
         description: Candidate mode only - required 40-character Cannon source revision
         required: false
         type: string
+  workflow_call:
 
 concurrency:
   group: runtime-image-security-${{ github.event_name }}-${{ (github.event_name == 'pull_request' || github.event_name == 'push') && github.ref || github.run_id }}
@@ -410,6 +413,10 @@ jobs:
           test "$TRUSTED_REF" = "refs/heads/dev"
           test "$TRUSTED_REF_PROTECTED" = "true"
           case "$RUNTIME_KIND" in
+            repo|indexer|api)
+              test "$SIGNER_WORKFLOW" = \
+                "Reya-Labs/cannon/.github/workflows/runtime-publish.yml"
+              ;;
             safe-app-backend)
               test "$SIGNER_WORKFLOW" = \
                 "Reya-Labs/cannon/.github/workflows/safe-app-backend-publish.yml"

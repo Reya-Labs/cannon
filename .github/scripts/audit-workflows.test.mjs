@@ -551,6 +551,83 @@ assertRejected(
 );
 
 assertRejected(
+  'fail-open runtime publisher gate',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-publish.yml'),
+      "vars.CANNON_RUNTIME_PUBLISH_ENABLED == 'true'",
+      "vars.CANNON_RUNTIME_PUBLISH_ENABLED != 'false'"
+    ),
+  'source must exactly match the reviewed workflow digest'
+);
+
+assertRejected(
+  'runtime publisher validation substitution',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-publish.yml'),
+      'uses: ./.github/workflows/runtime-image-security.yml',
+      'uses: ./.github/workflows/lint.yml'
+    ),
+  'validation must be the exact protected-dev, read-only runtime security call'
+);
+
+assertRejected(
+  'runtime publisher image destination substitution',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-publish.yml'),
+      'image_name: ghcr.io/reya-labs/repo',
+      'image_name: ghcr.io/attacker/repo'
+    ),
+  'publisher job must match the reviewed protected-dev matrix'
+);
+
+assertRejected(
+  'runtime publisher mutable tag',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-publish.yml'),
+      '${{ env.IMAGE_NAME }}:${{ env.SOURCE_REVISION }}',
+      '${{ env.IMAGE_NAME }}:latest'
+    ),
+  'source must exactly match the reviewed workflow digest'
+);
+
+assertRejected(
+  'runtime publisher without environment gate',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-publish.yml'),
+      '    environment: cannon-image-publish\n',
+      ''
+    ),
+  'publisher job must match the reviewed protected-dev matrix'
+);
+
+assertRejected(
+  'runtime publisher whole secrets context',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-publish.yml'),
+      '${{ secrets.GITHUB_TOKEN }}',
+      '${{ toJSON(secrets) }}'
+    ),
+  'publisher must consume only one explicit secrets.GITHUB_TOKEN reference'
+);
+
+assertRejected(
+  'runtime publisher action substitution',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/runtime-publish.yml'),
+      'docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c',
+      'docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130'
+    ),
+  'publisher actions must exactly match the reviewed pinned set'
+);
+
+assertRejected(
   'continued failure',
   (root) =>
     replace(
@@ -568,6 +645,15 @@ assertRejected(
       force: true,
     }),
   'runtime-image-security.yml: required workflow is missing'
+);
+
+assertRejected(
+  'deleted runtime publisher workflow',
+  (root) =>
+    rmSync(join(root, '.github/workflows/runtime-publish.yml'), {
+      force: true,
+    }),
+  'runtime-publish.yml: required workflow is missing'
 );
 
 assertRejected(

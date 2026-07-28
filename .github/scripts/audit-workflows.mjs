@@ -30,6 +30,7 @@ const runtimeImagePaths = [
   '.github/scripts/verify-runtime-image.sh',
   '.github/runtime-image-inventory.json',
   '.github/workflows/runtime-image-security.yml',
+  '.github/workflows/runtime-publish.yml',
   'docker/api.Dockerfile',
   'docker/indexer.Dockerfile',
   'docker/repo.Dockerfile',
@@ -41,6 +42,29 @@ const runtimeImagePaths = [
   'packages/indexer/**',
   'packages/repo/**',
   'packages/safe-app-backend/**',
+  'pnpm-lock.yaml',
+  'pnpm-workspace.yaml',
+];
+
+const runtimePublishPaths = [
+  '.github/dependabot.yml',
+  '.github/scripts/generate-bundle-input-sbom.mjs',
+  '.github/scripts/generate-expected-runtime-sbom.sh',
+  '.github/scripts/scan-runtime-image.sh',
+  '.github/scripts/verify-runtime-bundle-input.mjs',
+  '.github/scripts/verify-runtime-image.sh',
+  '.github/workflows/runtime-image-security.yml',
+  '.github/workflows/runtime-publish.yml',
+  'docker/api.Dockerfile',
+  'docker/indexer.Dockerfile',
+  'docker/repo.Dockerfile',
+  'package.json',
+  'packages/api/**',
+  'packages/artifact-codec/**',
+  'packages/builder/**',
+  'packages/cli/**',
+  'packages/indexer/**',
+  'packages/repo/**',
   'pnpm-lock.yaml',
   'pnpm-workspace.yaml',
 ];
@@ -88,6 +112,7 @@ const workflowPolicies = new Map([
         paths: runtimeImagePaths,
       },
       schedule: [{ cron: '23 6 * * 1' }],
+      workflow_call: null,
       workflow_dispatch: {
         inputs: {
           mode: {
@@ -123,6 +148,15 @@ const workflowPolicies = new Map([
     },
   ],
   [
+    'runtime-publish.yml',
+    {
+      push: {
+        branches: ['dev'],
+        paths: runtimePublishPaths,
+      },
+    },
+  ],
+  [
     'supply-chain.yml',
     {
       pull_request: null,
@@ -151,7 +185,11 @@ const workflowPolicies = new Map([
 const exactWorkflowDigests = new Map([
   [
     'runtime-image-security.yml',
-    '96d6c8d02f40abd08dbff7d5889c79bf463531591134496add9e983798fff8b3',
+    '6abfc8e5af63fed8b317fc81befdd4f735b8abbf838aeae711f27fe7996a63fa',
+  ],
+  [
+    'runtime-publish.yml',
+    'cbb5c69dcd07b50022cc02fc2789feeffe8b3b6ba66dff67e5639282b4b26496',
   ],
 ]);
 
@@ -182,7 +220,7 @@ const exactPolicyFileDigests = new Map([
   ],
   [
     '.github/scripts/validate-runtime-image-inventory.mjs',
-    'a8320940e84be81ca5d8aae64944d8eb65cb30ff9abce0c5217334e56de52508',
+    '3c898ff9eb86943d82c998bb4305dcb1b2859dbd89ac656abd4e778e79244d9b',
   ],
   [
     '.github/scripts/verify-runtime-bundle-input.mjs',
@@ -220,10 +258,13 @@ const allowedActionUses = new Set([
   'actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294',
   'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020',
   'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+  'actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6',
   'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
   'aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25',
   'cypress-io/github-action@f790eee7a50d9505912f50c2095510be7de06aa7',
   'docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7',
+  'docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c',
+  'docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a',
   'foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a',
   'pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271',
   'pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1',
@@ -775,6 +816,199 @@ const auditSafeAppBackendPublisher = (repositoryRoot, workflowPath, errors) => {
   }
 };
 
+const auditRuntimePublisher = (
+  expectedEvents,
+  repositoryRoot,
+  workflowPath,
+  errors,
+  visitedActions
+) => {
+  const displayPath = relative(repositoryRoot, workflowPath);
+  const { text, value } = readYaml(workflowPath, displayPath, errors);
+  auditRawText(text, displayPath, errors);
+  const expectedDigest = exactWorkflowDigests.get(
+    workflowPath.split(sep).at(-1)
+  );
+  if (expectedDigest !== undefined) {
+    const actualDigest = createHash('sha256').update(text).digest('hex');
+    if (actualDigest !== expectedDigest) {
+      errors.push(
+        `${displayPath}: source must exactly match the reviewed workflow digest`
+      );
+    }
+  }
+  if (!isRecord(value)) {
+    if (value !== undefined)
+      errors.push(`${displayPath}: workflow must be a mapping`);
+    return;
+  }
+
+  auditEvents(value.on, expectedEvents, displayPath, errors);
+  auditPermissions(value.permissions, displayPath, errors);
+
+  if (
+    !isRecord(value.jobs) ||
+    !sameStrings(Object.keys(value.jobs), [
+      'publish-runtime',
+      'validate-runtime',
+    ])
+  ) {
+    errors.push(
+      `${displayPath}: jobs must be exactly validate-runtime and publish-runtime`
+    );
+    return;
+  }
+
+  const trustedGate =
+    "vars.CANNON_RUNTIME_PUBLISH_ENABLED == 'true' && " +
+    "github.repository == 'Reya-Labs/cannon' && " +
+    "github.event_name == 'push' && " +
+    "github.ref == 'refs/heads/dev' && github.ref_protected";
+  const validateJob = value.jobs['validate-runtime'];
+  const expectedValidationPermissions = {
+    attestations: 'read',
+    contents: 'read',
+    packages: 'read',
+  };
+  if (
+    !isRecord(validateJob) ||
+    !sameStrings(Object.keys(validateJob), ['if', 'permissions', 'uses']) ||
+    validateJob.if !== trustedGate ||
+    validateJob.uses !== './.github/workflows/runtime-image-security.yml' ||
+    !isDeepStrictEqual(validateJob.permissions, expectedValidationPermissions)
+  ) {
+    errors.push(
+      `${displayPath}: validation must be the exact protected-dev, read-only runtime security call`
+    );
+  }
+
+  const publisherJob = value.jobs['publish-runtime'];
+  const expectedPublisherPermissions = {
+    'artifact-metadata': 'write',
+    attestations: 'write',
+    contents: 'read',
+    'id-token': 'write',
+    packages: 'write',
+  };
+  const expectedMatrix = {
+    include: [
+      {
+        runtime: 'repo',
+        dockerfile: './docker/repo.Dockerfile',
+        package_json: 'packages/repo/package.json',
+        image_name: 'ghcr.io/reya-labs/repo',
+        command: '["node","index.js"]',
+      },
+      {
+        runtime: 'indexer',
+        dockerfile: './docker/indexer.Dockerfile',
+        package_json: 'packages/indexer/package.json',
+        image_name: 'ghcr.io/reya-labs/indexer',
+        command: '["node","dist/registry/index.js"]',
+      },
+      {
+        runtime: 'api',
+        dockerfile: './docker/api.Dockerfile',
+        package_json: 'packages/api/package.json',
+        image_name: 'ghcr.io/reya-labs/api',
+        command: '["node","index.js"]',
+      },
+    ],
+  };
+  const expectedPublisherKeys = [
+    'concurrency',
+    'env',
+    'environment',
+    'if',
+    'needs',
+    'permissions',
+    'runs-on',
+    'steps',
+    'strategy',
+    'timeout-minutes',
+  ];
+  if (
+    !isRecord(publisherJob) ||
+    !sameStrings(Object.keys(publisherJob), expectedPublisherKeys) ||
+    publisherJob.needs !== 'validate-runtime' ||
+    publisherJob.if !==
+      "needs.validate-runtime.result == 'success' && " + trustedGate ||
+    publisherJob.environment !== 'cannon-image-publish' ||
+    publisherJob['runs-on'] !== 'ubuntu-24.04' ||
+    publisherJob['timeout-minutes'] !== 45 ||
+    !isDeepStrictEqual(
+      publisherJob.permissions,
+      expectedPublisherPermissions
+    ) ||
+    !isDeepStrictEqual(publisherJob.strategy, {
+      'fail-fast': false,
+      matrix: expectedMatrix,
+    }) ||
+    !isDeepStrictEqual(publisherJob.env, {
+      IMAGE_NAME: '${{ matrix.image_name }}',
+      SOURCE_REVISION: '${{ github.sha }}',
+    }) ||
+    !isDeepStrictEqual(publisherJob.concurrency, {
+      group: 'cannon-runtime-publish-${{ matrix.runtime }}-${{ github.sha }}',
+      'cancel-in-progress': false,
+    })
+  ) {
+    errors.push(
+      `${displayPath}: publisher job must match the reviewed protected-dev matrix and least-privilege contract`
+    );
+  }
+
+  if (!Array.isArray(publisherJob?.steps) || publisherJob.steps.length !== 8) {
+    errors.push(`${displayPath}: publisher must contain exactly eight steps`);
+  } else {
+    for (const [index, step] of publisherJob.steps.entries()) {
+      if (isRecord(step) && 'uses' in step) {
+        auditActionUse(
+          step.uses,
+          step,
+          repositoryRoot,
+          `${displayPath}:jobs.publish-runtime.steps.${index}.uses`,
+          errors,
+          visitedActions
+        );
+      }
+    }
+    const uses = publisherJob.steps
+      .map((step) => step?.uses)
+      .filter((use) => typeof use === 'string');
+    if (
+      !isDeepStrictEqual(uses, [
+        'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+        'docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7',
+        'docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c',
+        'docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a',
+        'actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6',
+      ])
+    ) {
+      errors.push(
+        `${displayPath}: publisher actions must exactly match the reviewed pinned set`
+      );
+    }
+  }
+
+  const secretsReferences = [
+    ...text.matchAll(/\bsecrets(?:\s*\.\s*[A-Za-z0-9_]+)+/giu),
+  ].map((match) => match[0].replace(/\s+/gu, ''));
+  const withoutNamedSecrets = secretsReferences.reduce(
+    (remaining, reference) => remaining.replace(reference, ''),
+    text
+  );
+  if (
+    secretsReferences.length !== 1 ||
+    secretsReferences[0] !== 'secrets.GITHUB_TOKEN' ||
+    /\bsecrets\b/iu.test(withoutNamedSecrets)
+  ) {
+    errors.push(
+      `${displayPath}: publisher must consume only one explicit secrets.GITHUB_TOKEN reference`
+    );
+  }
+};
+
 const auditRuntimeImageEvidenceContract = (repositoryRoot, errors) => {
   const evidenceName = 'bundle-input-dependencies.cdx.json';
   const generatorOutput = `/usr/app/${evidenceName}`;
@@ -1113,6 +1347,14 @@ export const auditRepository = (repositoryRoot = defaultRepositoryRoot) => {
     }
     if (workflow === 'safe-app-backend-publish.yml') {
       auditSafeAppBackendPublisher(root, join(workflowPath, workflow), errors);
+    } else if (workflow === 'runtime-publish.yml') {
+      auditRuntimePublisher(
+        workflowPolicies.get(workflow),
+        root,
+        join(workflowPath, workflow),
+        errors,
+        visitedActions
+      );
     } else {
       auditWorkflow(
         workflowPolicies.get(workflow),
