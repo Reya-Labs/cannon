@@ -20,7 +20,9 @@ pnpm build
 ```
 
 The output is written to `dist/`. `release.json` records the exact source digest, validated configuration digest,
-build revision, and per-file asset integrity. `_headers` supplies Cloudflare's CSP and browser hardening headers.
+build revision, and per-file asset integrity. `sbom.cdx.json` is a deterministic CycloneDX 1.6 inventory whose empty
+component and dependency sets record that the deployed shell has no runtime packages or client-side JavaScript.
+`_headers` supplies Cloudflare's CSP and browser hardening headers.
 
 Run the deterministic tests and whole-export dependency scan before publishing:
 
@@ -30,8 +32,9 @@ pnpm test
 pnpm scan
 ```
 
-The scan permits only the four expected export files. It rejects remote URLs, hosted Cannon/IPFS providers, scripts,
-forms, frames, symlinks, file-integrity mismatches, and any deviation from the generated CSP.
+The scan permits only the five expected export files. It binds the SBOM to the tested source, configuration, and
+revision and rejects any deployed component or dependency. It also rejects remote URLs, hosted Cannon/IPFS providers,
+scripts, forms, frames, symlinks, file-integrity mismatches, and any deviation from the generated CSP.
 
 ## Dormant Reya read clients
 

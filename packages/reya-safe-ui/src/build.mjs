@@ -23,7 +23,13 @@ const SOURCE_INPUTS = Object.freeze([
   'src/config.mjs',
   'src/template.mjs',
 ]);
-const ASSET_PATHS = Object.freeze(['_headers', 'assets/app.css', 'index.html']);
+const ASSET_PATHS = Object.freeze([
+  '_headers',
+  'assets/app.css',
+  'index.html',
+  'sbom.cdx.json',
+]);
+const COMPONENT_REFERENCE = 'pkg:npm/%40reya/cannon-safe-ui@0.0.0';
 
 async function readSourceInputs(packageRoot) {
   return Promise.all(
@@ -62,6 +68,51 @@ function releaseMetadata({
   };
 }
 
+function staticExportSbom({ buildSha, configDigest, sourceDigest }) {
+  return {
+    bomFormat: 'CycloneDX',
+    specVersion: '1.6',
+    version: 1,
+    metadata: {
+      component: {
+        'bom-ref': COMPONENT_REFERENCE,
+        type: 'application',
+        name: '@reya/cannon-safe-ui',
+        version: '0.0.0',
+        properties: [
+          {
+            name: 'io.reya.cannon.activation',
+            value: 'disabled',
+          },
+          {
+            name: 'io.reya.cannon.build.revision',
+            value: buildSha,
+          },
+          {
+            name: 'io.reya.cannon.build.source-digest',
+            value: sourceDigest,
+          },
+          {
+            name: 'io.reya.cannon.build.config-digest',
+            value: configDigest,
+          },
+          {
+            name: 'io.reya.cannon.runtime-javascript',
+            value: 'absent',
+          },
+        ],
+      },
+    },
+    components: [],
+    dependencies: [
+      {
+        ref: COMPONENT_REFERENCE,
+        dependsOn: [],
+      },
+    ],
+  };
+}
+
 export async function buildExport({
   env = process.env,
   outDir = DEFAULT_OUTPUT,
@@ -69,11 +120,17 @@ export async function buildExport({
 } = {}) {
   const { buildSha, configDigest, profile } = validateBuildEnvironment(env);
   const sourceDigest = digestFiles(await readSourceInputs(packageRoot));
+  const sbom = `${JSON.stringify(
+    staticExportSbom({ buildSha, configDigest, sourceDigest }),
+    null,
+    2
+  )}\n`;
 
   const assetContents = new Map([
     ['_headers', CLOUDFLARE_HEADERS],
     ['assets/app.css', STYLES],
     ['index.html', renderHtml({ buildSha, configDigest, sourceDigest })],
+    ['sbom.cdx.json', sbom],
   ]);
   const assets = ASSET_PATHS.map((relativePath) => ({
     path: relativePath,

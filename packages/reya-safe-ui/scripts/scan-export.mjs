@@ -13,11 +13,18 @@ const EXPECTED_FILES = Object.freeze([
   'assets/app.css',
   'index.html',
   'release.json',
+  'sbom.cdx.json',
 ]);
-const ASSET_FILES = Object.freeze(['_headers', 'assets/app.css', 'index.html']);
+const ASSET_FILES = Object.freeze([
+  '_headers',
+  'assets/app.css',
+  'index.html',
+  'sbom.cdx.json',
+]);
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const BUILD_SHA_PATTERN = /^[0-9a-f]{40}$/;
 const MAX_EXPORT_FILE_BYTES = 1024 * 1024;
+const COMPONENT_REFERENCE = 'pkg:npm/%40reya/cannon-safe-ui@0.0.0';
 
 const FORBIDDEN_CONTENT = Object.freeze([
   ['remote HTTP URL', /\bhttps?:\/\//i],
@@ -189,6 +196,81 @@ function validateRelease(release, contents) {
     throw new Error('HTML CSP does not match the generated policy');
 }
 
+function validateSbom(sbom, release) {
+  assertExactKeys(
+    sbom,
+    [
+      'bomFormat',
+      'specVersion',
+      'version',
+      'metadata',
+      'components',
+      'dependencies',
+    ],
+    'SBOM'
+  );
+  assertExactKeys(sbom.metadata, ['component'], 'SBOM metadata');
+  assertExactKeys(
+    sbom.metadata.component,
+    ['bom-ref', 'type', 'name', 'version', 'properties'],
+    'SBOM component'
+  );
+
+  if (
+    sbom.bomFormat !== 'CycloneDX' ||
+    sbom.specVersion !== '1.6' ||
+    sbom.version !== 1
+  ) {
+    throw new Error('SBOM identity is invalid');
+  }
+
+  const expectedComponent = {
+    'bom-ref': COMPONENT_REFERENCE,
+    type: 'application',
+    name: '@reya/cannon-safe-ui',
+    version: '0.0.0',
+    properties: [
+      {
+        name: 'io.reya.cannon.activation',
+        value: 'disabled',
+      },
+      {
+        name: 'io.reya.cannon.build.revision',
+        value: release.build.revision,
+      },
+      {
+        name: 'io.reya.cannon.build.source-digest',
+        value: release.build.sourceDigest,
+      },
+      {
+        name: 'io.reya.cannon.build.config-digest',
+        value: release.build.configDigest,
+      },
+      {
+        name: 'io.reya.cannon.runtime-javascript',
+        value: 'absent',
+      },
+    ],
+  };
+  if (
+    JSON.stringify(sbom.metadata.component) !==
+    JSON.stringify(expectedComponent)
+  ) {
+    throw new Error('SBOM component does not match the tested release');
+  }
+  if (!Array.isArray(sbom.components) || sbom.components.length !== 0) {
+    throw new Error('SBOM deployed components must be empty');
+  }
+  if (
+    !Array.isArray(sbom.dependencies) ||
+    sbom.dependencies.length !== 1 ||
+    JSON.stringify(sbom.dependencies[0]) !==
+      JSON.stringify({ ref: COMPONENT_REFERENCE, dependsOn: [] })
+  ) {
+    throw new Error('SBOM dependency graph must be empty');
+  }
+}
+
 export async function scanExport(exportRoot) {
   const root = path.resolve(exportRoot);
   const metadata = await lstat(root);
@@ -228,6 +310,14 @@ export async function scanExport(exportRoot) {
     throw new Error('release metadata is not valid JSON');
   }
   validateRelease(release, contents);
+
+  let sbom;
+  try {
+    sbom = JSON.parse(contents.get('sbom.cdx.json').toString('utf8'));
+  } catch {
+    throw new Error('SBOM is not valid JSON');
+  }
+  validateSbom(sbom, release);
 
   return Object.freeze({
     assetDigest: release.export.assetDigest,
