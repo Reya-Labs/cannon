@@ -1,6 +1,7 @@
 /.github/ @arturbeg @bogdan-reya
 /docker/ @arturbeg @bogdan-reya
 /packages/artifact-codec/ @arturbeg @bogdan-reya
+/packages/rpc-gateway/ @arturbeg @bogdan-reya
 /packages/safe-app-backend/ @arturbeg @bogdan-reya
 /packages/source-gateway/ @arturbeg @bogdan-reya
 /.changeset/ @arturbeg @bogdan-reya

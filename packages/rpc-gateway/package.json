@@ -1,0 +1,37 @@
+{
+  "name": "@reya/cannon-rpc-gateway",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fail-closed quorum RPC gateway for Reya Cannon",
+  "main": "dist/server.js",
+  "packageManager": "pnpm@10.11.0",
+  "engines": {
+    "node": "22.23.1"
+  },
+  "pnpm": {
+    "overrides": {
+      "vite": "6.4.3"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "lint": "prettier --check README.md package.json pnpm-lock.yaml tsconfig.json 'src/**/*.ts' 'test/**/*.ts'",
+    "lint:fix": "prettier --write README.md package.json pnpm-lock.yaml tsconfig.json 'src/**/*.ts' 'test/**/*.ts'",
+    "start": "node dist/server.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "express": "5.2.1",
+    "express-rate-limit": "7.5.0",
+    "helmet": "8.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "22.14.0",
+    "@types/supertest": "7.2.1",
+    "prettier": "3.4.2",
+    "supertest": "7.2.2",
+    "typescript": "5.8.3",
+    "vitest": "3.2.6"
+  }
+}
