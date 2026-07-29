@@ -9,6 +9,15 @@ const MAX_JSON_NODES = 1_000_000;
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 function unsupportedJsonObject(candidate) {
+  const prototype = Object.getPrototypeOf(candidate);
+  const constructor = Object.getOwnPropertyDescriptor(
+    prototype,
+    'constructor'
+  )?.value;
+  const constructorName =
+    typeof constructor === 'function'
+      ? Object.getOwnPropertyDescriptor(constructor, 'name')?.value
+      : undefined;
   const kind = Buffer.isBuffer(candidate)
     ? 'Buffer'
     : ArrayBuffer.isView(candidate)
@@ -17,6 +26,9 @@ function unsupportedJsonObject(candidate) {
     ? 'Map'
     : candidate instanceof Set
     ? 'Set'
+    : typeof constructorName === 'string' &&
+      /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(constructorName)
+    ? constructorName
     : 'object';
   return new Error(`ephemeral artifact is not JSON serializable: ${kind}`);
 }
