@@ -37,7 +37,7 @@ export const PREVIEW_BROKER_LIMITS = Object.freeze({
 });
 
 const CID_V0_PATTERN = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
-const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
+export const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 const RUN_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
