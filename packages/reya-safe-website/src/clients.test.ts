@@ -11,10 +11,13 @@ afterEach(() => {
 describe('local client transport', () => {
   it('rewrites only an allowed virtual route and preserves query and options', async () => {
     const response = new Response('{}', { status: 200 });
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => response);
+    const fetchMock = vi.fn(async (...args: Parameters<typeof fetch>) => {
+      void args;
+      return response;
+    });
     vi.stubGlobal('fetch', fetchMock);
     const localFetch = createLoopbackFetch(INGRESS_ORIGIN);
-    const init: RequestInit = {
+    const init: NonNullable<Parameters<typeof fetch>[1]> = {
       headers: { 'content-type': 'application/json' },
       method: 'POST',
     };

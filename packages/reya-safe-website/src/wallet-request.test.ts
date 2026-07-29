@@ -125,7 +125,8 @@ describe('injected wallet request', () => {
       },
       'missing message field',
     ],
-  ])('rejects %s (%s)', (candidate, _description) => {
+  ])('rejects %s (%s)', (candidate, description) => {
+    void description;
     expect(() => walletTypedData(candidate, OWNER, SAFE)).toThrow('WALLET_REQUEST_REJECTED');
   });
 });

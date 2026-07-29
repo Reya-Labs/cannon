@@ -74,7 +74,8 @@ describe('Reya Safe state admission', () => {
     [{ owners: [OWNER_A, OWNER_A] }, 'duplicate owners'],
     [{ threshold: 0n }, 'zero threshold'],
     [{ threshold: 3n }, 'threshold above owner count'],
-  ] as const)('rejects %s (%s)', async (overrides, _description) => {
+  ] as const)('rejects %s (%s)', async (overrides, description) => {
+    void description;
     await expect(readReyaSafeState(rpc(overrides as Overrides), SAFE)).rejects.toThrow('SAFE_STATE_REJECTED');
   });
 });
