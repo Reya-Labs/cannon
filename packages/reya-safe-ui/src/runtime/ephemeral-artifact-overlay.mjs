@@ -8,6 +8,19 @@ const MAX_JSON_DEPTH = 64;
 const MAX_JSON_NODES = 1_000_000;
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
+function unsupportedJsonObject(candidate) {
+  const kind = Buffer.isBuffer(candidate)
+    ? 'Buffer'
+    : ArrayBuffer.isView(candidate)
+    ? 'typed array'
+    : candidate instanceof Map
+    ? 'Map'
+    : candidate instanceof Set
+    ? 'Set'
+    : 'object';
+  return new Error(`ephemeral artifact is not JSON serializable: ${kind}`);
+}
+
 function boundedJson(value, maximumBytes) {
   let nodes = 0;
   let observedBytes = 0;
@@ -114,7 +127,7 @@ function boundedJson(value, maximumBytes) {
       typeof candidate !== 'object' ||
       ![Object.prototype, null].includes(Object.getPrototypeOf(candidate))
     ) {
-      throw new Error('ephemeral artifact is not JSON serializable');
+      throw unsupportedJsonObject(candidate);
     }
     const normalized = Object.create(null);
     let observedKeys = 0;
