@@ -803,6 +803,9 @@ importers:
       es-module-lexer:
         specifier: 1.6.0
         version: 1.6.0
+      parse5:
+        specifier: 7.2.1
+        version: 7.2.1
 
   packages/safe-app-backend:
     dependencies:
