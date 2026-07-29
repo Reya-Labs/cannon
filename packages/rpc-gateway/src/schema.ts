@@ -91,6 +91,12 @@ function callObject(value: unknown, maximumBytes: number): Record<string, unknow
   return result;
 }
 
+/**
+ * Decodes one strict JSON-RPC 2.0 request envelope.
+ *
+ * Batches and unknown, missing, or invalid framing fields are rejected with a
+ * 400 error. Method-specific validation is performed by {@link prepareRequest}.
+ */
 export function decodeRpcRequest(value: unknown): RpcRequest {
   if (Array.isArray(value)) {
     throw new HttpError(400, 'batch_forbidden', 'JSON-RPC batches are disabled for the initial gateway');
@@ -111,6 +117,13 @@ export function decodeRpcRequest(value: unknown): RpcRequest {
   return decoded as RpcRequest;
 }
 
+/**
+ * Validates and normalizes a request against the read-only RPC allowlist.
+ *
+ * The returned request carries its weighted limiter cost. Method parameters are
+ * normalized and `eth_call` calldata is bounded by `maximumCalldataBytes`;
+ * unsupported methods and invalid parameters are rejected.
+ */
 export function prepareRequest(request: RpcRequest, maximumCalldataBytes: number): PreparedRequest {
   const params = request.params;
   let prepared: unknown[];
@@ -158,6 +171,13 @@ export function prepareRequest(request: RpcRequest, maximumCalldataBytes: number
   return { cost, id: request.id, method: request.method, params: prepared };
 }
 
+/**
+ * Returns a cloned request pinned to the agreed provider snapshot.
+ *
+ * Every supported `latest` block selector becomes `snapshotBlock`. Explicit
+ * blocks newer than the snapshot are rejected, while historical selectors and
+ * the original request remain unchanged.
+ */
 export function pinBlockTags(request: PreparedRequest, snapshotBlock: bigint): PreparedRequest {
   const params = structuredClone(request.params);
   const indices: Record<string, number[]> = {

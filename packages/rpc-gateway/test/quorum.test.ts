@@ -4,6 +4,9 @@ import type { PreparedRequest } from '../src/schema';
 import type { UpstreamClient, UpstreamOutcome } from '../src/upstream';
 import { config, encodedOwners, encodedUint, FakeUpstream } from './fixtures';
 
+const MIXED_CASE_HASH = `0x${'aB'.repeat(32)}`;
+const NORMALIZED_HASH = MIXED_CASE_HASH.toLowerCase();
+
 function service(fake: FakeUpstream, overrides = {}) {
   return new QuorumService(config(overrides), fake as unknown as UpstreamClient);
 }
@@ -156,6 +159,31 @@ describe('QuorumService', () => {
     });
   });
 
+  it.each([
+    [
+      'eth_getBlockByHash',
+      [MIXED_CASE_HASH, false],
+      {
+        hash: NORMALIZED_HASH,
+        number: '0x10',
+        parentHash: `0x${'34'.repeat(32)}`,
+        stateRoot: `0x${'56'.repeat(32)}`,
+        timestamp: '0x1',
+      },
+    ],
+    ['eth_getTransactionByHash', [MIXED_CASE_HASH], { blockNumber: '0x10', hash: NORMALIZED_HASH }],
+    ['eth_getTransactionReceipt', [MIXED_CASE_HASH], { blockNumber: '0x10', transactionHash: NORMALIZED_HASH }],
+  ])('case-normalizes the requested hash when binding %s responses', async (method, params, matchingResult) => {
+    const fake = new FakeUpstream();
+    const quorum = service(fake);
+    await quorum.readiness();
+    fake.override = (_provider, candidateMethod, _params, value) => (candidateMethod === method ? matchingResult : value);
+    await expect(quorum.execute({ cost: 1, id: 1, method, params })).resolves.toEqual({
+      kind: 'result',
+      result: matchingResult,
+    });
+  });
+
   it('waits for a slow sibling provider before releasing a failed quorum request', async () => {
     const fake = new FakeUpstream();
     const quorum = service(fake);
@@ -192,10 +220,50 @@ describe('QuorumService', () => {
       }
     );
     await slowStarted;
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await Promise.resolve();
+    await Promise.resolve();
     expect(settled).toBe(false);
     releaseSlow?.();
     await expect(execution).rejects.toThrow('fast failure');
+  });
+
+  it('coalesces concurrent post-read reorg probes without letting them start before the reads finish', async () => {
+    const fake = new FakeUpstream();
+    const quorum = service(fake);
+    await quorum.readiness();
+    const original = fake.request.bind(fake);
+    let balanceCalls = 0;
+    let releaseReads: (() => void) | undefined;
+    let signalReads: (() => void) | undefined;
+    const readsStarted = new Promise<void>((resolve) => {
+      signalReads = resolve;
+    });
+    const readsBlocked = new Promise<void>((resolve) => {
+      releaseReads = resolve;
+    });
+    fake.request = async (provider, method, params) => {
+      if (method !== 'eth_getBalance') return original(provider, method, params);
+      balanceCalls++;
+      if (balanceCalls === 4) signalReads?.();
+      await readsBlocked;
+      return { kind: 'result', result: '0x10' };
+    };
+    const request: PreparedRequest = {
+      cost: 1,
+      id: 1,
+      method: 'eth_getBalance',
+      params: ['0x1111111111111111111111111111111111111111', 'latest'],
+    };
+    const first = quorum.execute(request);
+    const second = quorum.execute({ ...request, id: 2 });
+    await readsStarted;
+    expect(fake.calls.filter((call) => call.method === 'eth_getBlockByNumber')).toHaveLength(4);
+    releaseReads?.();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { kind: 'result', result: '0x10' },
+      { kind: 'result', result: '0x10' },
+    ]);
+    expect(fake.calls.filter((call) => call.method === 'eth_getBlockByNumber')).toHaveLength(6);
   });
 
   it('rejects a same-height reorg between cached readiness and a dual state read', async () => {
