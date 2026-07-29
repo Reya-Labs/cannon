@@ -12,6 +12,10 @@ const ENV = Object.freeze({
   REYA_SAFE_UI_BUILD_SHA: 'fedcba9876543210fedcba9876543210fedcba98',
   REYA_SAFE_UI_CHAIN_ID: '1729',
   REYA_SAFE_UI_PROFILE: 'reya-mainnet',
+  REYA_SAFE_UI_SAFE_ADDRESS:
+    '0x1111111111111111111111111111111111111111',
+  REYA_SAFE_UI_SERVICE_ORIGIN:
+    'https://cannon-api.reya-tailnet.ts.net',
 });
 
 async function fixture(context) {
@@ -159,6 +163,69 @@ test('rejects release metadata whose config digest does not match its profile', 
   await assert.rejects(
     () => scanExport(output),
     /release config digest does not match the validated profile/
+  );
+});
+
+test('rejects an unapproved service origin in release metadata', async (context) => {
+  const output = await fixture(context);
+  const releasePath = path.join(output, 'release.json');
+  const release = JSON.parse(await readFile(releasePath, 'utf8'));
+  release.profile.serviceOrigin = 'https://repo.usecannon.com';
+  release.build.configDigest = sha256(JSON.stringify(release.profile));
+  await writeFile(releasePath, `${JSON.stringify(release, null, 2)}\n`);
+
+  await assert.rejects(
+    () => scanExport(output),
+    /release profile is not the canonical Reya preview profile/
+  );
+});
+
+test('rejects a remote fallback hidden in release metadata', async (context) => {
+  const output = await fixture(context);
+  const releasePath = path.join(output, 'release.json');
+  const release = JSON.parse(await readFile(releasePath, 'utf8'));
+  release.profile.fallbackOrigin = 'https://repo.usecannon.com';
+  release.build.configDigest = sha256(JSON.stringify(release.profile));
+  await writeFile(releasePath, `${JSON.stringify(release, null, 2)}\n`);
+
+  await assert.rejects(
+    () => scanExport(output),
+    /release profile is not the canonical Reya preview profile/
+  );
+});
+
+test('rejects a hosted fallback hidden behind a duplicate JSON key', async (context) => {
+  const output = await fixture(context);
+  const releasePath = path.join(output, 'release.json');
+  const release = await readFile(releasePath, 'utf8');
+  await writeFile(
+    releasePath,
+    release.replace(
+      `"serviceOrigin": "${ENV.REYA_SAFE_UI_SERVICE_ORIGIN}"`,
+      `"serviceOrigin": "https://repo.usecannon.com",\n    "serviceOrigin": "${ENV.REYA_SAFE_UI_SERVICE_ORIGIN}"`
+    )
+  );
+
+  await assert.rejects(
+    () => scanExport(output),
+    /release metadata is not canonical JSON/
+  );
+});
+
+test('rejects reordered release metadata even with a matching digest', async (context) => {
+  const output = await fixture(context);
+  const releasePath = path.join(output, 'release.json');
+  const release = JSON.parse(await readFile(releasePath, 'utf8'));
+  release.profile = {
+    schemaVersion: release.profile.schemaVersion,
+    ...release.profile,
+  };
+  release.build.configDigest = sha256(JSON.stringify(release.profile));
+  await writeFile(releasePath, `${JSON.stringify(release, null, 2)}\n`);
+
+  await assert.rejects(
+    () => scanExport(output),
+    /release profile is not canonically ordered/
   );
 });
 

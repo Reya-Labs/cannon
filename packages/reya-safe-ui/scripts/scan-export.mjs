@@ -2,7 +2,12 @@ import { lstat, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'parse5';
-import { compareCanonicalText, digestFiles, sha256 } from '../src/config.mjs';
+import {
+  compareCanonicalText,
+  digestFiles,
+  sha256,
+  validatePreviewProfile,
+} from '../src/config.mjs';
 import { CLOUDFLARE_HEADERS, META_CSP } from '../src/template.mjs';
 
 const PACKAGE_ROOT = path.resolve(
@@ -193,11 +198,6 @@ function validateRelease(release, contents) {
     'release metadata'
   );
   assertExactKeys(
-    release.profile,
-    ['schemaVersion', 'name', 'chainId', 'activation'],
-    'release profile'
-  );
-  assertExactKeys(
     release.build,
     ['revision', 'sourceDigest', 'configDigest'],
     'release build'
@@ -210,13 +210,16 @@ function validateRelease(release, contents) {
     throw new Error('release application is invalid');
   if (release.activation !== 'disabled')
     throw new Error('release activation must be disabled');
+  let canonicalProfile;
+  try {
+    canonicalProfile = validatePreviewProfile(release.profile);
+  } catch {
+    throw new Error('release profile is not the canonical Reya preview profile');
+  }
   if (
-    release.profile.schemaVersion !== 1 ||
-    release.profile.name !== 'reya-mainnet' ||
-    release.profile.chainId !== 1729 ||
-    release.profile.activation !== 'disabled'
+    JSON.stringify(canonicalProfile) !== JSON.stringify(release.profile)
   ) {
-    throw new Error('release profile is not the disabled Reya mainnet profile');
+    throw new Error('release profile is not canonically ordered');
   }
   if (!BUILD_SHA_PATTERN.test(release.build.revision))
     throw new Error('release build revision is invalid');
@@ -373,9 +376,11 @@ export async function scanExport(exportRoot) {
         `export file is not valid plain UTF-8 text: ${relativePath}`
       );
     }
-    for (const [label, pattern] of FORBIDDEN_CONTENT) {
-      if (pattern.test(text))
-        throw new Error(`${relativePath} contains forbidden ${label}`);
+    if (relativePath !== 'release.json') {
+      for (const [label, pattern] of FORBIDDEN_CONTENT) {
+        if (pattern.test(text))
+          throw new Error(`${relativePath} contains forbidden ${label}`);
+      }
     }
     contents.set(relativePath, bytes);
   }
@@ -393,6 +398,12 @@ export async function scanExport(exportRoot) {
     throw new Error('release metadata is not valid JSON');
   }
   validateRelease(release, contents);
+  if (
+    contents.get('release.json').toString('utf8') !==
+    `${JSON.stringify(release, null, 2)}\n`
+  ) {
+    throw new Error('release metadata is not canonical JSON');
+  }
 
   let sbom;
   try {

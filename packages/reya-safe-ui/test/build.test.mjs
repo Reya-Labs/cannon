@@ -13,6 +13,10 @@ const ENV = Object.freeze({
   REYA_SAFE_UI_BUILD_SHA: BUILD_SHA,
   REYA_SAFE_UI_CHAIN_ID: '1729',
   REYA_SAFE_UI_PROFILE: 'reya-mainnet',
+  REYA_SAFE_UI_SAFE_ADDRESS:
+    '0x1111111111111111111111111111111111111111',
+  REYA_SAFE_UI_SERVICE_ORIGIN:
+    'https://cannon-api.reya-tailnet.ts.net',
 });
 
 async function snapshot(root, current = root) {
@@ -75,6 +79,14 @@ test('builds a deterministic, disabled-only static export', async (context) => {
   );
   assert.equal(release.activation, 'disabled');
   assert.equal(release.profile.chainId, 1729);
+  assert.equal(
+    release.profile.safeAddress,
+    ENV.REYA_SAFE_UI_SAFE_ADDRESS
+  );
+  assert.equal(
+    release.profile.serviceOrigin,
+    ENV.REYA_SAFE_UI_SERVICE_ORIGIN
+  );
   assert.match(release.build.sourceDigest, /^sha256:[0-9a-f]{64}$/);
   assert.match(release.build.configDigest, /^sha256:[0-9a-f]{64}$/);
   assert.match(release.export.assetDigest, /^sha256:[0-9a-f]{64}$/);
