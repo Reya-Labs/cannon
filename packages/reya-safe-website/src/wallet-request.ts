@@ -19,6 +19,12 @@ function exactRecord(value: unknown, keys: readonly string[]): Record<string, un
   return value as Record<string, unknown>;
 }
 
+/**
+ * Serializes exactly the expected Safe EIP-712 request for an injected wallet.
+ *
+ * Rejects additional or missing request, domain, type, and message fields
+ * before any value is passed to the wallet provider.
+ */
 export function walletTypedData(value: unknown, expectedAccount: `0x${string}`, expectedSafeAddress: `0x${string}`): string {
   const request = exactRecord(value, REQUEST_KEYS);
   const domain = exactRecord(request.domain, ['chainId', 'verifyingContract']);

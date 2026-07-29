@@ -21,6 +21,9 @@ const forbidden = [
 ];
 
 const rootEntries = await readdir(root, { withFileTypes: true });
+if (rootEntries.some((entry) => entry.name.endsWith('.map'))) {
+  throw new Error('Reya profile export contains browser source maps');
+}
 if (
   rootEntries.length !== allowedRoot.size ||
   [...allowedRoot].some(

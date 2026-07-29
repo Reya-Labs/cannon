@@ -122,6 +122,15 @@ test('local ingress exposes only bounded reads and injects backend identity', as
   assert.equal(supersede.status, 404);
   assert.equal(observed.length, before);
 
+  const wrongSafe = await fetch(
+    `${origin}/staging/1729/0x2222222222222222222222222222222222222222`,
+    {
+      headers: { origin: UI_ORIGIN },
+    }
+  );
+  assert.equal(wrongSafe.status, 404);
+  assert.equal(observed.length, before);
+
   const unknownPreflight = await fetch(`${origin}/not-a-route`, {
     headers: {
       'access-control-request-method': 'POST',
@@ -130,6 +139,12 @@ test('local ingress exposes only bounded reads and injects backend identity', as
     method: 'OPTIONS',
   });
   assert.equal(unknownPreflight.status, 404);
+  assert.deepEqual(await unknownPreflight.json(), {
+    error: {
+      code: 'not_found',
+      message: 'local request rejected',
+    },
+  });
   assert.equal(observed.length, before);
 
   const wrongMediaType = await fetch(`${origin}/rpc/1729`, {
@@ -141,6 +156,12 @@ test('local ingress exposes only bounded reads and injects backend identity', as
     method: 'POST',
   });
   assert.equal(wrongMediaType.status, 400);
+  assert.deepEqual(await wrongMediaType.json(), {
+    error: {
+      code: 'request_rejected',
+      message: 'local request rejected',
+    },
+  });
   assert.equal(observed.length, before);
 
   const write = await fetch(`${origin}/rpc/1729`, {
@@ -174,6 +195,18 @@ test('local ingress exposes only bounded reads and injects backend identity', as
   });
   assert.equal(wrongOrigin.status, 403);
   assert.equal(observed.length, before);
+});
+
+test('local ingress refuses to listen when the upstream is not Reya Network', async () => {
+  const fetchImpl = async (_url, init) => {
+    const request = JSON.parse(init.body);
+    return rpcResponse(request, '0x1');
+  };
+
+  await assert.rejects(
+    createLocalIngress(config(), { fetchImpl }),
+    /RPC upstream is not Reya Network/
+  );
 });
 
 test('local ingress configuration is fixed to loopback and does not expose RPC credentials', () => {

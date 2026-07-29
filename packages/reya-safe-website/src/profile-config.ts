@@ -2,6 +2,12 @@ const ADDRESS_PATTERN = /^0x[0-9a-f]{40}$/;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
 
+/**
+ * Immutable configuration embedded in the local-only Reya website export.
+ *
+ * Chain ID 1729 and the `127.0.0.1:8787` ingress are fixed. The Safe address
+ * and full source commit come from required build-time environment variables.
+ */
 export type ReyaLocalProfileConfig = Readonly<{
   chainId: 1729;
   ingressOrigin: string;
@@ -40,6 +46,14 @@ function loopbackOrigin(value: string): string {
   return url.origin;
 }
 
+/**
+ * Loads immutable build-time configuration for the constrained local profile.
+ *
+ * Requires `REYA_LOCAL_PROFILE`, `REYA_LOCAL_INGRESS_ORIGIN`,
+ * `REYA_LOCAL_SAFE_ADDRESS`, and `REYA_LOCAL_SOURCE_COMMIT`. It throws and
+ * prevents the export unless explicitly enabled and pinned to the fixed chain,
+ * loopback ingress, one non-zero Safe, and one lowercase full source commit.
+ */
 export function loadReyaLocalProfileConfig(env: Record<string, string | undefined> = process.env): ReyaLocalProfileConfig {
   if (required(env, 'REYA_LOCAL_PROFILE') !== 'enabled') {
     throw new Error('REYA_LOCAL_PROFILE must be enabled');

@@ -93,4 +93,39 @@ describe('injected wallet request', () => {
     ).toThrow('WALLET_REQUEST_REJECTED');
     expect(() => walletTypedData({ ...request(), chain: 1729 }, OWNER, SAFE)).toThrow('WALLET_REQUEST_REJECTED');
   });
+
+  it.each([
+    [{ ...request(), primaryType: 'Transaction' }, 'different primary type'],
+    [{ ...request(), types: { SafeTx: { name: 'to', type: 'address' } } }, 'non-array SafeTx type'],
+    [
+      {
+        ...request(),
+        domain: { ...request().domain, name: 'unexpected' },
+      },
+      'extra domain field',
+    ],
+    [
+      {
+        ...request(),
+        domain: { chainId: 1729 },
+      },
+      'missing domain field',
+    ],
+    [
+      {
+        ...request(),
+        message: { ...request().message, unexpected: 1 },
+      },
+      'extra message field',
+    ],
+    [
+      {
+        ...request(),
+        message: Object.fromEntries(Object.entries(request().message).filter(([key]) => key !== 'data')),
+      },
+      'missing message field',
+    ],
+  ])('rejects %s (%s)', (candidate, _description) => {
+    expect(() => walletTypedData(candidate, OWNER, SAFE)).toThrow('WALLET_REQUEST_REJECTED');
+  });
 });

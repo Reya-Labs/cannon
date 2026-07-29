@@ -111,6 +111,10 @@ function simulationCall(
   });
 }
 
+/**
+ * Parses and verifies a bounded read-only Cannon preview for one source commit
+ * and Safe. The simulation call list is treated as the canonical evidence.
+ */
 export function parseReyaPreview(
   input: string,
   expected: {
@@ -197,6 +201,10 @@ export function parseReyaPreview(
   });
 }
 
+/**
+ * Converts a verified preview into one Safe delegatecall at the observed nonce.
+ * Previews with deployer prerequisites are never stageable.
+ */
 export function makeStageableSafeTransaction(preview: ReyaPreview, nonce: number): SafeTransaction {
   if (preview.deployerPrerequisiteCount !== 0 || !Number.isSafeInteger(nonce) || nonce < 0) {
     throw new Error('PREVIEW_NOT_STAGEABLE');

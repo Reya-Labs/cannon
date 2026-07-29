@@ -37,7 +37,10 @@ function displayError(error: unknown): string {
     'serviceCode' in error &&
     typeof error.serviceCode === 'string'
   ) {
-    return `STAGING_${error.serviceCode.toUpperCase()}`;
+    const serviceCode = error.serviceCode.toUpperCase();
+    if (/^[A-Z0-9_]{1,64}$/.test(serviceCode)) {
+      return `STAGING_${serviceCode}`;
+    }
   }
   if (
     error !== null &&

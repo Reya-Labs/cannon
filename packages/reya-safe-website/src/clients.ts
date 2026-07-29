@@ -13,7 +13,11 @@ const ALLOWED_PATHS = Object.freeze([
   /^\/staging\/1729\/0x[0-9a-f]{40}$/,
 ]);
 
-function createLoopbackFetch(ingressOrigin: string): typeof fetch {
+/**
+ * Creates a transport that rewrites only the three declared virtual service
+ * routes to the fixed local ingress. No caller-controlled host is forwarded.
+ */
+export function createLoopbackFetch(ingressOrigin: string): typeof fetch {
   return async (input, init) => {
     const virtual = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
     if (virtual.origin !== VIRTUAL_SERVICE_ORIGIN || !ALLOWED_PATHS.some((pattern) => pattern.test(virtual.pathname))) {
@@ -26,7 +30,10 @@ function createLoopbackFetch(ingressOrigin: string): typeof fetch {
   };
 }
 
-function verifyAbiSelector(signature: string, selector: string): boolean {
+/**
+ * Verifies that an ABI function signature hashes to the supplied selector.
+ */
+export function verifyAbiSelector(signature: string, selector: string): boolean {
   if (typeof signature !== 'string' || typeof selector !== 'string') {
     return false;
   }
@@ -37,6 +44,15 @@ function verifyAbiSelector(signature: string, selector: string): boolean {
   }
 }
 
+/**
+ * Creates the constrained clients for the local Reya profile.
+ *
+ * Read-only RPC, pinned source, and exact-Safe staging routes are mapped from a
+ * non-routable virtual origin to the fixed loopback ingress. Artifact access is
+ * disabled. The returned signing client validates the Safe payload and signer;
+ * the staging client permits only current-proposal reads and bounded signature
+ * submission/supersession operations implemented by the shared client package.
+ */
 export function createReyaLocalClients(config: ReyaLocalProfileConfig) {
   const fetchImpl = createLoopbackFetch(config.ingressOrigin);
   const read = createReyaReadOnlyClients({

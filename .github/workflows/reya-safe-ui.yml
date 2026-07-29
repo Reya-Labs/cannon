@@ -112,6 +112,7 @@ jobs:
       - name: Build the constrained local profile
         run: pnpm --filter @reya/cannon-safe-website build
         env:
+          REYA_LOCAL_PROFILE: enabled
           REYA_LOCAL_INGRESS_ORIGIN: http://127.0.0.1:8787
           REYA_LOCAL_SAFE_ADDRESS: '0x1111111111111111111111111111111111111111'
           REYA_LOCAL_SOURCE_COMMIT: 2b10669075b91eb8db781d199292f30c52f8e994
