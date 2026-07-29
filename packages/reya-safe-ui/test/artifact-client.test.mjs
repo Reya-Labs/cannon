@@ -294,3 +294,32 @@ test('applies the artifact deadline through a stalled response stream', async ()
     assertClientError('REQUEST_TIMEOUT')
   );
 });
+
+test('links broker cancellation to the underlying artifact fetch', async () => {
+  const controller = new AbortController();
+  let fetchSignal;
+  const client = createReyaReadOnlyClients({
+    fetchImpl: async (_url, options) => {
+      fetchSignal = options.signal;
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener(
+          'abort',
+          () => reject(new Error('fetch aborted')),
+          { once: true }
+        );
+      });
+    },
+    serviceOrigin: SERVICE_ORIGIN,
+    verifyAbiSelector,
+    verifyArtifactCid: async () => DEPLOY_CID,
+  });
+
+  const request = client.artifacts.cat(
+    { cid: DEPLOY_CID },
+    { signal: controller.signal }
+  );
+  controller.abort();
+
+  await assert.rejects(request, assertClientError('REQUEST_FAILED'));
+  assert.equal(fetchSignal.aborted, true);
+});

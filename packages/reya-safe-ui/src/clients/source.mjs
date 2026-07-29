@@ -1,7 +1,11 @@
 import toml from '@iarna/toml';
 import { REYA_READ_LIMITS } from './config.mjs';
 import { fail } from './errors.mjs';
-import { boundedRequest, parseJson } from './transport.mjs';
+import {
+  boundedRequest,
+  parseJson,
+  validateRequestContext,
+} from './transport.mjs';
 
 export const SOURCE_REPOSITORY = 'Reya-Labs/reya-deployments';
 export const SOURCE_ROOT = 'packages/tomls/src/omnibus/reya_network.toml';
@@ -211,14 +215,16 @@ function validateInput(input) {
 export function createSourceClient(config) {
   return Object.freeze({
     async bundle(...args) {
-      if (args.length !== 1) fail('INVALID_INPUT');
+      if (args.length < 1 || args.length > 2) fail('INVALID_INPUT');
       const commit = validateInput(args[0]);
+      const externalSignal = validateRequestContext(args[1]);
       const url = new URL(config.serviceOrigin);
       url.pathname = `${SOURCE_ROUTE_PREFIX}${commit}/reya-network`;
 
       const bytes = await boundedRequest({
         accept: 'application/json',
         deadlineMs: config.sourceDeadlineMs,
+        externalSignal,
         fetchImpl: config.fetchImpl,
         maximumBytes: REYA_READ_LIMITS.sourceBytes,
         method: 'GET',

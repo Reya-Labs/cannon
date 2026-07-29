@@ -2,12 +2,14 @@ import { REYA_READ_LIMITS } from './config.mjs';
 import { fail, ReyaReadClientError } from './errors.mjs';
 
 const TIMEOUT = Symbol('read-client-timeout');
+const CANCELLED = Symbol('read-client-cancelled');
 const CANCELLED_BODIES = new WeakSet();
 
-function startDeadline(milliseconds) {
+function startDeadline(milliseconds, externalSignal) {
   const controller = new AbortController();
   let expired = false;
   let timeoutId;
+  let removeExternalAbort = () => {};
 
   const timeout = new Promise((resolve, reject) => {
     timeoutId = setTimeout(() => {
@@ -15,6 +17,20 @@ function startDeadline(milliseconds) {
       controller.abort();
       reject(TIMEOUT);
     }, milliseconds);
+
+    if (externalSignal !== undefined) {
+      const cancel = () => {
+        controller.abort();
+        reject(CANCELLED);
+      };
+      if (externalSignal.aborted) {
+        cancel();
+      } else {
+        externalSignal.addEventListener('abort', cancel, { once: true });
+        removeExternalAbort = () =>
+          externalSignal.removeEventListener('abort', cancel);
+      }
+    }
   });
 
   return Object.freeze({
@@ -24,11 +40,35 @@ function startDeadline(milliseconds) {
     },
     finish() {
       clearTimeout(timeoutId);
+      removeExternalAbort();
     },
     race(promise) {
       return Promise.race([promise, timeout]);
     },
   });
+}
+
+export function validateRequestContext(value) {
+  if (value === undefined) return undefined;
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Object.prototype ||
+    Reflect.ownKeys(value).length !== 1
+  ) {
+    fail('INVALID_INPUT');
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(value, 'signal');
+  if (
+    descriptor === undefined ||
+    !Object.hasOwn(descriptor, 'value') ||
+    descriptor.enumerable !== true ||
+    !(descriptor.value instanceof AbortSignal)
+  ) {
+    fail('INVALID_INPUT');
+  }
+  return descriptor.value;
 }
 
 function parseContentLength(headers, maximumBytes) {
@@ -135,13 +175,14 @@ export async function boundedRequest({
   body,
   contentType,
   deadlineMs,
+  externalSignal,
   fetchImpl,
   maximumBytes,
   method,
   responseMediaType,
   url,
 }) {
-  const deadline = startDeadline(deadlineMs);
+  const deadline = startDeadline(deadlineMs, externalSignal);
   let response;
   let bodyReadCompleted = false;
 
@@ -180,6 +221,9 @@ export async function boundedRequest({
   } catch (error) {
     if (!bodyReadCompleted) cancelBody(response);
     if (error === TIMEOUT || deadline.expired) fail('REQUEST_TIMEOUT');
+    if (error === CANCELLED || externalSignal?.aborted) {
+      fail('REQUEST_FAILED');
+    }
     if (error instanceof ReyaReadClientError) throw error;
     fail('REQUEST_FAILED');
   } finally {

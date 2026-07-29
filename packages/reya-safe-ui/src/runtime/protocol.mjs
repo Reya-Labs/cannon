@@ -23,6 +23,7 @@ export const PREVIEW_RPC_METHODS = Object.freeze([
 
 export const PREVIEW_BROKER_LIMITS = Object.freeze({
   artifactBytes: 50 * 1024 * 1024,
+  artifactConcurrency: 1,
   concurrentRequests: 4,
   inputBytes: 512 * 1024,
   inputDepth: 12,

@@ -31,14 +31,16 @@ jobs:
         with:
           node-version: 22.23.1
           cache: pnpm
-          cache-dependency-path: packages/reya-safe-ui/pnpm-lock.yaml
-      - run: pnpm --dir packages/reya-safe-ui --ignore-workspace install --frozen-lockfile --ignore-scripts
-      - run: pnpm --dir packages/reya-safe-ui --ignore-workspace lint
-      - run: pnpm --dir packages/reya-safe-ui --ignore-workspace test
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile --ignore-scripts --filter @reya/cannon-safe-ui...
+      - name: Build the exact workspace Cannon runtime used by local QA
+        run: pnpm --filter @usecannon/builder build:node
+      - run: pnpm --filter @reya/cannon-safe-ui lint
+      - run: pnpm --filter @reya/cannon-safe-ui test
       - name: Prove Reya read clients remain dormant and fallback-free
-        run: pnpm --dir packages/reya-safe-ui --ignore-workspace verify:dormant
+        run: pnpm --filter @reya/cannon-safe-ui verify:dormant
       - name: Build the disabled Reya profile
-        run: pnpm --dir packages/reya-safe-ui --ignore-workspace build
+        run: pnpm --filter @reya/cannon-safe-ui build
         env:
           REYA_SAFE_UI_ACTIVATION: disabled
           REYA_SAFE_UI_BUILD_SHA: ${{ github.sha }}
@@ -49,7 +51,7 @@ jobs:
           REYA_SAFE_UI_SAFE_ADDRESS: '0x1111111111111111111111111111111111111111'
           REYA_SAFE_UI_SERVICE_ORIGIN: https://cannon-api.reya-tailnet.ts.net
       - name: Reject undeclared files and hosted runtime dependencies
-        run: pnpm --dir packages/reya-safe-ui --ignore-workspace scan
+        run: pnpm --filter @reya/cannon-safe-ui scan
       - name: Capture tested release metadata
         id: release
         working-directory: packages/reya-safe-ui

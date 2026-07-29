@@ -1,7 +1,11 @@
 import { PREVIEW_RPC_METHODS } from '../runtime/protocol.mjs';
 import { REYA_READ_LIMITS } from './config.mjs';
 import { fail } from './errors.mjs';
-import { boundedRequest, parseJson } from './transport.mjs';
+import {
+  boundedRequest,
+  parseJson,
+  validateRequestContext,
+} from './transport.mjs';
 
 export const RPC_ROUTE_PATH = '/rpc/1729';
 
@@ -160,9 +164,14 @@ export function createRpcClient(config) {
 
   return Object.freeze({
     async read(...args) {
-      if (args.length !== 1 || !Number.isSafeInteger(nextId)) {
+      if (
+        args.length < 1 ||
+        args.length > 2 ||
+        !Number.isSafeInteger(nextId)
+      ) {
         fail('INVALID_INPUT');
       }
+      const externalSignal = validateRequestContext(args[1]);
       const id = nextId;
       const body = requestBody(args[0], id);
       nextId += 1;
@@ -173,6 +182,7 @@ export function createRpcClient(config) {
         body,
         contentType: 'application/json',
         deadlineMs: config.rpcDeadlineMs,
+        externalSignal,
         fetchImpl: config.fetchImpl,
         maximumBytes: REYA_READ_LIMITS.rpcResponseBytes,
         method: 'POST',
