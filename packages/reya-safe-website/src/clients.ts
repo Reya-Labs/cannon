@@ -44,7 +44,7 @@ async function boundedResponseText(response: Response, declaredBytes: number): P
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let length = 0;
-  while (true) {
+  for (;;) {
     const part = await reader.read();
     if (part.done) break;
     length += part.value.byteLength;
