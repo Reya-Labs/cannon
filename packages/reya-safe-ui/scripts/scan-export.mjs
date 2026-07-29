@@ -71,26 +71,16 @@ const FORBIDDEN_HTML_ELEMENTS = new Set([
   'object',
   'script',
 ]);
-const URL_BEARING_ATTRIBUTES = new Set([
-  'action',
-  'background',
-  'cite',
-  'data',
-  'formaction',
-  'href',
-  'manifest',
-  'ping',
-  'poster',
-  'src',
-  'srcdoc',
-  'srcset',
-]);
-
 function assertNoForbiddenValue(value, location) {
   // The URL parser strips ASCII whitespace and controls from schemes. Scan the
   // same canonical form so entity-encoded or whitespace-split schemes cannot
   // bypass the raw export checks.
   const canonical = value.replace(/[\u0000-\u0020\u007f]+/g, '');
+  if (/^\/\/[a-z0-9.-]+/i.test(canonical)) {
+    throw new Error(
+      `${location} contains forbidden decoded protocol-relative URL`
+    );
+  }
   for (const [label, pattern] of FORBIDDEN_CONTENT) {
     if (pattern.test(canonical)) {
       throw new Error(`${location} contains forbidden decoded ${label}`);
@@ -126,13 +116,13 @@ function validateHtmlNode(node) {
       if (attributeName === 'style') {
         throw new Error('index.html contains forbidden inline style attribute');
       }
-      if (URL_BEARING_ATTRIBUTES.has(attributeName)) {
-        assertNoForbiddenValue(
-          value,
-          `index.html attribute ${tagName}[${attributeName}]`
-        );
-      }
+      assertNoForbiddenValue(
+        value,
+        `index.html attribute ${tagName}[${attributeName}]`
+      );
     }
+  } else if (node.nodeName === '#text' && typeof node.value === 'string') {
+    assertNoForbiddenValue(node.value, 'index.html text content');
   }
 
   for (const child of node.childNodes ?? []) validateHtmlNode(child);
