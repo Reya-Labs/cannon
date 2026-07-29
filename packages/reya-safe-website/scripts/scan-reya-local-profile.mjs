@@ -2,7 +2,7 @@ import { readFile, readdir, lstat } from 'node:fs/promises';
 import path from 'node:path';
 
 const root = path.resolve(process.argv[2] ?? 'out');
-const allowedRoot = new Set(['404.html', '_next', 'index.html']);
+const allowedRoot = new Set(['app.css', 'app.js', 'index.html']);
 const forbidden = [
   /api\.usecannon\.com/i,
   /repo\.usecannon\.com/i,
@@ -21,6 +21,14 @@ const forbidden = [
 ];
 
 const rootEntries = await readdir(root, { withFileTypes: true });
+if (
+  rootEntries.length !== allowedRoot.size ||
+  [...allowedRoot].some(
+    (expected) => !rootEntries.some((entry) => entry.name === expected)
+  )
+) {
+  throw new Error('Reya profile export does not contain the exact root files');
+}
 for (const entry of rootEntries) {
   if (!allowedRoot.has(entry.name)) {
     throw new Error(`unexpected Reya profile export entry: ${entry.name}`);
@@ -65,12 +73,21 @@ for (const file of files) {
 const index = await readFile(path.join(root, 'index.html'), 'utf8');
 for (const expected of [
   'Reya Cannon Safe staging',
-  'execution disabled',
   'Content-Security-Policy',
   'http://127.0.0.1:8787',
+  "script-src 'self'",
 ]) {
   if (!index.includes(expected)) {
     throw new Error(`Reya profile index is missing ${expected}`);
+  }
+}
+const application = await readFile(path.join(root, 'app.js'), 'utf8');
+for (const expected of [
+  'execution disabled',
+  'no transaction execution or broadcast method',
+]) {
+  if (!application.includes(expected)) {
+    throw new Error(`Reya profile application is missing ${expected}`);
   }
 }
 

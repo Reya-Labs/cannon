@@ -106,7 +106,7 @@ jobs:
           node-version: 22.23.1
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile --ignore-scripts --filter @reya/cannon-safe-website... --filter @reya/cannon-safe-ui...
+      - run: pnpm install --frozen-lockfile --ignore-scripts --filter @reya/cannon-safe-website... --filter @reya/cannon-safe-ui... --filter @usecannon/website...
       - run: pnpm --filter @reya/cannon-safe-website typecheck
       - run: pnpm --filter @reya/cannon-safe-website test
       - name: Build the constrained local profile
