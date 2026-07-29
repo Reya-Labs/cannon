@@ -48,6 +48,23 @@ function bundle(overrides = {}) {
   };
 }
 
+function bundleFromFiles(files) {
+  const canonicalFiles = [...files.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([path, content]) => ({ content, path, sha256: digest(content) }));
+  const canonical = {
+    schemaVersion: 1,
+    repository: SOURCE_REPOSITORY,
+    commit: COMMIT,
+    root: SOURCE_ROOT,
+    files: canonicalFiles,
+  };
+  return {
+    ...canonical,
+    bundleSha256: digest(JSON.stringify(canonical)),
+  };
+}
+
 function assertClientError(code) {
   return (error) => {
     assert.ok(error instanceof ReyaReadClientError);
@@ -219,4 +236,27 @@ test('uses its pinned TOML parser and rejects missing or extra include files', a
       assertClientError('RESPONSE_REJECTED')
     );
   }
+});
+
+test('accepts a shared file reached shallowly before a deeper diamond edge', async () => {
+  const shared = 'packages/tomls/src/omnibus/shared.toml';
+  const files = new Map([
+    [SOURCE_ROOT, 'include = ["shared.toml", "chain/00.toml"]\n'],
+    [shared, 'version = "1"\n'],
+  ]);
+  for (let index = 0; index < 16; index += 1) {
+    const name = String(index).padStart(2, '0');
+    const next =
+      index === 15 ? '../shared.toml' : `${String(index + 1).padStart(2, '0')}.toml`;
+    files.set(
+      `packages/tomls/src/omnibus/chain/${name}.toml`,
+      `include = ["${next}"]\n`
+    );
+  }
+  const client = clientWith(async () => jsonResponse(bundleFromFiles(files)));
+
+  const result = await client.source.bundle({ commit: COMMIT });
+
+  assert.equal(result.files.length, 18);
+  assert.equal(result.orderedFiles[1].path, shared);
 });

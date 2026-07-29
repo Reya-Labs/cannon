@@ -101,10 +101,9 @@ function validateClosure(files) {
   const orderedPaths = [];
 
   const visit = (path, depth) => {
-    if (depth > MAX_GRAPH_DEPTH || active.has(path)) {
-      fail('RESPONSE_REJECTED');
-    }
+    if (active.has(path)) fail('RESPONSE_REJECTED');
     if (reachable.has(path)) return;
+    if (depth > MAX_GRAPH_DEPTH) fail('RESPONSE_REJECTED');
     const file = byPath.get(path);
     if (!file) fail('RESPONSE_REJECTED');
     let parsed;

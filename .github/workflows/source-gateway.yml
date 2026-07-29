@@ -71,7 +71,7 @@ jobs:
         with:
           image-ref: source-gateway:ci
           version: v0.72.0
-          scanners: vuln
+          scanners: vuln,secret
           vuln-type: os,library
           ignore-unfixed: true
           severity: HIGH,CRITICAL

@@ -5,9 +5,9 @@ const SAFE = '0x1111111111111111111111111111111111111111';
 
 function validEnv(): Record<string, string | undefined> {
   return {
+    ADMISSION_MODE: 'safe-owner',
     AUTH_PROXY_SECRET: 'a-secure-ingress-secret-that-is-long-enough',
     CORS_ORIGINS: 'https://cannon.reya.network',
-    PILOT_MODE: 'true',
     REDIS_URL: 'redis://127.0.0.1:6379',
     RPC_URLS: '1729=https://rpc.example.com',
     SAFE_ALLOWLIST: `1729:${SAFE}`,
@@ -20,17 +20,39 @@ describe('loadConfig', () => {
 
     expect(config.rpcUrls.get(1729)).toBe('https://rpc.example.com/');
     expect(config.safeAllowlist.get(1729)?.has(SAFE)).toBe(true);
-    expect(config.pilotMode).toBe(true);
+    expect(config.admissionMode).toBe('safe-owner');
+    expect(config.redisPrefix).toBe('safe-app-backend:v2:admission:safe-owner:v1');
   });
 
-  it('rejects implicit RPC discovery and allowlisted chains without RPCs', () => {
+  it('requires an explicit supported admission mode and rejects the legacy pilot switch', () => {
+    expect(() => loadConfig({ ...validEnv(), ADMISSION_MODE: undefined })).toThrow('ADMISSION_MODE is required');
+    expect(() => loadConfig({ ...validEnv(), ADMISSION_MODE: 'ci-attestation' })).toThrow();
+    expect(() => loadConfig({ ...validEnv(), PILOT_MODE: 'true' })).toThrow(
+      'PILOT_MODE is unsupported; configure ADMISSION_MODE=safe-owner explicitly'
+    );
+  });
+
+  it('rejects implicit RPC discovery and anything except the single Reya Network RPC', () => {
     expect(() => loadConfig({ ...validEnv(), RPC_URLS: 'https://rpc.example.com' })).toThrow('RPC_URLS entries must use');
+    expect(() =>
+      loadConfig({
+        ...validEnv(),
+        RPC_URLS: '1=https://rpc.example.com',
+        SAFE_ALLOWLIST: `1:${SAFE}`,
+      })
+    ).toThrow('exactly one endpoint for Reya Network chain 1729');
+    expect(() =>
+      loadConfig({
+        ...validEnv(),
+        RPC_URLS: '1729=https://rpc.example.com,1=https://eth.example.com',
+      })
+    ).toThrow('exactly one endpoint for Reya Network chain 1729');
     expect(() =>
       loadConfig({
         ...validEnv(),
         SAFE_ALLOWLIST: `1:${SAFE}`,
       })
-    ).toThrow('has no explicit RPC_URLS entry');
+    ).toThrow('one Safe on Reya Network chain 1729');
   });
 
   it('rejects wildcard or path-bearing CORS configuration', () => {
@@ -78,5 +100,11 @@ describe('loadConfig', () => {
         PROPOSAL_TTL_SECONDS: '7200',
       })
     ).toThrow('greater than PROPOSAL_TTL_SECONDS');
+  });
+
+  it('isolates durable state by admission contract version', () => {
+    expect(loadConfig({ ...validEnv(), REDIS_PREFIX: 'cannon:production' }).redisPrefix).toBe(
+      'cannon:production:admission:safe-owner:v1'
+    );
   });
 });

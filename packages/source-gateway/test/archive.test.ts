@@ -56,6 +56,35 @@ describe('GitHub source archive', () => {
   });
 
   it.each([
+    ['wrong media type', { 'content-type': 'text/html' }],
+    [
+      'oversized declaration',
+      {
+        'content-length': String(ARCHIVE_LIMITS.compressedBytes + 1),
+        'content-type': 'application/gzip',
+      },
+    ],
+  ])('cancels an unread body after rejecting a %s', async (_name, headers) => {
+    let cancellations = 0;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel() {
+          cancellations += 1;
+        },
+        start(controller) {
+          controller.enqueue(new Uint8Array([1]));
+        },
+      }),
+      { headers }
+    );
+
+    await expect(fetchTomlArchive(COMMIT, async () => response)).rejects.toMatchObject({
+      code: 'source_archive_rejected',
+    });
+    expect(cancellations).toBe(1);
+  });
+
+  it.each([
     { name: '../outside.toml' },
     { name: `${ROOT}/packages/tomls/src/../../outside.toml` },
     { name: `${ROOT}\\packages\\tomls\\src\\outside.toml` },
