@@ -18,6 +18,7 @@ test('proves the disabled static shell cannot reach the read clients', async () 
     'clients/errors.mjs',
     'clients/index.mjs',
     'clients/query.mjs',
+    'clients/rpc.mjs',
     'clients/schema.mjs',
     'clients/source.mjs',
     'clients/transport.mjs',

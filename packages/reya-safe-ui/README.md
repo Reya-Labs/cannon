@@ -72,6 +72,7 @@ The reviewed read surface is finite:
 - `GET /query/selector`
 - `GET /source/reya-deployments/:fullCommitSha/reya-network`
 - `POST /artifacts/api/v0/cat?arg=<CIDv0>`
+- `POST /rpc/1729`
 
 The source client accepts only a lowercase 40-character commit for the fixed
 public `Reya-Labs/reya-deployments` repository. It re-hashes every returned
@@ -92,6 +93,12 @@ client compares that implementation's computed canonical CIDv0 with the
 requested CID before returning bytes. There is no default verifier and no
 browser upload method.
 
+The RPC client assigns a monotonic numeric JSON-RPC ID, sends only the
+runtime's finite read-method allowlist to `/rpc/1729`, and requires the exact
+ID in a single canonical success envelope. Batches, notifications, upstream
+error envelopes, unknown response fields, redirects, and oversized or
+non-canonical JSON fail closed.
+
 Function and error documents use a dependency-free, bounded canonical ABI
 signature subset: explicit integer widths; standard `address`, `bool`, `bytes`,
 `function`, and `string` types; non-empty tuples; dynamic arrays; and fixed
@@ -101,7 +108,7 @@ characters, and non-canonical syntax are rejected. The query API must enforce
 the same conformance vectors before these dormant clients can be activated.
 
 These modules are not activation-ready infrastructure. The consolidated
-Tailscale ingress and its `/query`, `/artifacts`, and `/source` routes do not
+Tailscale ingress and its `/query`, `/artifacts`, `/source`, and `/rpc` routes do not
 yet exist. The bounded source-gateway package implements the `/source`
 application contract, but it is not published or deployed by this change.
 Activation also requires the reviewed query API and read-only artifact

@@ -132,6 +132,8 @@ function validateContentType(headers, expected) {
 
 export async function boundedRequest({
   accept,
+  body,
+  contentType,
   deadlineMs,
   fetchImpl,
   maximumBytes,
@@ -144,17 +146,21 @@ export async function boundedRequest({
   let bodyReadCompleted = false;
 
   try {
+    const headers = { Accept: accept };
+    if (contentType !== undefined) headers['Content-Type'] = contentType;
+    const request = {
+      cache: 'no-store',
+      credentials: 'omit',
+      headers: Object.freeze(headers),
+      method,
+      mode: 'cors',
+      redirect: 'error',
+      referrerPolicy: 'no-referrer',
+      signal: deadline.controller.signal,
+    };
+    if (body !== undefined) request.body = body;
     response = await deadline.race(
-      fetchImpl(url, {
-        cache: 'no-store',
-        credentials: 'omit',
-        headers: Object.freeze({ Accept: accept }),
-        method,
-        mode: 'cors',
-        redirect: 'error',
-        referrerPolicy: 'no-referrer',
-        signal: deadline.controller.signal,
-      })
+      fetchImpl(url, Object.freeze(request))
     );
 
     if (

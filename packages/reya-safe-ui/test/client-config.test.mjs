@@ -42,6 +42,7 @@ test('creates an immutable read-only client fixed to Reya chain 1729', () => {
   assert.ok(Object.isFrozen(client));
   assert.ok(Object.isFrozen(client.query));
   assert.ok(Object.isFrozen(client.artifacts));
+  assert.ok(Object.isFrozen(client.rpc));
   assert.ok(Object.isFrozen(client.source));
   assert.deepEqual(Object.keys(client.query).sort(), [
     'chains',
@@ -51,6 +52,7 @@ test('creates an immutable read-only client fixed to Reya chain 1729', () => {
     'selector',
   ]);
   assert.deepEqual(Object.keys(client.artifacts), ['cat']);
+  assert.deepEqual(Object.keys(client.rpc), ['read']);
   assert.deepEqual(Object.keys(client.source), ['bundle']);
 });
 
@@ -135,6 +137,7 @@ test('allows only bounded deadline reductions with both values explicit', () => 
       deadlines: {
         artifactDeadlineMs: 25,
         queryDeadlineMs: 10,
+        rpcDeadlineMs: 15,
       },
     })
   );
@@ -150,6 +153,11 @@ test('allows only bounded deadline reductions with both values explicit', () => 
     {
       artifactDeadlineMs: 10,
       queryDeadlineMs: REYA_READ_LIMITS.queryDeadlineMs + 1,
+    },
+    {
+      artifactDeadlineMs: 10,
+      queryDeadlineMs: 10,
+      rpcDeadlineMs: REYA_READ_LIMITS.rpcDeadlineMs + 1,
     },
     { artifactDeadlineMs: 0, queryDeadlineMs: 10 },
     { artifactDeadlineMs: 10, queryDeadlineMs: 1.5 },
