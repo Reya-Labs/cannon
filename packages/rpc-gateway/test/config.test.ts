@@ -28,6 +28,28 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...valid, RPC_UPSTREAM_URLS_JSON: value })).toThrow(message);
   });
 
+  it('sanitizes malformed URL parse failures', () => {
+    const upstreamCanary = 'secret-upstream-canary';
+    const originCanary = 'secret-origin-canary';
+
+    const upstreamFailure = captureFailure(() =>
+      loadConfig({
+        ...valid,
+        RPC_UPSTREAM_URLS_JSON: JSON.stringify([`not-a-url-${upstreamCanary}`, 'https://provider-b.example/rpc']),
+      })
+    );
+    expect(upstreamFailure.message).toBe(
+      'RPC upstreams must be canonical HTTPS URLs without credentials, query, fragment, port, or IP host'
+    );
+    expect(upstreamFailure).not.toHaveProperty('input');
+    expect(upstreamFailure.stack).not.toContain(upstreamCanary);
+
+    const originFailure = captureFailure(() => loadConfig({ ...valid, RPC_UI_ORIGIN: `not-a-url-${originCanary}` }));
+    expect(originFailure.message).toBe('RPC_UI_ORIGIN must be one canonical HTTPS origin');
+    expect(originFailure).not.toHaveProperty('input');
+    expect(originFailure.stack).not.toContain(originCanary);
+  });
+
   it('rejects blanket trust proxy and equal auth headers', () => {
     expect(() => loadConfig({ ...valid, TRUST_PROXY: 'true' })).toThrow('TRUST_PROXY=true');
     expect(() => loadConfig({ ...valid, AUTH_IDENTITY_HEADER: 'x-user', AUTH_PROXY_SECRET_HEADER: 'x-user' })).toThrow(
@@ -35,3 +57,12 @@ describe('loadConfig', () => {
     );
   });
 });
+
+function captureFailure(operation: () => unknown): Error {
+  try {
+    operation();
+  } catch (error) {
+    if (error instanceof Error) return error;
+  }
+  throw new Error('expected operation to fail');
+}

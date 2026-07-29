@@ -25,6 +25,13 @@ function rateLimiter(config: AppConfig, authenticated: boolean) {
   });
 }
 
+/**
+ * Creates the RPC gateway application for the supplied configuration and provider quorum.
+ *
+ * The returned application enforces security headers, configured browser-origin
+ * CORS, trusted-proxy authentication, request and weighted-cost rate limits, and
+ * bounded concurrency before dispatching read-only requests to `quorum`.
+ */
 export function createApp(config: AppConfig, quorum: QuorumService): Express {
   const app = express();
   const limiter = new WorkLimiter(config.limits.concurrency, config.limits.queue, config.quorum.timeoutMs);

@@ -83,6 +83,7 @@ export class UpstreamClient {
         signal: controller.signal,
       });
       if (!response.ok || !/^application\/json(?:;|$)/i.test(response.headers.get('content-type') ?? '')) {
+        await response.body?.cancel().catch(() => undefined);
         throw new QuorumError('upstream_http_error');
       }
       return decodeResponse(parseStrictJson(await readBounded(response, this.maximumResponseBytes)), id);

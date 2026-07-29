@@ -7,6 +7,13 @@ type Waiting<T> = {
   timer: ReturnType<typeof setTimeout>;
 };
 
+/**
+ * Bounds concurrently executing tasks and applies backpressure to excess work.
+ *
+ * The constructor configures the active-task limit, maximum queued tasks, and
+ * queue deadline in milliseconds. A full queue or expired deadline rejects with
+ * a 503 `gateway_busy` error; queued tasks start in arrival order as permits free.
+ */
 export class WorkLimiter {
   private active = 0;
   private readonly waiting: Waiting<unknown>[] = [];
@@ -57,6 +64,14 @@ export class WorkLimiter {
 
 type CostWindow = { startedAt: number; used: number };
 
+/**
+ * Enforces a fixed-window, weighted request budget independently for each key.
+ *
+ * The constructor configures the per-window cost limit, window duration, and
+ * maximum tracked keys. Exceeding a key's budget returns 429 `rate_limited`;
+ * exhausting key capacity after expired-window eviction returns 503
+ * `gateway_busy`.
+ */
 export class WindowCostLimiter {
   private readonly limit: number;
   private readonly maximumKeys: number;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { QuorumError } from '../src/errors';
 import { UpstreamClient } from '../src/upstream';
 
 describe('UpstreamClient', () => {
@@ -36,9 +37,24 @@ describe('UpstreamClient', () => {
       category: 'oversized_response',
       message: 'RPC provider quorum is unavailable',
     });
-    await expect(new UpstreamClient(urls, 1000, 1024, malformed).request(0, 'eth_chainId', [])).rejects.not.toThrow(
-      /secret-token|canary/
+    const failure = await new UpstreamClient(urls, 1000, 1024, malformed).request(0, 'eth_chainId', []).then(
+      () => undefined,
+      (error: unknown) => error
     );
+    expect(failure).toBeInstanceOf(QuorumError);
+    expect(failure).toMatchObject({
+      category: 'malformed_response',
+      message: 'RPC provider quorum is unavailable',
+    });
+    if (!(failure instanceof QuorumError)) throw new Error('expected QuorumError');
+    expect(
+      JSON.stringify({
+        category: failure.category,
+        message: failure.message,
+        name: failure.name,
+        stack: failure.stack,
+      })
+    ).not.toMatch(/secret-token|canary/);
 
     const chunked: typeof fetch = async () =>
       new Response(
@@ -54,6 +70,35 @@ describe('UpstreamClient', () => {
     await expect(new UpstreamClient(urls, 1000, 10, chunked).request(0, 'eth_chainId', [])).rejects.toMatchObject({
       category: 'oversized_response',
     });
+  });
+
+  it.each([
+    ['an unsuccessful status', 502, 'application/json'],
+    ['a non-JSON media type', 200, 'text/html'],
+  ])('cancels the response body after rejecting %s', async (_name, status, contentType) => {
+    let cancellations = 0;
+    const rejected: typeof fetch = async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          cancel() {
+            cancellations += 1;
+          },
+          start(controller) {
+            controller.enqueue(new Uint8Array([1]));
+          },
+        }),
+        {
+          headers: { 'content-type': contentType },
+          status,
+        }
+      );
+    const urls: [URL, URL] = [new URL('https://a.example/canary-a'), new URL('https://b.example/canary-b')];
+
+    await expect(new UpstreamClient(urls, 1000, 1024, rejected).request(0, 'eth_chainId', [])).rejects.toMatchObject({
+      category: 'upstream_http_error',
+      message: 'RPC provider quorum is unavailable',
+    });
+    expect(cancellations).toBe(1);
   });
 
   it('enforces the end-to-end upstream timeout and duplicate-key rejection', async () => {

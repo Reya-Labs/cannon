@@ -81,7 +81,12 @@ function trustProxy(value: string | undefined): string | number | boolean {
 }
 
 function origin(value: string): string {
-  const parsed = new URL(value);
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error('RPC_UI_ORIGIN must be one canonical HTTPS origin');
+  }
   if (
     parsed.protocol !== 'https:' ||
     parsed.username ||
@@ -107,7 +112,12 @@ function upstreams(value: string): readonly [URL, URL] {
   if (!Array.isArray(decoded) || decoded.length !== 2 || !decoded.every((item) => typeof item === 'string')) {
     throw new Error('RPC_UPSTREAM_URLS_JSON must contain exactly two URL strings');
   }
-  const parsed = decoded.map((item) => new URL(item));
+  let parsed: URL[];
+  try {
+    parsed = decoded.map((item) => new URL(item));
+  } catch {
+    throw new Error('RPC upstreams must be canonical HTTPS URLs without credentials, query, fragment, port, or IP host');
+  }
   for (const url of parsed) {
     if (
       url.protocol !== 'https:' ||
