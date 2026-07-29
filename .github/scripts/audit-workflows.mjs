@@ -71,6 +71,13 @@ const workflowPolicies = new Map([
     },
   ],
   [
+    'rpc-gateway.yml',
+    {
+      pull_request: ['dev', 'main'],
+      push: ['dev', 'main'],
+    },
+  ],
+  [
     'safe-app-backend.yml',
     {
       pull_request: ['dev', 'main'],
@@ -271,6 +278,15 @@ const allowedContainerImages = new Set([
 const allowedRunners = new Set(['ubuntu-24.04', 'ubuntu-24.04-arm']);
 
 const allowedGitHubContexts = new Map([
+  [
+    '.github/workflows/rpc-gateway.yml',
+    new Set([
+      'github.event.pull_request.number',
+      'github.event_name',
+      'github.run_id',
+      'github.sha',
+    ]),
+  ],
   [
     '.github/workflows/runtime-image-security.yml',
     new Set([

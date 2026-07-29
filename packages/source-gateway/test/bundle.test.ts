@@ -36,6 +36,24 @@ describe('source bundle', () => {
     expect(JSON.parse(encoded.body)).toEqual(encoded.bundle);
   });
 
+  it('accepts a shared file reached shallowly before a deeper diamond edge', () => {
+    const shared = 'packages/tomls/src/omnibus/shared.toml';
+    const files = new Map<string, string>([
+      [SOURCE_ROOT, 'include = ["shared.toml", "chain/00.toml"]\n'],
+      [shared, 'version = "1"\n'],
+    ]);
+    for (let index = 0; index < 16; index += 1) {
+      const name = String(index).padStart(2, '0');
+      const next = index === 15 ? '../shared.toml' : `${String(index + 1).padStart(2, '0')}.toml`;
+      files.set(`packages/tomls/src/omnibus/chain/${name}.toml`, `include = ["${next}"]\n`);
+    }
+
+    const encoded = encodeSourceBundle(COMMIT, files);
+
+    expect(encoded.bundle.files).toHaveLength(18);
+    expect(encoded.bundle.files.some(({ path }) => path === shared)).toBe(true);
+  });
+
   it.each([
     ['moving ref', 'main', new Map([[SOURCE_ROOT, 'version = "1"\n']])],
     ['missing root', COMMIT, new Map()],

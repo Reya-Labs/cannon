@@ -1,4 +1,5 @@
 packages:
   - 'packages/*'
+  - '!packages/rpc-gateway'
   - '!packages/source-gateway'
   - 'examples/*'
