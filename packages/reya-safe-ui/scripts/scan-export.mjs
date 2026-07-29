@@ -1,6 +1,7 @@
 import { lstat, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse } from 'parse5';
 import { compareCanonicalText, digestFiles, sha256 } from '../src/config.mjs';
 import { CLOUDFLARE_HEADERS, META_CSP } from '../src/template.mjs';
 
@@ -56,6 +57,86 @@ const FORBIDDEN_CONTENT = Object.freeze([
     /\b(?:fetch|WebSocket|XMLHttpRequest|sendBeacon)\s*\(/,
   ],
 ]);
+const FORBIDDEN_HTML_ELEMENTS = new Set([
+  'base',
+  'embed',
+  'form',
+  'frame',
+  'iframe',
+  'object',
+  'script',
+]);
+const URL_BEARING_ATTRIBUTES = new Set([
+  'action',
+  'background',
+  'cite',
+  'data',
+  'formaction',
+  'href',
+  'manifest',
+  'ping',
+  'poster',
+  'src',
+  'srcdoc',
+  'srcset',
+]);
+
+function assertNoForbiddenValue(value, location) {
+  // The URL parser strips ASCII whitespace and controls from schemes. Scan the
+  // same canonical form so entity-encoded or whitespace-split schemes cannot
+  // bypass the raw export checks.
+  const canonical = value.replace(/[\u0000-\u0020\u007f]+/g, '');
+  for (const [label, pattern] of FORBIDDEN_CONTENT) {
+    if (pattern.test(canonical)) {
+      throw new Error(`${location} contains forbidden decoded ${label}`);
+    }
+  }
+}
+
+function validateHtmlNode(node) {
+  if (typeof node.tagName === 'string') {
+    const tagName = node.tagName.toLowerCase();
+    if (FORBIDDEN_HTML_ELEMENTS.has(tagName)) {
+      throw new Error(`index.html contains forbidden ${tagName} element`);
+    }
+
+    const attributes = Array.isArray(node.attrs) ? node.attrs : [];
+    const httpEquiv = attributes.find(
+      ({ name }) => name.toLowerCase() === 'http-equiv'
+    );
+    if (
+      tagName === 'meta' &&
+      httpEquiv?.value.trim().toLowerCase() === 'refresh'
+    ) {
+      throw new Error('index.html contains forbidden meta refresh');
+    }
+
+    for (const { name, value } of attributes) {
+      const attributeName = name.toLowerCase();
+      if (attributeName.startsWith('on')) {
+        throw new Error(
+          `index.html contains forbidden inline event handler: ${attributeName}`
+        );
+      }
+      if (attributeName === 'style') {
+        throw new Error('index.html contains forbidden inline style attribute');
+      }
+      if (URL_BEARING_ATTRIBUTES.has(attributeName)) {
+        assertNoForbiddenValue(
+          value,
+          `index.html attribute ${tagName}[${attributeName}]`
+        );
+      }
+    }
+  }
+
+  for (const child of node.childNodes ?? []) validateHtmlNode(child);
+  if (node.content) validateHtmlNode(node.content);
+}
+
+function validateHtml(html) {
+  validateHtmlNode(parse(html));
+}
 
 function assertExactKeys(value, expected, label) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -298,6 +379,8 @@ export async function scanExport(exportRoot) {
     }
     contents.set(relativePath, bytes);
   }
+
+  validateHtml(contents.get('index.html').toString('utf8'));
 
   if (contents.get('_headers').toString('utf8') !== CLOUDFLARE_HEADERS) {
     throw new Error('Cloudflare headers do not match the generated policy');
