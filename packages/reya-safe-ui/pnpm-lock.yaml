@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@iarna/toml':
+        specifier: 3.0.0
+        version: 3.0.0
     devDependencies:
       es-module-lexer:
         specifier: 1.6.0
@@ -14,9 +18,14 @@ importers:
 
 packages:
 
+  '@iarna/toml@3.0.0':
+    resolution: {integrity: sha512-td6ZUkz2oS3VeleBcN+m//Q6HlCFCPrnI0FZhrt/h4XqLEdOyYp2u21nd8MdsR+WJy5r9PTDaHTDDfhf4H4l6Q==}
+
   es-module-lexer@1.6.0:
     resolution: {integrity: sha512-qqnD1yMU6tk/jnaMosogGySTZP8YtUgAffA9nMN+E/rjxcfRQ6IEk7IiozUjgxKoFHBGjTLnrHB/YC45r/59EQ==}
 
 snapshots:
+
+  '@iarna/toml@3.0.0': {}
 
   es-module-lexer@1.6.0: {}

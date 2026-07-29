@@ -38,9 +38,9 @@ scripts, forms, frames, symlinks, file-integrity mismatches, and any deviation f
 
 ## Dormant Reya read clients
 
-`src/clients/` contains dependency-free ESM clients for a later activation
-change. They are deliberately unreachable from `src/build.mjs`, are not
-included in the generated export, and do not change the disabled CSP. CI runs
+`src/clients/` contains dormant ESM clients for a later activation change.
+They are deliberately unreachable from `src/build.mjs`, are not included in
+the generated export, and do not change the disabled CSP. CI runs
 `pnpm verify:dormant` to prove that separation and to reject hard-coded remote
 origins, hosted Cannon/public IPFS/Git/RPC fallbacks, browser credentials,
 upload routes, and `localStorage` from all UI source.
@@ -63,7 +63,21 @@ The reviewed read surface is finite:
 - `GET /query/packages/:packageName`
 - `GET /query/packages/:fullPackageRef/1729`
 - `GET /query/selector`
+- `GET /source/reya-deployments/:fullCommitSha/reya-network`
 - `POST /artifacts/api/v0/cat?arg=<CIDv0>`
+
+The source client accepts only a lowercase 40-character commit for the fixed
+public `Reya-Labs/reya-deployments` repository. It re-hashes every returned
+TOML file and the canonical bundle before returning an immutable include
+closure rooted at `packages/tomls/src/omnibus/reya_network.toml`. It has no
+branch, tag, repository, path, GitHub credential, or hosted Cannon proxy
+option. The client binds the same pinned `@iarna/toml` parser used by the
+gateway and uses parsed `include` arrays to reject missing files, extra
+unreachable files, cycles, root escapes, and excessive graph depth. Callers
+cannot replace or weaken this parser. The signed canonical `files` collection
+remains path-sorted for deterministic hashing; the derived immutable
+`orderedFiles` collection follows a root-first traversal in declared include
+order for the reviewed Cannon adapter.
 
 `cat` uses Kubo's read-only POST convention, sends no body or authorization
 header, and requires the caller to inject a content-CID implementation. The
@@ -80,7 +94,9 @@ characters, and non-canonical syntax are rejected. The query API must enforce
 the same conformance vectors before these dormant clients can be activated.
 
 These modules are not activation-ready infrastructure. The consolidated
-Tailscale ingress and its `/query` and `/artifacts` routes do not yet exist.
+Tailscale ingress and its `/query`, `/artifacts`, and `/source` routes do not
+yet exist. The bounded source-gateway package implements the `/source`
+application contract, but it is not published or deployed by this change.
 Activation also requires the reviewed query API and read-only artifact
 workloads, exact-origin CORS, signer access testing, artifact backfill and
 recovery evidence, and a separate change that intentionally imports the

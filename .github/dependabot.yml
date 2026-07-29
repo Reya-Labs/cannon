@@ -68,3 +68,37 @@ updates:
       - bogdan-reya
     commit-message:
       prefix: 'chore(runtime)'
+
+  - package-ecosystem: docker
+    directory: /packages/source-gateway
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+      time: '08:30'
+      timezone: Europe/London
+    open-pull-requests-limit: 3
+    assignees:
+      - arturbeg
+    reviewers:
+      - arturbeg
+      - bogdan-reya
+    commit-message:
+      prefix: 'chore(runtime)'
+
+  - package-ecosystem: npm
+    directory: /packages/source-gateway
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+      time: '08:45'
+      timezone: Europe/London
+    open-pull-requests-limit: 3
+    assignees:
+      - arturbeg
+    reviewers:
+      - arturbeg
+      - bogdan-reya
+    commit-message:
+      prefix: 'chore(source-gateway-deps)'

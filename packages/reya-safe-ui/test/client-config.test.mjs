@@ -42,6 +42,7 @@ test('creates an immutable read-only client fixed to Reya chain 1729', () => {
   assert.ok(Object.isFrozen(client));
   assert.ok(Object.isFrozen(client.query));
   assert.ok(Object.isFrozen(client.artifacts));
+  assert.ok(Object.isFrozen(client.source));
   assert.deepEqual(Object.keys(client.query).sort(), [
     'chains',
     'packageByRef',
@@ -50,6 +51,7 @@ test('creates an immutable read-only client fixed to Reya chain 1729', () => {
     'selector',
   ]);
   assert.deepEqual(Object.keys(client.artifacts), ['cat']);
+  assert.deepEqual(Object.keys(client.source), ['bundle']);
 });
 
 for (const serviceOrigin of [
