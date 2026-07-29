@@ -75,10 +75,17 @@ function boundedJson(value, maximumBytes) {
       }
     }
   };
-  const visit = (candidate, depth) => {
+  const visit = (candidate, depth, container) => {
     nodes += 1;
     if (nodes > MAX_JSON_NODES || depth > MAX_JSON_DEPTH) {
       throw new Error('ephemeral artifact JSON exceeds structural limits');
+    }
+    if (candidate === undefined && container === 'array') {
+      addBytes(4);
+      return null;
+    }
+    if (candidate === undefined) {
+      throw new Error('ephemeral artifact is not JSON serializable');
     }
     if (candidate === null || typeof candidate === 'boolean') {
       addBytes(candidate === null || candidate === true ? 4 : 5);
@@ -116,7 +123,7 @@ function boundedJson(value, maximumBytes) {
         throw new Error('ephemeral artifact is not JSON serializable');
       }
       addBytes(2 + Math.max(0, candidate.length - 1));
-      return candidate.map((child) => visit(child, depth + 1));
+      return candidate.map((child) => visit(child, depth + 1, 'array'));
     }
     if (
       typeof candidate === 'object' &&
@@ -155,6 +162,7 @@ function boundedJson(value, maximumBytes) {
       ) {
         throw new Error('ephemeral artifact is not JSON serializable');
       }
+      if (descriptor.value === undefined) continue;
       if (observedKeys > 0) addBytes(1);
       observedKeys += 1;
       addJsonString(key);
@@ -162,14 +170,14 @@ function boundedJson(value, maximumBytes) {
       Object.defineProperty(normalized, key, {
         configurable: true,
         enumerable: true,
-        value: visit(descriptor.value, depth + 1),
+        value: visit(descriptor.value, depth + 1, 'object'),
         writable: true,
       });
     }
     addBytes(2);
     return normalized;
   };
-  const normalized = visit(value, 0);
+  const normalized = visit(value, 0, 'root');
 
   let serialized;
   try {

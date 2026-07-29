@@ -35,11 +35,14 @@ test('ephemeral overlay matches Cannon bigint and date JSON semantics without in
   });
   const date = new Date('2026-07-29T00:00:00.000Z');
   const url = await overlay.loader.put({
+    array: [undefined],
     date,
     integer: 1729n,
+    omitted: undefined,
   });
 
   assert.deepEqual(await overlay.loader.read(url), {
+    array: [null],
     date: '2026-07-29T00:00:00.000Z',
     integer: '1729',
   });
