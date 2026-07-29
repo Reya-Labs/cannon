@@ -16,9 +16,11 @@ export type SafeTarget = {
   chainId: number;
 };
 
+/** Admission policy selected at startup. `safe-owner` requires a verified signature from a current Safe owner. */
 export type AdmissionMode = z.infer<typeof admissionMode>;
 
 export type AppConfig = {
+  /** Fail-closed proposal admission policy used by every staging request. */
   admissionMode: AdmissionMode;
   auditMaxLength: number;
   auth: {

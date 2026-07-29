@@ -319,7 +319,16 @@ describe.skipIf(!redisUrl)('safe staging API', () => {
     const auditEntries = await primaryRedis.xrange(`${testPrefix}:audit`, '-', '+');
     const auditEvents = auditEntries.map(([, fields]) => fields[fields.indexOf('event') + 1]);
     expect(auditEvents).toContain('proposal.created');
-    expect(auditEvents.filter((event) => event === 'signature.added')).toHaveLength(3);
+    const signatureAuditEntries = auditEntries.filter(([, fields]) => {
+      const eventIndex = fields.indexOf('event');
+      return eventIndex >= 0 && fields[eventIndex + 1] === 'signature.added';
+    });
+    expect(signatureAuditEntries).toHaveLength(3);
+    for (const [, fields] of signatureAuditEntries) {
+      const safeTxHashIndex = fields.indexOf('safeTxHash');
+      expect(safeTxHashIndex).toBeGreaterThanOrEqual(0);
+      expect(fields[safeTxHashIndex + 1]).toBe(client.digest(transaction));
+    }
   });
 
   it('rejects same-nonce conflicts, non-owner signatures and unsupported Safe signature encodings', async () => {

@@ -40,6 +40,7 @@ export type AdmissionInput = {
   safeAddress: Address;
   safeTxHash: Hex;
   txn: SafeTransaction;
+  /** Current-owner signatures already validated against `safeTxHash` by the Safe transaction validator. */
   verifiedSignatures: VerifiedSignature[];
 };
 

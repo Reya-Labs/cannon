@@ -3,6 +3,10 @@ import type { AdmissionMode } from './config';
 import { HttpError } from './errors';
 import type { Admission, AdmissionInput, ProposalAdmissionVerifier } from './types';
 
+/**
+ * Admits a proposal only after the Safe validator has authenticated at least
+ * one current-owner signature over the exact Safe transaction hash.
+ */
 export class SafeOwnerAdmissionVerifier implements ProposalAdmissionVerifier {
   async verify(input: AdmissionInput): Promise<Admission> {
     if (input.verifiedSignatures.length === 0) {
@@ -28,6 +32,7 @@ export class SafeOwnerAdmissionVerifier implements ProposalAdmissionVerifier {
   }
 }
 
+/** Constructs the verifier for the startup-validated admission mode. */
 export function createAdmissionVerifier(mode: AdmissionMode): ProposalAdmissionVerifier {
   switch (mode) {
     case 'safe-owner':
