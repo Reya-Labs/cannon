@@ -216,6 +216,17 @@ bind back to the submitted transaction, signature, or superseded digest.
 Backend errors expose only a status-bound allowlisted code; upstream messages
 and details are discarded.
 
+The Safe signing client is also dormant and contains no wallet discovery,
+connection, chain-switching, staging, RPC, or execution method. It prepares the
+fixed chain-`1729` Safe EIP-712 payload, recomputes the Safe transaction hash,
+and brands the resulting deeply frozen object to one client instance. Signing
+accepts only that exact prepared object and one canonical lowercase owner
+address, permits only one in-flight wallet request, normalizes only recovery
+IDs `0`/`1` to the backend's required `27`/`28`, and independently recovers the
+returned signer before exposing the signature. Wallet failures and malformed
+or wrong-owner signatures are reduced to fixed local error codes without
+provider messages.
+
 Function and error documents use a dependency-free, bounded canonical ABI
 signature subset: explicit integer widths; standard `address`, `bool`, `bytes`,
 `function`, and `string` types; non-empty tuples; dynamic arrays; and fixed

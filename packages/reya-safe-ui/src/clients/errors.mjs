@@ -6,6 +6,9 @@ const ERROR_MESSAGES = Object.freeze({
   REQUEST_TIMEOUT: 'The Reya read service request timed out.',
   RESPONSE_REJECTED: 'The Reya read service response was rejected.',
   SERVICE_REJECTED: 'The Reya staging service rejected the request.',
+  SIGNATURE_REJECTED: 'The Safe owner signature was rejected.',
+  SIGNING_IN_PROGRESS: 'A Safe owner signing request is already in progress.',
+  WALLET_REQUEST_FAILED: 'The Safe owner wallet request failed.',
 });
 
 export class ReyaReadClientError extends Error {

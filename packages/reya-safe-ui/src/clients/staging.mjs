@@ -7,6 +7,11 @@ import {
   failStagingService,
 } from './errors.mjs';
 import {
+  snapshotSafeAddress,
+  snapshotSafeTransaction,
+  snapshotSafeTransactionResponse,
+} from './safe-transaction.mjs';
+import {
   boundedStagingRequest,
   parseJson,
   validateRequestContext,
@@ -20,18 +25,10 @@ export const REYA_STAGING_LIMITS = Object.freeze({
   responseBytes: 1200 * 1024,
 });
 
-const ADDRESS_PATTERN = /^0x[0-9a-f]{40}$/;
-const RESPONSE_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
-const DATA_PATTERN = /^0x(?:[0-9a-f]{2})*$/;
-const RESPONSE_DATA_PATTERN = /^0x(?:[0-9a-fA-F]{2})*$/;
 const DIGEST_PATTERN = /^0x[0-9a-f]{64}$/;
 const SIGNATURE_PATTERN = /^0x[0-9a-f]{128}(?:1b|1c)$/;
 const RESPONSE_SIGNATURE_PATTERN =
   /^0x[0-9a-fA-F]{128}(?:1[bB]|1[cC])$/;
-const UINT_PATTERN = /^(?:0|[1-9][0-9]*)$/;
-const MAX_UINT256 = (1n << 256n) - 1n;
-const MAX_CALLDATA_BYTES = 512 * 1024;
-const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder('utf-8', { fatal: true });
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -40,18 +37,6 @@ const SUPERSEDE_KEYS = Object.freeze([
   'expectedDigest',
   'idempotencyKey',
   'reason',
-]);
-const TRANSACTION_KEYS = Object.freeze([
-  '_nonce',
-  'baseGas',
-  'data',
-  'gasPrice',
-  'gasToken',
-  'operation',
-  'refundReceiver',
-  'safeTxGas',
-  'to',
-  'value',
 ]);
 const PROPOSAL_KEYS = Object.freeze([
   'createdAt',
@@ -189,44 +174,6 @@ function assertInteger(value, reject = rejectResponse) {
   return value;
 }
 
-function assertUint(value, reject = rejectResponse) {
-  assertString(value, 78, UINT_PATTERN, reject);
-  if (BigInt(value) > MAX_UINT256) reject();
-  return value;
-}
-
-function assertInputAddress(value, allowZero = true) {
-  assertString(value, 42, ADDRESS_PATTERN, rejectInput);
-  if (!allowZero && value === ZERO_ADDRESS) rejectInput();
-  return value;
-}
-
-function assertResponseAddress(value) {
-  return assertString(
-    value,
-    42,
-    RESPONSE_ADDRESS_PATTERN
-  ).toLowerCase();
-}
-
-function assertInputData(value) {
-  assertString(
-    value,
-    2 + MAX_CALLDATA_BYTES * 2,
-    DATA_PATTERN,
-    rejectInput
-  );
-  return value;
-}
-
-function assertResponseData(value) {
-  return assertString(
-    value,
-    2 + MAX_CALLDATA_BYTES * 2,
-    RESPONSE_DATA_PATTERN
-  ).toLowerCase();
-}
-
 function assertInputSignature(value) {
   return assertString(value, 132, SIGNATURE_PATTERN, rejectInput);
 }
@@ -237,42 +184,6 @@ function assertResponseSignature(value) {
     132,
     RESPONSE_SIGNATURE_PATTERN
   ).toLowerCase();
-}
-
-function snapshotTransaction(value, reject = rejectInput) {
-  const record = exactKeys(value, TRANSACTION_KEYS, [], reject);
-  const operation = dataProperty(record, 'operation', reject);
-  if (operation !== '0' && operation !== '1') reject();
-
-  return Object.freeze({
-    _nonce: assertInteger(dataProperty(record, '_nonce', reject), reject),
-    baseGas: assertUint(dataProperty(record, 'baseGas', reject), reject),
-    data:
-      reject === rejectInput
-        ? assertInputData(dataProperty(record, 'data', reject))
-        : assertResponseData(dataProperty(record, 'data', reject)),
-    gasPrice: assertUint(dataProperty(record, 'gasPrice', reject), reject),
-    gasToken:
-      reject === rejectInput
-        ? assertInputAddress(dataProperty(record, 'gasToken', reject))
-        : assertResponseAddress(dataProperty(record, 'gasToken', reject)),
-    operation,
-    refundReceiver:
-      reject === rejectInput
-        ? assertInputAddress(dataProperty(record, 'refundReceiver', reject))
-        : assertResponseAddress(
-            dataProperty(record, 'refundReceiver', reject)
-          ),
-    safeTxGas: assertUint(
-      dataProperty(record, 'safeTxGas', reject),
-      reject
-    ),
-    to:
-      reject === rejectInput
-        ? assertInputAddress(dataProperty(record, 'to', reject))
-        : assertResponseAddress(dataProperty(record, 'to', reject)),
-    value: assertUint(dataProperty(record, 'value', reject), reject),
-  });
 }
 
 function snapshotArray(value, maximum, itemParser) {
@@ -320,10 +231,7 @@ function snapshotProposal(value) {
   return Object.freeze({
     createdAt,
     sigs,
-    txn: snapshotTransaction(
-      dataProperty(record, 'txn'),
-      rejectResponse
-    ),
+    txn: snapshotSafeTransactionResponse(dataProperty(record, 'txn')),
     updatedAt,
   });
 }
@@ -385,13 +293,12 @@ function validateOptions(options) {
       ['deadlineMs', 'fetchImpl'],
       () => fail('INVALID_CONFIGURATION')
     );
-    const safeAddress = assertInputAddress(
+    const safeAddress = snapshotSafeAddress(
       dataProperty(
         record,
         'safeAddress',
         () => fail('INVALID_CONFIGURATION')
-      ),
-      false
+      )
     );
     const serviceOrigin = validateServiceOrigin(
       dataProperty(
@@ -492,7 +399,7 @@ export function createReyaStagingClient(options) {
       const signature = assertInputSignature(
         dataProperty(input, 'signature', rejectInput)
       );
-      const txn = snapshotTransaction(
+      const txn = snapshotSafeTransaction(
         dataProperty(input, 'txn', rejectInput)
       );
       const externalSignal = validateRequestContext(args[1]);
