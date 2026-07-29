@@ -34,7 +34,7 @@ class StrictJsonParser {
       this.index++;
       return result;
     }
-    while (true) {
+    for (;;) {
       if (this.source[this.index] !== '"') this.invalid();
       const key = this.string();
       if (keys.has(key)) {
@@ -61,7 +61,7 @@ class StrictJsonParser {
       this.index++;
       return result;
     }
-    while (true) {
+    for (;;) {
       result.push(this.value(depth));
       this.skipWhitespace();
       const separator = this.source[this.index++];

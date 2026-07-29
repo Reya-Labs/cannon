@@ -4,7 +4,7 @@ type Waiting<T> = {
   reject: (error: unknown) => void;
   resolve: (value: T | PromiseLike<T>) => void;
   task: () => Promise<T>;
-  timer: NodeJS.Timeout;
+  timer: ReturnType<typeof setTimeout>;
 };
 
 export class WorkLimiter {
@@ -58,13 +58,16 @@ export class WorkLimiter {
 type CostWindow = { startedAt: number; used: number };
 
 export class WindowCostLimiter {
+  private readonly limit: number;
+  private readonly maximumKeys: number;
+  private readonly windowMs: number;
   private readonly windows = new Map<string, CostWindow>();
 
-  constructor(
-    private readonly limit: number,
-    private readonly windowMs: number,
-    private readonly maximumKeys = 10_000
-  ) {}
+  constructor(limit: number, windowMs: number, maximumKeys = 10_000) {
+    this.limit = limit;
+    this.maximumKeys = maximumKeys;
+    this.windowMs = windowMs;
+  }
 
   consume(key: string, cost: number, now = Date.now()): void {
     let window = this.windows.get(key);

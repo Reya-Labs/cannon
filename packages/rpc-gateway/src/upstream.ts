@@ -15,7 +15,7 @@ async function readBounded(response: Response, maximumBytes: number): Promise<Bu
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let length = 0;
-  while (true) {
+  for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     length += value.length;

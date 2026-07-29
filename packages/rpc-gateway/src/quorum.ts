@@ -175,12 +175,14 @@ function validateResponse(request: PreparedRequest, response: GatewayResult, sna
 
 export class QuorumService {
   private cached?: Snapshot;
+  private readonly config: AppConfig;
   private refresh?: Promise<Snapshot>;
+  private readonly upstream: UpstreamClient;
 
-  constructor(
-    private readonly config: AppConfig,
-    private readonly upstream: UpstreamClient
-  ) {}
+  constructor(config: AppConfig, upstream: UpstreamClient) {
+    this.config = config;
+    this.upstream = upstream;
+  }
 
   async readiness(): Promise<Snapshot> {
     const now = Date.now();
