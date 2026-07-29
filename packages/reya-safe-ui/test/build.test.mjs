@@ -6,6 +6,10 @@ import { test } from 'node:test';
 import { buildExport } from '../src/build.mjs';
 import { compareCanonicalText } from '../src/config.mjs';
 import { scanExport } from '../scripts/scan-export.mjs';
+import {
+  SAFE_ADDRESS,
+  SERVICE_ORIGIN,
+} from '../test-support/client-fixtures.mjs';
 
 const BUILD_SHA = '89abcdef0123456789abcdef0123456789abcdef';
 const ENV = Object.freeze({
@@ -13,6 +17,8 @@ const ENV = Object.freeze({
   REYA_SAFE_UI_BUILD_SHA: BUILD_SHA,
   REYA_SAFE_UI_CHAIN_ID: '1729',
   REYA_SAFE_UI_PROFILE: 'reya-mainnet',
+  REYA_SAFE_UI_SAFE_ADDRESS: SAFE_ADDRESS,
+  REYA_SAFE_UI_SERVICE_ORIGIN: SERVICE_ORIGIN,
 });
 
 async function snapshot(root, current = root) {
@@ -75,6 +81,14 @@ test('builds a deterministic, disabled-only static export', async (context) => {
   );
   assert.equal(release.activation, 'disabled');
   assert.equal(release.profile.chainId, 1729);
+  assert.equal(
+    release.profile.safeAddress,
+    ENV.REYA_SAFE_UI_SAFE_ADDRESS
+  );
+  assert.equal(
+    release.profile.serviceOrigin,
+    ENV.REYA_SAFE_UI_SERVICE_ORIGIN
+  );
   assert.match(release.build.sourceDigest, /^sha256:[0-9a-f]{64}$/);
   assert.match(release.build.configDigest, /^sha256:[0-9a-f]{64}$/);
   assert.match(release.export.assetDigest, /^sha256:[0-9a-f]{64}$/);

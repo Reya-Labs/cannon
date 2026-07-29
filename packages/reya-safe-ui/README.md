@@ -9,18 +9,25 @@ that supplies the approved Safe and Reya-owned browser endpoints.
 
 ## Build
 
-The build accepts exactly four `REYA_SAFE_UI_*` variables. Missing, unknown, or non-canonical values fail the build.
+The build accepts exactly six `REYA_SAFE_UI_*` variables. Missing, unknown, or
+non-canonical values fail the build. The Safe and consolidated service origin
+are release inputs, not runtime selections: both are recorded in the
+configuration digest and must be replaced with the reviewed activation values.
 
 ```sh
 REYA_SAFE_UI_PROFILE=reya-mainnet \
 REYA_SAFE_UI_CHAIN_ID=1729 \
 REYA_SAFE_UI_ACTIVATION=disabled \
 REYA_SAFE_UI_BUILD_SHA=0123456789abcdef0123456789abcdef01234567 \
+REYA_SAFE_UI_SAFE_ADDRESS=<approved-lowercase-safe-address> \
+REYA_SAFE_UI_SERVICE_ORIGIN=https://<approved-consolidated-tailnet-host> \
 pnpm build
 ```
 
 The output is written to `dist/`. `release.json` records the exact source digest, validated configuration digest,
-build revision, and per-file asset integrity. `sbom.cdx.json` is a deterministic CycloneDX 1.6 inventory whose empty
+build revision, approved Safe, consolidated service origin, Cannon `2.26.1`
+state format `7`, fixed public `Reya-Labs/reya-deployments` source contract,
+and per-file asset integrity. `sbom.cdx.json` is a deterministic CycloneDX 1.6 inventory whose empty
 component and dependency sets record that the deployed shell has no runtime packages or client-side JavaScript.
 `_headers` supplies Cloudflare's CSP and browser hardening headers.
 

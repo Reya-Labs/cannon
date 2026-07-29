@@ -6,12 +6,18 @@ import { test } from 'node:test';
 import { buildExport } from '../src/build.mjs';
 import { digestFiles, sha256 } from '../src/config.mjs';
 import { scanExport } from '../scripts/scan-export.mjs';
+import {
+  SAFE_ADDRESS,
+  SERVICE_ORIGIN,
+} from '../test-support/client-fixtures.mjs';
 
 const ENV = Object.freeze({
   REYA_SAFE_UI_ACTIVATION: 'disabled',
   REYA_SAFE_UI_BUILD_SHA: 'fedcba9876543210fedcba9876543210fedcba98',
   REYA_SAFE_UI_CHAIN_ID: '1729',
   REYA_SAFE_UI_PROFILE: 'reya-mainnet',
+  REYA_SAFE_UI_SAFE_ADDRESS: SAFE_ADDRESS,
+  REYA_SAFE_UI_SERVICE_ORIGIN: SERVICE_ORIGIN,
 });
 
 async function fixture(context) {
@@ -94,6 +100,51 @@ test('rejects entity-encoded navigation that raw text scanning cannot see', asyn
     () => scanExport(linkOutput),
     /index\.html attribute a\[href\] contains forbidden decoded remote HTTP URL/
   );
+
+  const protocolRelativeOutput = await fixture(context);
+  const protocolRelativeIndex = path.join(
+    protocolRelativeOutput,
+    'index.html'
+  );
+  await writeFile(
+    protocolRelativeIndex,
+    html.replace(
+      '</body>',
+      '<a href="&#47;&#47;external&#46;example">legacy</a></body>'
+    )
+  );
+  await assert.rejects(
+    () => scanExport(protocolRelativeOutput),
+    /index\.html attribute a\[href\] contains forbidden decoded protocol-relative URL/
+  );
+
+  const attributeOutput = await fixture(context);
+  const attributeIndex = path.join(attributeOutput, 'index.html');
+  await writeFile(
+    attributeIndex,
+    html.replace(
+      '</body>',
+      '<div title="h&#116;tps&#58;//repo&#46;usecannon&#46;com">legacy</div></body>'
+    )
+  );
+  await assert.rejects(
+    () => scanExport(attributeOutput),
+    /index\.html attribute div\[title\] contains forbidden decoded remote HTTP URL/
+  );
+
+  const textOutput = await fixture(context);
+  const textIndex = path.join(textOutput, 'index.html');
+  await writeFile(
+    textIndex,
+    html.replace(
+      '</body>',
+      '<p>h&#116;tps&#58;//repo&#46;usecannon&#46;com</p></body>'
+    )
+  );
+  await assert.rejects(
+    () => scanExport(textOutput),
+    /index\.html text content contains forbidden decoded remote HTTP URL/
+  );
 });
 
 test('rejects an undeclared export file', async (context) => {
@@ -159,6 +210,69 @@ test('rejects release metadata whose config digest does not match its profile', 
   await assert.rejects(
     () => scanExport(output),
     /release config digest does not match the validated profile/
+  );
+});
+
+test('rejects an unapproved service origin in release metadata', async (context) => {
+  const output = await fixture(context);
+  const releasePath = path.join(output, 'release.json');
+  const release = JSON.parse(await readFile(releasePath, 'utf8'));
+  release.profile.serviceOrigin = 'https://repo.usecannon.com';
+  release.build.configDigest = sha256(JSON.stringify(release.profile));
+  await writeFile(releasePath, `${JSON.stringify(release, null, 2)}\n`);
+
+  await assert.rejects(
+    () => scanExport(output),
+    /release profile is not the canonical Reya preview profile/
+  );
+});
+
+test('rejects a remote fallback hidden in release metadata', async (context) => {
+  const output = await fixture(context);
+  const releasePath = path.join(output, 'release.json');
+  const release = JSON.parse(await readFile(releasePath, 'utf8'));
+  release.profile.fallbackOrigin = 'https://repo.usecannon.com';
+  release.build.configDigest = sha256(JSON.stringify(release.profile));
+  await writeFile(releasePath, `${JSON.stringify(release, null, 2)}\n`);
+
+  await assert.rejects(
+    () => scanExport(output),
+    /release profile is not the canonical Reya preview profile/
+  );
+});
+
+test('rejects a hosted fallback hidden behind a duplicate JSON key', async (context) => {
+  const output = await fixture(context);
+  const releasePath = path.join(output, 'release.json');
+  const release = await readFile(releasePath, 'utf8');
+  await writeFile(
+    releasePath,
+    release.replace(
+      `"serviceOrigin": "${ENV.REYA_SAFE_UI_SERVICE_ORIGIN}"`,
+      `"serviceOrigin": "https://repo.usecannon.com",\n    "serviceOrigin": "${ENV.REYA_SAFE_UI_SERVICE_ORIGIN}"`
+    )
+  );
+
+  await assert.rejects(
+    () => scanExport(output),
+    /release metadata is not canonical JSON/
+  );
+});
+
+test('rejects reordered release metadata even with a matching digest', async (context) => {
+  const output = await fixture(context);
+  const releasePath = path.join(output, 'release.json');
+  const release = JSON.parse(await readFile(releasePath, 'utf8'));
+  release.profile = {
+    schemaVersion: release.profile.schemaVersion,
+    ...release.profile,
+  };
+  release.build.configDigest = sha256(JSON.stringify(release.profile));
+  await writeFile(releasePath, `${JSON.stringify(release, null, 2)}\n`);
+
+  await assert.rejects(
+    () => scanExport(output),
+    /release profile is not canonically ordered/
   );
 });
 

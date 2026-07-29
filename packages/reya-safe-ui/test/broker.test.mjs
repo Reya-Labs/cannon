@@ -235,6 +235,80 @@ test('caps concurrent work and aborts every active request on violation', async 
   assert.equal(broker.closed, true);
 });
 
+test('caps aggregate request count and aborts active work', async () => {
+  const worker = new FakeWorker();
+  const signals = [];
+  const broker = createPreviewBroker({
+    expectedCommit: COMMIT,
+    handlers: handlers({
+      rpcRead: async (_input, { signal }) => {
+        signals.push(signal);
+        return new Promise(() => {});
+      },
+    }),
+    limits: { ...PREVIEW_BROKER_LIMITS, requestCount: 1 },
+    runId: RUN_ID,
+    worker,
+  });
+
+  worker.emit(
+    request(1, 'rpcRead', { method: 'eth_chainId', params: [] })
+  );
+  worker.emit(
+    request(2, 'rpcRead', { method: 'eth_chainId', params: [] })
+  );
+  await settle();
+
+  assert.equal(signals.length, 1);
+  assert.equal(signals[0].aborted, true);
+  assert.equal(worker.terminations, 1);
+  assert.equal(broker.closed, true);
+});
+
+test('caps cumulative result bytes and aborts the rejected request', async () => {
+  const worker = new FakeWorker();
+  const result = { result: '0x1' };
+  const resultSize = new TextEncoder().encode(
+    JSON.stringify(result)
+  ).byteLength;
+  const signals = [];
+  const broker = createPreviewBroker({
+    expectedCommit: COMMIT,
+    handlers: handlers({
+      rpcRead: async (_input, context) => {
+        signals.push(context.signal);
+        return result;
+      },
+    }),
+    limits: {
+      ...PREVIEW_BROKER_LIMITS,
+      resultBytes: resultSize * 2 - 1,
+    },
+    runId: RUN_ID,
+    worker,
+  });
+
+  worker.emit(
+    request(1, 'rpcRead', { method: 'eth_chainId', params: [] })
+  );
+  await settle();
+  worker.emit(
+    request(2, 'rpcRead', { method: 'eth_chainId', params: [] })
+  );
+  await settle();
+
+  assert.equal(signals.length, 2);
+  assert.equal(signals[0].aborted, false);
+  assert.equal(signals[1].aborted, true);
+  assert.deepEqual(
+    worker.messages.map(({ type }) => type),
+    ['ready', 'result', 'error']
+  );
+  assert.equal(worker.messages[2].error, 'PREVIEW_READ_FAILED');
+  assert.equal(worker.terminations, 1);
+  assert.equal(broker.closed, true);
+});
+
 test('sanitizes handler failures, terminates, and ignores late results', async () => {
   const worker = new FakeWorker();
   let resolveLate;

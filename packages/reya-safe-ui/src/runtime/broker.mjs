@@ -1,4 +1,5 @@
 import {
+  COMMIT_PATTERN,
   decodePreviewRequest,
   PREVIEW_BROKER_LIMITS,
   PREVIEW_PROTOCOL_VERSION,
@@ -88,7 +89,7 @@ export function createPreviewBroker({
   validateRunId(runId);
   if (
     typeof expectedCommit !== 'string' ||
-    !/^[0-9a-f]{40}$/.test(expectedCommit)
+    !COMMIT_PATTERN.test(expectedCommit)
   ) {
     throw new Error('preview broker commit is invalid');
   }
@@ -109,7 +110,7 @@ export function createPreviewBroker({
   const boundedHandlers = Object.freeze(
     Object.fromEntries(HANDLER_KEYS.map((key) => [key, handlers[key]]))
   );
-  const controllers = new Set();
+  const pending = new Map();
   let active = 0;
   let closed = false;
   let expectedId = 1;
@@ -122,8 +123,11 @@ export function createPreviewBroker({
     worker.removeEventListener('message', onMessage);
     worker.removeEventListener('error', onWorkerFailure);
     worker.removeEventListener('messageerror', onWorkerFailure);
-    for (const controller of controllers) controller.abort();
-    controllers.clear();
+    for (const [controller, timeout] of pending) {
+      clearTimeout(timeout);
+      controller.abort();
+    }
+    pending.clear();
     try {
       worker.terminate();
     } catch {
@@ -151,7 +155,6 @@ export function createPreviewBroker({
   const run = async (request) => {
     active += 1;
     const controller = new AbortController();
-    controllers.add(controller);
     let timeout;
     try {
       const deadline = new Promise((_, reject) => {
@@ -160,6 +163,7 @@ export function createPreviewBroker({
           reject(new Error('preview broker request timed out'));
         }, bounded.requestTimeoutMs);
       });
+      pending.set(controller, timeout);
       const result = await Promise.race([
         boundedHandlers[request.operation](request.input, {
           signal: controller.signal,
@@ -194,7 +198,7 @@ export function createPreviewBroker({
       terminate();
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
-      controllers.delete(controller);
+      pending.delete(controller);
       active -= 1;
     }
   };
