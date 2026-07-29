@@ -67,17 +67,18 @@ function trustProxy(value: string | undefined): string | number | boolean {
 
 function origin(value: string): string {
   const parsed = new URL(value);
+  const isProductionOrigin = parsed.protocol === 'https:' && parsed.port === '';
+  const isLocalOrigin = parsed.protocol === 'http:' && parsed.hostname === '127.0.0.1' && parsed.port !== '';
   if (
-    parsed.protocol !== 'https:' ||
+    (!isProductionOrigin && !isLocalOrigin) ||
     parsed.username ||
     parsed.password ||
-    parsed.port ||
     parsed.pathname !== '/' ||
     parsed.search ||
     parsed.hash ||
     value !== parsed.origin
   ) {
-    throw new Error('SOURCE_UI_ORIGIN must be one canonical HTTPS origin');
+    throw new Error('SOURCE_UI_ORIGIN must be one canonical HTTPS or 127.0.0.1 HTTP origin');
   }
   return parsed.origin;
 }

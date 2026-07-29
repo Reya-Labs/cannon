@@ -1,4 +1,4 @@
-import toml from '@iarna/toml';
+import parseToml from '@iarna/toml/parse-string.js';
 import { REYA_READ_LIMITS } from './config.mjs';
 import { fail } from './errors.mjs';
 import {
@@ -112,7 +112,7 @@ function validateClosure(files) {
     if (!file) fail('RESPONSE_REJECTED');
     let parsed;
     try {
-      parsed = toml.parse(file.content);
+      parsed = parseToml(file.content);
     } catch {
       fail('RESPONSE_REJECTED');
     }

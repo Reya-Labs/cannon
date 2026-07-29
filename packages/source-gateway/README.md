@@ -19,10 +19,10 @@ accepted.
 
 ## Required configuration
 
-| Variable            | Purpose                                                                    |
-| ------------------- | -------------------------------------------------------------------------- |
-| `AUTH_PROXY_SECRET` | At least 32 bytes. Shared only with the origin-unreachable identity proxy. |
-| `SOURCE_UI_ORIGIN`  | Exact canonical HTTPS origin allowed by CORS.                              |
+| Variable            | Purpose                                                                                                                    |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `AUTH_PROXY_SECRET` | At least 32 bytes. Shared only with the origin-unreachable identity proxy.                                                 |
+| `SOURCE_UI_ORIGIN`  | Exact canonical HTTPS origin allowed by CORS. An explicit `http://127.0.0.1:<port>` is accepted only for local browser QA. |
 
 Optional settings are `AUTH_IDENTITY_HEADER` (default `x-reya-user`),
 `AUTH_PROXY_SECRET_HEADER` (default `x-reya-proxy-secret`), `PORT` (default
