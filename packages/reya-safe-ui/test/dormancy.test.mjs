@@ -19,6 +19,7 @@ test('proves the disabled static shell cannot reach the read clients', async () 
     'clients/index.mjs',
     'clients/query.mjs',
     'clients/schema.mjs',
+    'clients/source.mjs',
     'clients/transport.mjs',
   ]);
   assert.equal(

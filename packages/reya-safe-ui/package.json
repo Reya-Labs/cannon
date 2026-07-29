@@ -8,6 +8,9 @@
   "engines": {
     "node": "22.23.1"
   },
+  "dependencies": {
+    "@iarna/toml": "3.0.0"
+  },
   "devDependencies": {
     "es-module-lexer": "1.6.0"
   },

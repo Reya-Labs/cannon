@@ -78,6 +78,13 @@ const workflowPolicies = new Map([
       workflow_call: null,
     },
   ],
+  [
+    'source-gateway.yml',
+    {
+      pull_request: ['dev', 'main'],
+      push: ['dev', 'main'],
+    },
+  ],
   ['safe-app-backend-publish.yml', null],
   [
     'reya-safe-ui.yml',
@@ -287,6 +294,15 @@ const allowedGitHubContexts = new Map([
   ],
   [
     '.github/workflows/safe-app-backend.yml',
+    new Set([
+      'github.event.pull_request.number',
+      'github.event_name',
+      'github.run_id',
+      'github.sha',
+    ]),
+  ],
+  [
+    '.github/workflows/source-gateway.yml',
     new Set([
       'github.event.pull_request.number',
       'github.event_name',
