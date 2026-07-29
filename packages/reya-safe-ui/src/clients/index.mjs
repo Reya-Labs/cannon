@@ -10,6 +10,12 @@ export { ReyaReadClientError } from './errors.mjs';
 export { QUERY_ROUTE_PATHS } from './query.mjs';
 export { RPC_ROUTE_PATH } from './rpc.mjs';
 export {
+  createReyaStagingClient,
+  REYA_STAGING_LIMITS,
+  STAGING_ROUTE_PREFIX,
+} from './staging.mjs';
+export { ReyaStagingServiceError } from './errors.mjs';
+export {
   SOURCE_REPOSITORY,
   SOURCE_ROOT,
   SOURCE_ROUTE_PREFIX,

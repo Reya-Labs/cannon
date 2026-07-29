@@ -51,7 +51,7 @@ function assertAllowedKeys(value, allowed, required = []) {
   }
 }
 
-function validateOrigin(value) {
+export function validateServiceOrigin(value) {
   if (typeof value !== 'string' || value.length > 253) {
     fail('INVALID_CONFIGURATION');
   }
@@ -94,7 +94,7 @@ export function validateReadClientOptions(options) {
     'verifyArtifactCid',
   ]);
 
-  const serviceOrigin = validateOrigin(options.serviceOrigin);
+  const serviceOrigin = validateServiceOrigin(options.serviceOrigin);
   if (
     typeof options.verifyAbiSelector !== 'function' ||
     typeof options.verifyArtifactCid !== 'function'

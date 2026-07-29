@@ -4,6 +4,20 @@ import { fail, ReyaReadClientError } from './errors.mjs';
 const TIMEOUT = Symbol('read-client-timeout');
 const CANCELLED = Symbol('read-client-cancelled');
 const CANCELLED_BODIES = new WeakSet();
+const STAGING_RESPONSE_STATUSES = new Set([
+  200,
+  201,
+  400,
+  401,
+  403,
+  404,
+  409,
+  413,
+  429,
+  500,
+  503,
+]);
+const IDEMPOTENCY_KEY_PATTERN = /^[a-zA-Z0-9._:-]{16,128}$/;
 
 function startDeadline(milliseconds, externalSignal) {
   const controller = new AbortController();
@@ -170,13 +184,15 @@ function validateContentType(headers, expected) {
   if (mediaType !== expected) fail('RESPONSE_REJECTED');
 }
 
-export async function boundedRequest({
+async function performBoundedRequest({
   accept,
+  acceptedStatuses,
   body,
   contentType,
   deadlineMs,
   externalSignal,
   fetchImpl,
+  idempotencyKey,
   maximumBytes,
   method,
   responseMediaType,
@@ -189,6 +205,9 @@ export async function boundedRequest({
   try {
     const headers = { Accept: accept };
     if (contentType !== undefined) headers['Content-Type'] = contentType;
+    if (idempotencyKey !== undefined) {
+      headers['X-Idempotency-Key'] = idempotencyKey;
+    }
     const request = {
       cache: 'no-store',
       credentials: 'omit',
@@ -208,7 +227,7 @@ export async function boundedRequest({
       response === null ||
       typeof response !== 'object' ||
       response.redirected !== false ||
-      response.status !== 200 ||
+      !acceptedStatuses.has(response.status) ||
       typeof response.headers?.get !== 'function'
     ) {
       fail('REQUEST_FAILED');
@@ -217,7 +236,7 @@ export async function boundedRequest({
     validateContentType(response.headers, responseMediaType);
     const bytes = await readBody(response, maximumBytes, deadline);
     bodyReadCompleted = true;
-    return bytes;
+    return Object.freeze({ bytes, status: response.status });
   } catch (error) {
     if (!bodyReadCompleted) cancelBody(response);
     if (error === TIMEOUT || deadline.expired) fail('REQUEST_TIMEOUT');
@@ -229,6 +248,52 @@ export async function boundedRequest({
   } finally {
     deadline.finish();
   }
+}
+
+export async function boundedRequest(options) {
+  const response = await performBoundedRequest({
+    ...options,
+    acceptedStatuses: new Set([200]),
+    idempotencyKey: undefined,
+  });
+  return response.bytes;
+}
+
+export async function boundedStagingRequest({
+  body,
+  deadlineMs,
+  externalSignal,
+  fetchImpl,
+  idempotencyKey,
+  maximumBytes,
+  method,
+  url,
+}) {
+  if (
+    (method !== 'GET' && method !== 'POST') ||
+    (method === 'GET' &&
+      (body !== undefined || idempotencyKey !== undefined)) ||
+    (method === 'POST' && typeof body !== 'string') ||
+    (idempotencyKey !== undefined &&
+      !IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey))
+  ) {
+    fail('INVALID_INPUT');
+  }
+
+  return performBoundedRequest({
+    accept: 'application/json',
+    acceptedStatuses: STAGING_RESPONSE_STATUSES,
+    body,
+    contentType: body === undefined ? undefined : 'application/json',
+    deadlineMs,
+    externalSignal,
+    fetchImpl,
+    idempotencyKey,
+    maximumBytes,
+    method,
+    responseMediaType: 'application/json',
+    url,
+  });
 }
 
 export function parseJson(bytes) {

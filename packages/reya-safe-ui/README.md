@@ -147,7 +147,7 @@ Review `deployerPrerequisites` independently before treating
 non-proposable, and any signer other than the fixed local-QA deployer and the
 approved Reya Safe fails the run.
 
-## Dormant Reya read clients
+## Dormant Reya service clients
 
 `src/clients/` contains dormant ESM clients for a later activation change.
 They are deliberately unreachable from `src/build.mjs`, are not included in
@@ -203,6 +203,19 @@ ID in a single canonical success envelope. Batches, notifications, upstream
 error envelopes, unknown response fields, redirects, and oversized or
 non-canonical JSON fail closed.
 
+The staging client is a separate factory and is not attached to the read-only
+client collection. It fixes proposal reads and mutations to
+`/staging/1729/<approved-safe>`, sends no browser credentials or caller-defined
+headers, and has no configurable chain, route, RPC, repository, attestation, or
+target. Proposal submission accepts exactly one canonical 65-byte EIP-712 EOA
+signature and one strict Safe transaction; it never forwards cached signature
+sets. Supersession requires an explicit expected digest, reviewed reason, and
+caller-supplied idempotency key. Mutations are attempted once and ambiguous
+network failures are never retried automatically. Successful responses must
+bind back to the submitted transaction, signature, or superseded digest.
+Backend errors expose only a status-bound allowlisted code; upstream messages
+and details are discarded.
+
 Function and error documents use a dependency-free, bounded canonical ABI
 signature subset: explicit integer widths; standard `address`, `bool`, `bytes`,
 `function`, and `string` types; non-empty tuples; dynamic arrays; and fixed
@@ -211,7 +224,9 @@ Aliases, fixed-point types, zero or leading-zero array lengths, control
 characters, and non-canonical syntax are rejected. The query API must enforce
 the same conformance vectors before these dormant clients can be activated.
 
-These modules are not activation-ready infrastructure. The consolidated
+These modules are not activation-ready infrastructure. The `/staging` prefix
+is the reviewed consolidated-ingress contract and must strip to the backend's
+root route. The consolidated
 Tailscale ingress and its `/query`, `/artifacts`, `/source`, and `/rpc` routes do not
 yet exist. The bounded source-gateway package implements the `/source`
 application contract, but it is not published or deployed by this change.

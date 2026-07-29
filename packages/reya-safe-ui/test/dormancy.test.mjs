@@ -8,7 +8,7 @@ import {
   verifyDormantClients,
 } from '../scripts/verify-dormant-clients.mjs';
 
-test('proves the disabled static shell cannot reach the read clients', async () => {
+test('proves the disabled static shell cannot reach the service clients', async () => {
   const result = await verifyDormantClients();
 
   assert.deepEqual(result.active, ['build.mjs', 'config.mjs', 'template.mjs']);
@@ -21,6 +21,7 @@ test('proves the disabled static shell cannot reach the read clients', async () 
     'clients/rpc.mjs',
     'clients/schema.mjs',
     'clients/source.mjs',
+    'clients/staging.mjs',
     'clients/transport.mjs',
   ]);
   assert.equal(

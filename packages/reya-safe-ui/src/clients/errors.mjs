@@ -5,6 +5,7 @@ const ERROR_MESSAGES = Object.freeze({
   REQUEST_FAILED: 'The Reya read service request failed.',
   REQUEST_TIMEOUT: 'The Reya read service request timed out.',
   RESPONSE_REJECTED: 'The Reya read service response was rejected.',
+  SERVICE_REJECTED: 'The Reya staging service rejected the request.',
 });
 
 export class ReyaReadClientError extends Error {
@@ -18,6 +19,19 @@ export class ReyaReadClientError extends Error {
   }
 }
 
+export class ReyaStagingServiceError extends ReyaReadClientError {
+  constructor(httpStatus, serviceCode) {
+    super('SERVICE_REJECTED');
+    this.name = 'ReyaStagingServiceError';
+    this.httpStatus = httpStatus;
+    this.serviceCode = serviceCode;
+  }
+}
+
 export function fail(code) {
   throw new ReyaReadClientError(code);
+}
+
+export function failStagingService(httpStatus, serviceCode) {
+  throw new ReyaStagingServiceError(httpStatus, serviceCode);
 }
