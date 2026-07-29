@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import Redis from 'ioredis';
 import { createPublicClient, http } from 'viem';
-import { PilotAdmissionVerifier } from './admission';
+import { createAdmissionVerifier } from './admission';
 import { createApp } from './app';
 import { loadConfig } from './config';
 import { checkSafeReadiness } from './safe';
@@ -20,11 +20,6 @@ export async function startServer(): Promise<{
   server: Server;
 }> {
   const config = loadConfig();
-  if (!config.pilotMode) {
-    throw new Error(
-      'production admission verifier is not configured; PILOT_MODE=true is permitted only for the bounded test-Safe pilot'
-    );
-  }
   const redis = new Redis(config.redisUrl, {
     enableOfflineQueue: false,
     lazyConnect: true,
@@ -71,7 +66,7 @@ export async function startServer(): Promise<{
     );
 
     const app = createApp({
-      admissionVerifier: new PilotAdmissionVerifier(config.pilotMode),
+      admissionVerifier: createAdmissionVerifier(config.admissionMode),
       config,
       providers,
       store,
@@ -99,7 +94,9 @@ export async function startServer(): Promise<{
   }
 
   const chainIds = Array.from(config.rpcUrls.keys()).join(',');
-  console.log(`safe staging backend listening on port ${config.port}; chains=${chainIds}; pilotMode=${config.pilotMode}`);
+  console.log(
+    `safe staging backend listening on port ${config.port}; chains=${chainIds}; admissionMode=${config.admissionMode}`
+  );
 
   let closed = false;
   return {

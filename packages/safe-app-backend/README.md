@@ -5,14 +5,14 @@ This service accumulates Safe-owner signatures for Cannon transactions. The Safe
 The Reya hardening profile is deliberately fail-closed:
 
 - Redis/Valkey is mandatory and authoritative; there is no process-local proposal cache.
-- Every RPC and Safe is explicitly allowlisted; each backend deployment is restricted to exactly one Safe.
+- The only supported chain is Reya Network `1729`; its RPC and the one approved Safe are explicit.
 - Only the current on-chain Safe nonce can be proposed.
 - A proposer must create the first record with at least one current-owner signature.
 - Signature updates are atomic, owner-keyed, replica-acknowledged before HTTP success and idempotent.
 - A Redis-persisted Safe-nonce high-water mark rejects stale RPC regressions.
 - Terminal records and per-nonce replacement counts expire; the audit stream is bounded.
 - Browser identity is supplied by a trusted ingress and enforced again at the application layer.
-- `PILOT_MODE=true` permits unattested test-Safe proposals. The current server refuses to start with pilot mode disabled until a production CI-attestation verifier is composed into the service.
+- Production starts only with the reviewed `ADMISSION_MODE=safe-owner` contract selected explicitly.
 
 Do not expose the container origin directly. The first deployment remains a single writer until the production failover and multi-replica race drills are approved.
 
@@ -54,12 +54,12 @@ Image metadata is derived from source: the package version comes from this packa
 
 | Variable            | Contract                                                                                                                                                   |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ADMISSION_MODE`    | Required and currently only `safe-owner`. Missing, legacy or unknown modes fail startup.                                                                   |
 | `REDIS_URL`         | Dedicated persistent, non-clustered Redis/Valkey URL. Production needs its own credentials, network policy, backups, no-eviction policy and restore drill. |
-| `RPC_URLS`          | Comma-separated, explicit `<chainId>=<https-url>` entries. The server verifies every endpoint's chain ID and never falls back to public viem RPCs.         |
-| `SAFE_ALLOWLIST`    | Exactly one `<chainId>:<safeAddress>` target per deployment. Its chain must have an explicit RPC. Duplicate identical entries are ignored.                 |
+| `RPC_URLS`          | Exactly `1729=<https-url>`. The server verifies the endpoint chain ID and never falls back to a public viem RPC.                                           |
+| `SAFE_ALLOWLIST`    | Exactly one `1729:<safeAddress>` target. Duplicate identical entries are ignored.                                                                          |
 | `CORS_ORIGINS`      | Exact comma-separated browser origins. Wildcards and path-bearing URLs are rejected.                                                                       |
 | `AUTH_PROXY_SECRET` | At least 32 bytes. A server-only ingress secret; it must never be shipped to the browser.                                                                  |
-| `PILOT_MODE`        | `true` only for the bounded test-Safe pilot. The current server refuses to start with this disabled because the production verifier is not implemented.    |
 
 Optional hardening settings:
 
@@ -74,7 +74,7 @@ Optional hardening settings:
 | `BODY_LIMIT`                | `1mb`                 | JSON body limit. Calldata is separately capped at 512 KiB.                                                             |
 | `RATE_LIMIT`                | `120`                 | Per-identity requests per window.                                                                                      |
 | `RATE_LIMIT_WINDOW_MS`      | `60000`               | Identity rate-limit window.                                                                                            |
-| `REDIS_PREFIX`              | `safe-app-backend:v2` | Key prefix. Use a unique prefix per environment even though production instances must remain separate.                 |
+| `REDIS_PREFIX`              | `safe-app-backend:v2` | Base key prefix. The server appends `:admission:safe-owner:v1`; use a unique base per environment.                     |
 | `REDIS_MIN_REPLICAS`        | `1`                   | Required replica acknowledgements before success/readiness. `0` is only for disposable local development.              |
 | `REDIS_WAIT_TIMEOUT_MS`     | `2000`                | Maximum wait for the required Redis replica acknowledgements.                                                          |
 | `HISTORY_RETENTION_SECONDS` | `2592000`             | Retention for terminal records, idempotency results and per-nonce replacement counts; it must exceed the proposal TTL. |
@@ -83,15 +83,15 @@ Optional hardening settings:
 | `READINESS_CACHE_MS`        | `5000`                | Coalescing/cache window for dependency-heavy readiness checks.                                                         |
 | `PORT`                      | `8080`                | HTTP port.                                                                                                             |
 
-Example test-pilot configuration:
+Example safe-owner configuration:
 
 ```sh
 REDIS_URL=redis://valkey.internal:6379 \
+ADMISSION_MODE=safe-owner \
 RPC_URLS=1729=https://rpc.internal.example \
 SAFE_ALLOWLIST=1729:0x1111111111111111111111111111111111111111 \
 CORS_ORIGINS=https://cannon.example \
 AUTH_PROXY_SECRET=replace-with-a-server-only-secret-of-at-least-32-bytes \
-PILOT_MODE=true \
 pnpm --filter backend start
 ```
 
@@ -116,6 +116,11 @@ Roles are intentionally separate:
 Every submitted signature is still recovered and checked against the current on-chain Safe owner set. The actor identity and recovered signer are recorded separately in the audit stream.
 
 Roles are not yet scoped independently by Safe. To keep an operator for one multisig from affecting another, startup rejects configurations containing more than one distinct Safe. Deploy a separate backend, Redis prefix and ingress policy per Safe until Safe-scoped authorization is implemented.
+
+The effective Redis namespace includes the admission mode and contract version. This prevents
+an admission-ID change from binding a new server to incompatible in-flight proposal records.
+Do not run legacy pilot and safe-owner writers concurrently: activation is a fresh, staffed
+cutover after confirming there is no proposal that signers still intend to execute.
 
 ## Signature policy
 
@@ -165,7 +170,7 @@ Creation requires the `proposer` role. Once active, either a `proposer` or `sign
 
 The hardened backend intentionally stages only the current on-chain Safe nonce. The existing Cannon UI's queued-future-nonce and local "override" controls are therefore not compatible with this API; PRO-694 must switch replacement to the explicit supersede flow before the Reya UI pilot.
 
-The optional `attestation` envelope is reserved for the production admission verifier:
+The optional `attestation` envelope remains reserved for a separately reviewed future admission mode:
 
 ```json
 {
@@ -175,7 +180,7 @@ The optional `attestation` envelope is reserved for the production admission ver
 }
 ```
 
-Pilot mode rejects supplied attestations rather than pretending to validate them. An injected app-level verifier fails mutations with `503 production_admission_unconfigured`; the packaged server also refuses to start with pilot mode disabled until PRO-693 supplies the production verifier.
+Safe-owner mode rejects supplied attestations rather than pretending to validate them. It admits a new current-nonce proposal only after trusted-ingress proposer authentication, server-side Safe transaction hash calculation and at least one signature recovered to the current on-chain Safe owner set. Additional authenticated proposers or signers derive the same transaction-bound admission ID and can atomically add their independently validated signatures.
 
 ### `POST /:chainId/:safeAddress/supersede`
 
@@ -221,4 +226,4 @@ Restore procedure:
 5. compare the exported audit tail and retained proposal/signature records;
 6. re-enable the single writer and run an idempotent signer retry.
 
-Production mainnet admission remains blocked until PRO-693 supplies the reviewed CI-attestation verifier and the complete proposal flow passes the PRO-695 test-Safe and recovery drills.
+Production mainnet activation remains blocked until the complete proposal flow passes the PRO-695 staffed Test-Safe canary, independent transaction-hash review and recovery drills.

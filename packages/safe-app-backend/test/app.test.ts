@@ -3,7 +3,7 @@ import request from 'supertest';
 import { getAddress, keccak256, toHex, type Address, type Hex } from 'viem';
 import { privateKeyToAccount, sign } from 'viem/accounts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { PilotAdmissionVerifier } from '../src/admission';
+import { SafeOwnerAdmissionVerifier } from '../src/admission';
 import { createApp } from '../src/app';
 import type { AppConfig } from '../src/config';
 import { RedisStagingStore, type RedisStorePolicy } from '../src/store';
@@ -19,6 +19,7 @@ const PRIVATE_KEYS = [
   `0x${'02'.padStart(64, '0')}`,
   `0x${'03'.padStart(64, '0')}`,
 ] as const satisfies readonly Hex[];
+const OUTSIDER_PRIVATE_KEY = `0x${'04'.padStart(64, '0')}` as const satisfies Hex;
 const ACCOUNTS = PRIVATE_KEYS.map(privateKeyToAccount);
 
 class FakeSafeClient implements SafeClient {
@@ -27,6 +28,7 @@ class FakeSafeClient implements SafeClient {
   owners = ACCOUNTS.map(({ address }) => getAddress(address));
   blockTimestamp = BigInt(Math.floor(Date.now() / 1000));
   available = true;
+  rejectSignatures = false;
 
   digest(txn: SafeTransaction): Hex {
     return keccak256(toHex(JSON.stringify(txn)));
@@ -72,6 +74,7 @@ class FakeSafeClient implements SafeClient {
         });
       }
       case 'checkNSignatures':
+        if (this.rejectSignatures) throw new Error('Safe rejected signatures');
         return undefined;
       default:
         throw new Error(`unexpected contract read ${String(parameters.functionName)}`);
@@ -81,6 +84,7 @@ class FakeSafeClient implements SafeClient {
 
 function config(prefix: string): AppConfig {
   return {
+    admissionMode: 'safe-owner',
     auditMaxLength: 10_000,
     auth: {
       identityHeader: 'x-reya-user',
@@ -93,7 +97,6 @@ function config(prefix: string): AppConfig {
     historyRetentionMs: 60 * 60 * 1000,
     maxBlockAgeSeconds: 120,
     maxProposalsPerNonce: 20,
-    pilotMode: true,
     port: 8080,
     proposalTtlMs: 60_000,
     readinessCacheMs: 10,
@@ -175,14 +178,14 @@ describe.skipIf(!redisUrl)('safe staging API', () => {
     replicaStore = new RedisStagingStore(replicaRedis, testConfig.redisPrefix, storePolicy(testConfig));
     await Promise.all([primaryStore.ping(), replicaStore.ping()]);
     primaryApp = createApp({
-      admissionVerifier: new PilotAdmissionVerifier(true),
+      admissionVerifier: new SafeOwnerAdmissionVerifier(),
       config: testConfig,
       now: () => now,
       providers,
       store: primaryStore,
     });
     replicaApp = createApp({
-      admissionVerifier: new PilotAdmissionVerifier(true),
+      admissionVerifier: new SafeOwnerAdmissionVerifier(),
       config: testConfig,
       now: () => now,
       providers,
@@ -213,12 +216,15 @@ describe.skipIf(!redisUrl)('safe staging API', () => {
 
   it('requires trusted-proxy identity and a configured origin', async () => {
     await request(primaryApp).get(`/${CHAIN_ID}/${SAFE}`).expect(401);
+    await request(primaryApp).post(`/${CHAIN_ID}/${SAFE}`).send({}).expect(401);
     await request(primaryApp)
       .get(`/${CHAIN_ID}/${SAFE}`)
       .set(auth('signer'))
       .set('origin', 'https://evil.example')
       .expect(403);
     await request(primaryApp).get(`/${CHAIN_ID}/${OTHER_SAFE}`).set(auth('signer')).expect(404);
+    await request(primaryApp).post(`/1/${SAFE}`).set(auth('proposer')).send({}).expect(404);
+    await request(primaryApp).post(`/${CHAIN_ID}/${OTHER_SAFE}`).set(auth('proposer')).send({}).expect(404);
   });
 
   it('rejects zero signatures and lets only proposers create current-nonce proposals', async () => {
@@ -242,6 +248,22 @@ describe.skipIf(!redisUrl)('safe staging API', () => {
       .set(auth('proposer'))
       .send({ sigs: [signed], txn: transaction })
       .expect(201);
+
+    const createdAuditEntry = (await primaryRedis.xrange(`${testPrefix}:audit`, '-', '+')).find(([, fields]) => {
+      const eventIndex = fields.indexOf('event');
+      return eventIndex >= 0 && fields[eventIndex + 1] === 'proposal.created';
+    });
+    expect(createdAuditEntry).toBeDefined();
+    const createdFields = createdAuditEntry![1];
+    const audit = new Map<string, string>();
+    for (let index = 0; index < createdFields.length; index += 2) {
+      audit.set(createdFields[index], createdFields[index + 1]);
+    }
+    expect(audit.get('actor')).toBe('owner@example.com');
+    expect(audit.get('chainId')).toBe(String(CHAIN_ID));
+    expect(audit.get('safe')).toBe(SAFE);
+    expect(audit.get('nonce')).toBe(String(transaction._nonce));
+    expect(audit.get('safeTxHash')).toBe(client.digest(transaction));
   });
 
   it('atomically unions concurrent signer submissions across independent replicas', async () => {
@@ -282,7 +304,7 @@ describe.skipIf(!redisUrl)('safe staging API', () => {
     const freshRedis = new Redis(redisUrl, { maxRetriesPerRequest: 1 });
     const freshStore = new RedisStagingStore(freshRedis, testPrefix, storePolicy(testConfig));
     const freshApp = createApp({
-      admissionVerifier: new PilotAdmissionVerifier(true),
+      admissionVerifier: new SafeOwnerAdmissionVerifier(),
       config: config(testPrefix),
       providers: new Map([[CHAIN_ID, client]]),
       store: freshStore,
@@ -297,10 +319,19 @@ describe.skipIf(!redisUrl)('safe staging API', () => {
     const auditEntries = await primaryRedis.xrange(`${testPrefix}:audit`, '-', '+');
     const auditEvents = auditEntries.map(([, fields]) => fields[fields.indexOf('event') + 1]);
     expect(auditEvents).toContain('proposal.created');
-    expect(auditEvents.filter((event) => event === 'signature.added')).toHaveLength(3);
+    const signatureAuditEntries = auditEntries.filter(([, fields]) => {
+      const eventIndex = fields.indexOf('event');
+      return eventIndex >= 0 && fields[eventIndex + 1] === 'signature.added';
+    });
+    expect(signatureAuditEntries).toHaveLength(3);
+    for (const [, fields] of signatureAuditEntries) {
+      const safeTxHashIndex = fields.indexOf('safeTxHash');
+      expect(safeTxHashIndex).toBeGreaterThanOrEqual(0);
+      expect(fields[safeTxHashIndex + 1]).toBe(client.digest(transaction));
+    }
   });
 
-  it('rejects same-nonce conflicts and unsupported Safe signature encodings', async () => {
+  it('rejects same-nonce conflicts, non-owner signatures and unsupported Safe signature encodings', async () => {
     const first = txn();
     const firstSignature = await signature(first, 0, client);
     await request(primaryApp)
@@ -318,6 +349,25 @@ describe.skipIf(!redisUrl)('safe staging API', () => {
       .expect(409);
     expect(conflict.body.error.code).toBe('nonce_conflict');
 
+    const malformed = await request(primaryApp)
+      .post(`/${CHAIN_ID}/${SAFE}`)
+      .set(auth('signer'))
+      .send({ sigs: ['0x12'], txn: first })
+      .expect(400);
+    expect(malformed.body.error.code).toBe('invalid_request');
+
+    const outsiderSignature = await sign({
+      hash: client.digest(first),
+      privateKey: OUTSIDER_PRIVATE_KEY,
+      to: 'hex',
+    });
+    const outsider = await request(primaryApp)
+      .post(`/${CHAIN_ID}/${SAFE}`)
+      .set(auth('signer'))
+      .send({ sigs: [outsiderSignature], txn: first })
+      .expect(400);
+    expect(outsider.body.error.code).toBe('non_owner_signature');
+
     const unsupportedBytes = Buffer.from(firstSignature.slice(2), 'hex');
     unsupportedBytes[64] = 31;
     const unsupported = await request(primaryApp)
@@ -326,6 +376,14 @@ describe.skipIf(!redisUrl)('safe staging API', () => {
       .send({ sigs: [`0x${unsupportedBytes.toString('hex')}`], txn: first })
       .expect(400);
     expect(unsupported.body.error.code).toBe('unsupported_signature_type');
+
+    client.rejectSignatures = true;
+    const safeRejected = await request(primaryApp)
+      .post(`/${CHAIN_ID}/${SAFE}`)
+      .set(auth('signer'))
+      .send({ sigs: [firstSignature], txn: first })
+      .expect(400);
+    expect(safeRejected.body.error.code).toBe('invalid_signature');
   });
 
   it('filters removed-owner signatures and never depends on process memory', async () => {
@@ -345,6 +403,15 @@ describe.skipIf(!redisUrl)('safe staging API', () => {
   it('reconciles nonce advances and permits only the new current nonce', async () => {
     const original = txn();
     const originalSignature = await signature(original, 0, client);
+    const future = txn({ _nonce: 8 });
+    const futureSignature = await signature(future, 0, client);
+    const futureResponse = await request(primaryApp)
+      .post(`/${CHAIN_ID}/${SAFE}`)
+      .set(auth('proposer'))
+      .send({ sigs: [futureSignature], txn: future })
+      .expect(409);
+    expect(futureResponse.body.error.code).toBe('stale_or_future_nonce');
+
     await request(primaryApp)
       .post(`/${CHAIN_ID}/${SAFE}`)
       .set(auth('proposer'))
@@ -468,7 +535,7 @@ describe.skipIf(!redisUrl)('safe staging API', () => {
     expect(await primaryRedis.hget(proposalKey, 'status')).toBe('stale');
   });
 
-  it('expires active proposals atomically and fails closed without a production admission verifier', async () => {
+  it('expires active proposals atomically and rejects unverified attestations in safe-owner mode', async () => {
     testConfig.proposalTtlMs = 10;
     const transaction = txn();
     const signed = await signature(transaction, 0, client);
@@ -482,18 +549,22 @@ describe.skipIf(!redisUrl)('safe staging API', () => {
     const expired = await request(replicaApp).get(`/${CHAIN_ID}/${SAFE}`).set(auth('signer')).expect(200);
     expect(expired.body).toEqual([]);
 
-    const noProductionVerifier = createApp({
-      admissionVerifier: new PilotAdmissionVerifier(false),
+    const safeOwnerApp = createApp({
+      admissionVerifier: new SafeOwnerAdmissionVerifier(),
       config: config(`test:${crypto.randomUUID()}`),
       providers: new Map([[CHAIN_ID, client]]),
       store: primaryStore,
     });
-    const rejected = await request(noProductionVerifier)
+    const rejected = await request(safeOwnerApp)
       .post(`/${CHAIN_ID}/${SAFE}`)
       .set(auth('proposer'))
-      .send({ sigs: [signed], txn: transaction })
-      .expect(503);
-    expect(rejected.body.error.code).toBe('production_admission_unconfigured');
+      .send({
+        attestation: { format: 'test', payload: 'not-verified', signature: 'not-verified' },
+        sigs: [signed],
+        txn: transaction,
+      })
+      .expect(400);
+    expect(rejected.body.error.code).toBe('safe_owner_attestation_unsupported');
   });
 
   it('bounds distinct proposal replacements for one Safe nonce', async () => {
@@ -505,7 +576,7 @@ describe.skipIf(!redisUrl)('safe staging API', () => {
       maxProposalsPerNonce: 2,
     });
     const boundedApp = createApp({
-      admissionVerifier: new PilotAdmissionVerifier(true),
+      admissionVerifier: new SafeOwnerAdmissionVerifier(),
       config: boundedConfig,
       providers: new Map([[CHAIN_ID, client]]),
       store: boundedStore,
@@ -564,7 +635,7 @@ describe.skipIf(!redisUrl)('safe staging API', () => {
     const signed = await signature(transaction, 0, client);
     const input = {
       actor: { roles: new Set<'proposer'>(['proposer']), subject: 'proposer@example.com' },
-      admissionId: 'pilot-durability-test',
+      admissionId: 'safe-owner-durability-test',
       canCreate: true,
       chainId: CHAIN_ID,
       digest: client.digest(transaction),

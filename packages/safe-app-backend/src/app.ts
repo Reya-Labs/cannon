@@ -229,6 +229,7 @@ export function createApp({ admissionVerifier, config, now = Date.now, providers
       }
 
       const digest = await asRpcRead(() => getSafeDigest(client, safeAddress, txn));
+      const signatures = await asRpcRead(() => validateSignatures(client, safeAddress, digest, parsed.sigs));
       const admission = await admissionVerifier.verify({
         actor,
         attestation: parsed.attestation,
@@ -236,8 +237,8 @@ export function createApp({ admissionVerifier, config, now = Date.now, providers
         safeAddress,
         safeTxHash: digest,
         txn,
+        verifiedSignatures: signatures,
       });
-      const signatures = await asRpcRead(() => validateSignatures(client, safeAddress, digest, parsed.sigs));
       const merge = await store.mergeProposal({
         actor,
         admissionId: admission.id,
