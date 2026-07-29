@@ -4,6 +4,7 @@ import {
 } from '../src/clients/index.mjs';
 
 export const SERVICE_ORIGIN = 'https://cannon-api.reya-tailnet.ts.net';
+export const SAFE_ADDRESS = '0x1111111111111111111111111111111111111111';
 export const DEPLOY_CID = 'QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn';
 export const META_CID = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
 const ABI_SELECTORS = new Map([
