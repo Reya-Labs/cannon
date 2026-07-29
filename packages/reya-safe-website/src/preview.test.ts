@@ -138,6 +138,25 @@ describe('Reya website preview admission', () => {
     ).toThrow('PREVIEW_REJECTED');
   });
 
+  it('admits the automatic current-state review mode but rejects other modes', () => {
+    const automatic = preview();
+    automatic.qaEvidence.mode = 'interactive-current-state';
+    expect(
+      parseReyaPreview(JSON.stringify(automatic), {
+        commit: COMMIT,
+        safeAddress: SAFE,
+      }).safeProposalCalls
+    ).toHaveLength(1);
+
+    automatic.qaEvidence.mode = 'production-authorized';
+    expect(() =>
+      parseReyaPreview(JSON.stringify(automatic), {
+        commit: COMMIT,
+        safeAddress: SAFE,
+      })
+    ).toThrow('PREVIEW_REJECTED');
+  });
+
   it('keeps deployer prerequisites visible and non-stageable', () => {
     const candidate = preview();
     const prerequisite: FixtureCall = {

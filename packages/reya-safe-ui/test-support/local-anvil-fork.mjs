@@ -1,7 +1,4 @@
-import {
-  execFile,
-  spawn,
-} from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import http from 'node:http';
 import net from 'node:net';
 
@@ -163,18 +160,15 @@ export function createRpcRequest(origin, signal) {
       Array.isArray(body) ||
       body.jsonrpc !== '2.0' ||
       body.id !== requestId ||
-      (!Object.hasOwn(body, 'result') === !Object.hasOwn(body, 'error'))
+      !Object.hasOwn(body, 'result') === !Object.hasOwn(body, 'error')
     ) {
       throw new Error('local fork RPC response is invalid');
     }
     if (Object.hasOwn(body, 'error')) {
-      const code =
-        Number.isSafeInteger(body.error?.code)
-          ? String(body.error.code)
-          : 'unknown';
-      throw new Error(
-        `local fork RPC ${method} failed with code ${code}`
-      );
+      const code = Number.isSafeInteger(body.error?.code)
+        ? String(body.error.code)
+        : 'unknown';
+      throw new Error(`local fork RPC ${method} failed with code ${code}`);
     }
     return body.result;
   };
@@ -211,7 +205,10 @@ async function boundedResponseBytes(response) {
     }
     chunks.push(part.value);
   }
-  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), size);
+  return Buffer.concat(
+    chunks.map((chunk) => Buffer.from(chunk)),
+    size
+  );
 }
 
 export async function createUpstreamProxy(upstream) {
@@ -267,16 +264,10 @@ export async function createUpstreamProxy(upstream) {
             ]),
           });
         } catch (error) {
-          if (
-            lifecycle.signal.aborted ||
-            attempt === UPSTREAM_ATTEMPTS
-          ) {
+          if (lifecycle.signal.aborted || attempt === UPSTREAM_ATTEMPTS) {
             throw error;
           }
-          await abortableDelay(
-            100 * 2 ** (attempt - 1),
-            lifecycle.signal
-          );
+          await abortableDelay(100 * 2 ** (attempt - 1), lifecycle.signal);
           continue;
         }
         if (
@@ -286,10 +277,7 @@ export async function createUpstreamProxy(upstream) {
           break;
         }
         await upstreamResponse.body?.cancel();
-        await abortableDelay(
-          100 * 2 ** (attempt - 1),
-          lifecycle.signal
-        );
+        await abortableDelay(100 * 2 ** (attempt - 1), lifecycle.signal);
       }
       if (!upstreamResponse) {
         throw new Error('local fork upstream request failed');
@@ -350,7 +338,9 @@ function observedForkBlock(
     typeof value.hash !== 'string' ||
     !/^0x[0-9a-f]{64}$/.test(value.hash) ||
     (expectedHash !== undefined && value.hash !== expectedHash) ||
-    !['explicit-pinned', 'upstream-finalized'].includes(mode)
+    !['explicit-pinned', 'interactive-latest', 'upstream-finalized'].includes(
+      mode
+    )
   ) {
     throw new Error('local fork upstream block is invalid');
   }
@@ -421,15 +411,19 @@ export async function selectPinnedForkBlock({
 
 export async function createLocalAnvilFork({
   forkBlock,
+  forkMode = 'pinned',
   safeAddress,
   signal,
   upstreamRpcUrl,
 }) {
-  if (
-    typeof safeAddress !== 'string' ||
-    !ADDRESS_PATTERN.test(safeAddress)
-  ) {
+  if (typeof safeAddress !== 'string' || !ADDRESS_PATTERN.test(safeAddress)) {
     throw new Error('local fork Safe address is invalid');
+  }
+  if (
+    !['interactive-latest', 'pinned'].includes(forkMode) ||
+    (forkMode === 'interactive-latest' && forkBlock !== undefined)
+  ) {
+    throw new Error('local fork mode is invalid');
   }
   if (!(signal instanceof AbortSignal) || signal.aborted) {
     throw new Error('local fork lifecycle is invalid');
@@ -464,18 +458,17 @@ export async function createLocalAnvilFork({
   }
   let selectedForkBlock;
   try {
-    const proxyRequest = createRpcRequest(
-      proxy.origin,
-      lifecycle.signal
-    );
+    const proxyRequest = createRpcRequest(proxy.origin, lifecycle.signal);
     if ((await proxyRequest({ method: 'eth_chainId' })) !== '0x6c1') {
       throw new Error('local fork upstream reported the wrong chain');
     }
-    selectedForkBlock = await selectPinnedForkBlock({
-      forkBlock,
-      request: proxyRequest,
-      safeAddress,
-    });
+    if (forkMode === 'pinned') {
+      selectedForkBlock = await selectPinnedForkBlock({
+        forkBlock,
+        request: proxyRequest,
+        safeAddress,
+      });
+    }
   } catch (error) {
     await proxy.close();
     detachParent();
@@ -487,36 +480,30 @@ export async function createLocalAnvilFork({
     detachParent();
     throw new Error('local fork stopped');
   }
-  const child = spawn(
-    'anvil',
-    [
-      '--accounts',
-      '1',
-      '--chain-id',
-      String(CHAIN_ID),
-      '--fork-url',
-      proxy.origin,
-      '--fork-block-number',
-      selectedForkBlock.blockNumber,
-      '--host',
-      '127.0.0.1',
-      '--port',
-      String(port),
-    ],
-    {
-      env: {
-        PATH: process.env.PATH,
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    }
-  );
+  const childArguments = [
+    '--accounts',
+    '1',
+    '--chain-id',
+    String(CHAIN_ID),
+    '--fork-url',
+    proxy.origin,
+  ];
+  if (selectedForkBlock !== undefined) {
+    childArguments.push('--fork-block-number', selectedForkBlock.blockNumber);
+  }
+  childArguments.push('--host', '127.0.0.1', '--port', String(port));
+  const child = spawn('anvil', childArguments, {
+    env: {
+      PATH: process.env.PATH,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
   const origin = `http://127.0.0.1:${port}`;
   let settled = false;
   const ready = new Promise((resolve, reject) => {
     const timer = setTimeout(
-      () =>
-        finish(() => reject(new Error('local fork startup timed out'))),
+      () => finish(() => reject(new Error('local fork startup timed out'))),
       30_000
     );
     const finish = (callback) => {
@@ -559,17 +546,18 @@ export async function createLocalAnvilFork({
     if ((await request({ method: 'eth_chainId' })) !== '0x6c1') {
       throw new Error('local fork reported the wrong chain');
     }
-    const forkBlockNumber = `0x${BigInt(
-      selectedForkBlock.blockNumber
-    ).toString(16)}`;
+    const forkBlockNumber =
+      selectedForkBlock === undefined
+        ? undefined
+        : `0x${BigInt(selectedForkBlock.blockNumber).toString(16)}`;
     const forkBlock = observedForkBlock(
       await request({
         method: 'eth_getBlockByNumber',
-        params: [forkBlockNumber, false],
+        params: [forkBlockNumber ?? 'latest', false],
       }),
       forkBlockNumber,
-      selectedForkBlock.blockHash,
-      selectedForkBlock.mode
+      selectedForkBlock?.blockHash,
+      selectedForkBlock?.mode ?? 'interactive-latest'
     );
     await request({
       method: 'anvil_impersonateAccount',
@@ -577,10 +565,7 @@ export async function createLocalAnvilFork({
     });
     await request({
       method: 'anvil_setBalance',
-      params: [
-        safeAddress,
-        '0x21e19e0c9bab2400000',
-      ],
+      params: [safeAddress, '0x21e19e0c9bab2400000'],
     });
 
     let stopPromise;

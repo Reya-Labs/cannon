@@ -59,7 +59,6 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
   const [previousPackageInput, setPreviousPackageInput] = useState(
     'reya-omnibus:latest@main'
   );
-  const [previewEvidence, setPreviewEvidence] = useState<File | null>(null);
   const [resolvedDeployment, setResolvedDeployment] =
     useState<ResolvedDeploymentSource | null>(null);
   const [resolvedPrevious, setResolvedPrevious] =
@@ -129,14 +128,8 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
     const revision = formRevision.current;
     const deploymentInput = deploymentSourceInput.trim();
     const previousInput = previousPackageInput.trim();
-    const file = previewEvidence;
     setBusy(true);
     resetPreview();
-    if (!file || file.size < 2 || file.size > 16 * 1024 * 1024) {
-      setError('PREVIEW_REJECTED');
-      setBusy(false);
-      return;
-    }
     try {
       if (!sourceDigest) throw new Error('SOURCE_NOT_READY');
       const [deployment, previous] = await Promise.all([
@@ -152,7 +145,16 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
           requireComplete: true,
         }),
       ]);
-      const parsed = parseReyaPreview(await file.text(), {
+      if (
+        deployment.inputKind !== 'cannonfile' ||
+        deployment.cannonfileUrl === null
+      ) {
+        throw new Error('AUTOMATIC_PREVIEW_REQUIRES_CANNONFILE');
+      }
+      const generated = await clients.preview.generate({
+        previousDeployCid: previous.cid,
+      });
+      const parsed = parseReyaPreview(generated, {
         commit: config.sourceCommit,
         previousDeployCid: previous.cid,
         safeAddress: config.safeAddress,
@@ -166,11 +168,7 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
       setResolvedDeployment(deployment);
       setResolvedPrevious(previous);
       setPreview(parsed);
-      setStatus(
-        deployment.inputKind === 'cannonfile'
-          ? 'Imported preview evidence passed structural and public-provenance checks for review.'
-          : 'Deployment CID validated for plumbing QA. Imported preview evidence remains review-only.'
-      );
+      setStatus('Generated a current-state local Cannon preview for review.');
     } catch (cause) {
       setError(displayError(cause));
     } finally {
@@ -243,7 +241,7 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
           <div className="space-y-6">
             <label className="block">
               <span className="mb-2 block text-sm font-medium">
-                Enter Cannonfile URL or deployment data IPFS hash
+                Enter Cannonfile URL
               </span>
               <span className="relative block">
                 <input
@@ -254,9 +252,7 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
                     setDeploymentSourceInput(event.target.value);
                     invalidatePreview();
                   }}
-                  placeholder={`${immutableCannonfileUrl(
-                    config.sourceCommit
-                  )} or ipfs://Qm…`}
+                  placeholder={immutableCannonfileUrl(config.sourceCommit)}
                   spellCheck={false}
                   value={deploymentSourceInput}
                 />
@@ -276,6 +272,11 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
                     : `${resolvedDeployment.descriptor.packageRef} · ${resolvedDeployment.cid}`}
                 </span>
               )}
+              <span className="mt-2 block text-xs text-slate-500">
+                The local review runner builds this pinned Cannonfile
+                automatically. Deployment-CID queueing will be added with the
+                production preview service.
+              </span>
             </label>
 
             <label className="block">
@@ -317,30 +318,6 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
               )}
             </label>
 
-            <label className="block">
-              <span className="mb-2 block text-sm font-medium">
-                Local preview evidence
-              </span>
-              <input
-                aria-label="Cannon preview evidence"
-                accept="application/json,.json"
-                className="block w-full rounded-lg border border-slate-700 bg-[#090b0f] p-3 text-sm"
-                disabled={busy}
-                onChange={(event) => {
-                  setPreviewEvidence(event.target.files?.[0] ?? null);
-                  invalidatePreview();
-                }}
-                type="file"
-              />
-              <span className="mt-2 block text-xs text-slate-500">
-                Temporary local-QA bridge: select the JSON produced by{' '}
-                <code>pnpm --filter @reya/cannon-safe-ui preview:local</code>.
-                This imported file is review-only: the production preview worker
-                must recompute and authenticate the result before any signing or
-                staging capability is enabled.
-              </span>
-            </label>
-
             <div className="flex flex-col gap-3 sm:flex-row">
               <Button
                 disabled={busy}
@@ -355,14 +332,13 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
                 disabled={
                   busy ||
                   deploymentSourceInput.trim() === '' ||
-                  previousPackageInput.trim() === '' ||
-                  previewEvidence === null
+                  previousPackageInput.trim() === ''
                 }
                 onClick={() => void previewTransactions()}
                 type="button"
               >
                 {busy
-                  ? 'Resolving and verifying…'
+                  ? 'Building and simulating…'
                   : 'Preview Transactions to Queue'}
               </Button>
             </div>
@@ -370,17 +346,6 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
 
           {preview && (
             <div className="mt-8 space-y-3 border-t border-slate-800 pt-6 text-sm">
-              {resolvedDeployment?.inputKind === 'cid' && (
-                <Alert className="border-amber-800 bg-amber-950/30 text-amber-100">
-                  <AlertTitle>Read-only CID validation</AlertTitle>
-                  <AlertDescription>
-                    The imported local preview is bound to the pinned source
-                    commit, not this deployment-data CID. Review is available,
-                    but signing stays disabled until the preview worker emits
-                    evidence bound to the exact CID.
-                  </AlertDescription>
-                </Alert>
-              )}
               <p>
                 {preview.safeProposalCalls.length} ordered Safe call(s) ·{' '}
                 {preview.deployerPrerequisiteCount} deployer prerequisite(s)
@@ -409,7 +374,7 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
                 <div>
                   <dt className="text-slate-500">Simulation</dt>
                   <dd className="text-amber-300">
-                    imported review-only evidence
+                    automatic current-state local build
                   </dd>
                 </div>
                 <div>
@@ -520,11 +485,11 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
             <section className="rounded-lg border border-amber-900/70 bg-amber-950/20 p-5">
               <h2 className="mb-2 text-lg font-medium">3. Sign and stage</h2>
               <p className="mb-4 text-sm text-amber-200">
-                Disabled in this slice. Imported local preview JSON is not a
-                trusted authorization input, even when its public provenance
-                fields and schema are valid. The production preview worker must
-                recompute the calls and bind authenticated evidence to the
-                source and deployment CID before this control can be activated.
+                Disabled in this slice. The local preview runner recomputes the
+                calls from the pinned Cannonfile and previous CID, but it uses
+                current RPC state and is not a production authorization service.
+                Production signing requires the reviewed preview worker and an
+                authenticated source, CID, Safe and nonce binding.
               </p>
               <Button disabled type="button">
                 Sign and stage unavailable

@@ -167,7 +167,7 @@ export function parseReyaPreview(
     Reflect.ownKeys(cannon).length !== 2 ||
     cannon.stateFormatVersion !== 7 ||
     cannon.version !== '2.26.1' ||
-    qaEvidence.mode !== 'non-signable-local-qa' ||
+    !['interactive-current-state', 'non-signable-local-qa'].includes(String(qaEvidence.mode)) ||
     typeof qaEvidence.bundleSha256 !== 'string' ||
     !/^[0-9a-f]{64}$/.test(qaEvidence.bundleSha256) ||
     !Array.isArray(value.deployerPrerequisites) ||
