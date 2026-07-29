@@ -86,7 +86,7 @@ local cache. There is no default origin and the preview runtime never contacts
 that origin:
 
 ```sh
-pnpm --filter @reya/cannon-safe-ui hydrate:local-qa -- \
+pnpm --filter @reya/cannon-safe-ui hydrate:local-qa \
   --origin https://approved-kubo-origin.example \
   --cache-dir /absolute/path/to/reya-cannon-artifacts
 ```
@@ -108,7 +108,7 @@ proxy and is not placed in Anvil arguments, output, or errors.
 ```sh
 test -n "${REYA_CANNON_QA_RPC_URL:?set through a secret-safe environment}"
 
-pnpm --filter @reya/cannon-safe-ui preview:local -- \
+pnpm --filter @reya/cannon-safe-ui preview:local \
   --artifact-cache /absolute/path/to/reya-cannon-artifacts \
   --source-repository /absolute/path/to/reya-deployments \
   --output /absolute/path/to/reya-preview-first.json
@@ -134,7 +134,7 @@ QA_FORK_BLOCK_HASH="$(
     /absolute/path/to/reya-preview-first.json
 )"
 
-pnpm --filter @reya/cannon-safe-ui preview:local -- \
+pnpm --filter @reya/cannon-safe-ui preview:local \
   --artifact-cache /absolute/path/to/reya-cannon-artifacts \
   --source-repository /absolute/path/to/reya-deployments \
   --fork-block-number "$QA_FORK_BLOCK_NUMBER" \
