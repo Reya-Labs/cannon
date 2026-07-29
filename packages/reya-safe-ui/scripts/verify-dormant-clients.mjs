@@ -150,7 +150,7 @@ export async function verifyDormantClients({
   const root = path.resolve(sourceRoot);
   const dormant = await collectModules(path.resolve(dormantRoot));
   if (dormant.length === 0) {
-    throw new Error('dormant Reya read client source is missing');
+    throw new Error('dormant Reya client source is missing');
   }
 
   const reachable = await activeImportGraph({ activeEntry, sourceRoot: root });
@@ -187,7 +187,7 @@ if (invokedDirectly) {
   try {
     const result = await verifyDormantClients();
     process.stdout.write(
-      `Verified ${result.dormant.length} dormant Reya read client modules across ${result.scanned.length} source files\n`
+      `Verified ${result.dormant.length} dormant Reya client modules across ${result.scanned.length} source files\n`
     );
   } catch (error) {
     process.stderr.write(
