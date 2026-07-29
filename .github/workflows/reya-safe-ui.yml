@@ -44,6 +44,10 @@ jobs:
           REYA_SAFE_UI_BUILD_SHA: ${{ github.sha }}
           REYA_SAFE_UI_CHAIN_ID: '1729'
           REYA_SAFE_UI_PROFILE: reya-mainnet
+          # Verification-only inputs for the deliberately disabled shell.
+          # Activation must rebuild with the separately reviewed Reya values.
+          REYA_SAFE_UI_SAFE_ADDRESS: '0x1111111111111111111111111111111111111111'
+          REYA_SAFE_UI_SERVICE_ORIGIN: https://cannon-api.reya-tailnet.ts.net
       - name: Reject undeclared files and hosted runtime dependencies
         run: pnpm --dir packages/reya-safe-ui --ignore-workspace scan
       - name: Capture tested release metadata
