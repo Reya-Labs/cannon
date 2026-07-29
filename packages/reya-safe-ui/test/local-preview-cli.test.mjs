@@ -1,10 +1,20 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import {
   localPreviewFailureCode,
   parseLocalPreviewArguments,
 } from '../scripts/run-local-preview.mjs';
+
+const PACKAGE_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..'
+);
+const DEFAULT_MANIFEST = path.join(
+  PACKAGE_ROOT,
+  'test-support/fixtures/reya-network-2b10669075b91eb8db781d199292f30c52f8e994/resolution.json'
+);
 
 test('local preview CLI accepts only explicit absolute local inputs', () => {
   assert.deepEqual(
@@ -20,9 +30,7 @@ test('local preview CLI accepts only explicit absolute local inputs', () => {
       artifactCache: path.normalize('/tmp/reya-artifacts'),
       forkBlockHash: undefined,
       forkBlockNumber: undefined,
-      manifest: path.resolve(
-        'test-support/fixtures/reya-network-2b10669075b91eb8db781d199292f30c52f8e994/resolution.json'
-      ),
+      manifest: DEFAULT_MANIFEST,
       output: path.normalize('/tmp/preview.json'),
       sourceRepository: path.normalize('/tmp/reya-deployments'),
     }
@@ -42,9 +50,7 @@ test('local preview CLI accepts only explicit absolute local inputs', () => {
       artifactCache: path.normalize('/tmp/reya-artifacts'),
       forkBlockHash: `0x${'a'.repeat(64)}`,
       forkBlockNumber: '42',
-      manifest: path.resolve(
-        'test-support/fixtures/reya-network-2b10669075b91eb8db781d199292f30c52f8e994/resolution.json'
-      ),
+      manifest: DEFAULT_MANIFEST,
       output: undefined,
       sourceRepository: path.normalize('/tmp/reya-deployments'),
     }
@@ -112,9 +118,7 @@ test('local preview CLI reports only bounded failure codes', () => {
   );
   assert.equal(
     localPreviewFailureCode(
-      new Error(
-        'local QA provenance rejected: Cannon worktree is dirty'
-      )
+      new Error('local QA provenance rejected: Cannon worktree is dirty')
     ),
     'CANNON_PROVENANCE_FAILED'
   );

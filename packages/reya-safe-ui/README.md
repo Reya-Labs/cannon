@@ -149,12 +149,13 @@ approved Reya Safe fails the run.
 
 ## Dormant Reya service clients
 
-`src/clients/` contains dormant ESM clients for a later activation change.
-They are deliberately unreachable from `src/build.mjs`, are not included in
-the generated export, and do not change the disabled CSP. CI runs
-`pnpm verify:dormant` to prove that separation and to reject hard-coded remote
-origins, hosted Cannon/public IPFS/Git/RPC fallbacks, browser credentials,
-upload routes, and `localStorage` from all UI source.
+`src/clients/` contains ESM clients that remain unreachable from the disabled
+production shell built by `src/build.mjs`. The separate
+`@reya/cannon-safe-website` package imports the reviewed RPC, source, staging
+and signing subset only for local browser QA. CI runs `pnpm verify:dormant` to
+prove that the production shell remains separated and to reject hard-coded
+remote origins, hosted Cannon/public IPFS/Git/RPC fallbacks, browser
+credentials, upload routes, and `localStorage` from all UI source.
 
 The client factory accepts one exact HTTPS Tailscale service origin such as
 `https://cannon-api.<tailnet>.ts.net`. It rejects credentials, ports, paths,

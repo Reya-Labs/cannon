@@ -24,9 +24,11 @@ describe('configuration', () => {
   it.each([
     [{ ...valid, AUTH_PROXY_SECRET: undefined }, /AUTH_PROXY_SECRET is required/],
     [{ ...valid, AUTH_PROXY_SECRET: 'short' }, /at least 32 bytes/],
-    [{ ...valid, SOURCE_UI_ORIGIN: 'http://cannon.example.ts.net' }, /canonical HTTPS origin/],
-    [{ ...valid, SOURCE_UI_ORIGIN: 'https://cannon.example.ts.net/path' }, /canonical HTTPS origin/],
-    [{ ...valid, SOURCE_UI_ORIGIN: 'https://cannon.example.ts.net:8443' }, /canonical HTTPS origin/],
+    [{ ...valid, SOURCE_UI_ORIGIN: 'http://cannon.example.ts.net' }, /canonical HTTPS or 127\.0\.0\.1 HTTP origin/],
+    [{ ...valid, SOURCE_UI_ORIGIN: 'http://localhost:3000' }, /canonical HTTPS or 127\.0\.0\.1 HTTP origin/],
+    [{ ...valid, SOURCE_UI_ORIGIN: 'http://127.0.0.1' }, /canonical HTTPS or 127\.0\.0\.1 HTTP origin/],
+    [{ ...valid, SOURCE_UI_ORIGIN: 'https://cannon.example.ts.net/path' }, /canonical HTTPS or 127\.0\.0\.1 HTTP origin/],
+    [{ ...valid, SOURCE_UI_ORIGIN: 'https://cannon.example.ts.net:8443' }, /canonical HTTPS or 127\.0\.0\.1 HTTP origin/],
     [{ ...valid, TRUST_PROXY: 'true' }, /TRUST_PROXY=true is forbidden/],
     [{ ...valid, TRUST_PROXY: '17' }, /outside the supported range/],
     [{ ...valid, TRUST_PROXY: '10.0.0.1/99' }, /invalid address/],
@@ -48,5 +50,14 @@ describe('configuration', () => {
   it('accepts exact proxy addresses, CIDRs, and hop counts', () => {
     expect(loadConfig({ ...valid, TRUST_PROXY: '1' }).trustProxy).toBe(1);
     expect(loadConfig({ ...valid, TRUST_PROXY: '10.0.0.0/8, 2001:db8::/32' }).trustProxy).toBe('10.0.0.0/8, 2001:db8::/32');
+  });
+
+  it('allows only an explicit 127.0.0.1 HTTP origin for local browser QA', () => {
+    expect(
+      loadConfig({
+        ...valid,
+        SOURCE_UI_ORIGIN: 'http://127.0.0.1:3000',
+      }).uiOrigin
+    ).toBe('http://127.0.0.1:3000');
   });
 });

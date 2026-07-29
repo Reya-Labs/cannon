@@ -88,3 +88,42 @@ jobs:
             echo "- Asset digest: \`${ASSET_DIGEST}\`"
             echo "- GitHub artifact digest: \`${ARTIFACT_DIGEST}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  reya-local-website:
+    name: Build and scan local signer profile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: reya-safe-website-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile --ignore-scripts --filter @reya/cannon-safe-website... --filter @reya/cannon-safe-ui...
+      - run: pnpm --filter @reya/cannon-safe-website typecheck
+      - run: pnpm --filter @reya/cannon-safe-website test
+      - name: Build the constrained local profile
+        run: pnpm --filter @reya/cannon-safe-website build
+        env:
+          REYA_LOCAL_INGRESS_ORIGIN: http://127.0.0.1:8787
+          REYA_LOCAL_SAFE_ADDRESS: '0x1111111111111111111111111111111111111111'
+          REYA_LOCAL_SOURCE_COMMIT: 2b10669075b91eb8db781d199292f30c52f8e994
+      - name: Reject hosted dependencies and execution capabilities
+        run: pnpm --filter @reya/cannon-safe-website scan
+      - name: Upload the exact tested local profile
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: reya-safe-website-${{ github.sha }}
+          path: packages/reya-safe-website/out
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
+          overwrite: false
+          include-hidden-files: false

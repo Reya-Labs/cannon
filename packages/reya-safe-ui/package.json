@@ -4,6 +4,9 @@
   "private": true,
   "description": "Fail-closed static shell for the Reya Cannon signer",
   "type": "module",
+  "exports": {
+    "./clients": "./src/clients/index.mjs"
+  },
   "packageManager": "pnpm@10.11.0",
   "engines": {
     "node": "22.23.1"
@@ -28,6 +31,7 @@
     "build": "node src/build.mjs",
     "hydrate:local-qa": "node scripts/hydrate-local-qa-artifacts.mjs",
     "lint": "node scripts/lint.mjs",
+    "local:ingress": "node scripts/run-local-ingress.mjs",
     "preview:local": "node scripts/run-local-preview.mjs",
     "scan": "node scripts/scan-export.mjs dist",
     "test": "node --test",
