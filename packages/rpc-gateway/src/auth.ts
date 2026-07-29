@@ -17,6 +17,14 @@ function equalSecret(actual: string, expected: string): boolean {
   return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 }
 
+/**
+ * Authenticates requests forwarded by the configured trusted identity proxy.
+ *
+ * The middleware requires an exact proxy secret and a non-empty identity of at
+ * most 320 characters in the configured headers. It stores the trimmed identity
+ * in `res.locals.actor`; malformed or mismatched headers are forwarded to
+ * Express as an unauthenticated {@link HttpError}.
+ */
 export function proxyAuthenticator(config: AppConfig) {
   return (req: Request, res: Response, next: NextFunction): void => {
     try {

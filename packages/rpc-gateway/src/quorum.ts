@@ -151,7 +151,7 @@ function validateResponse(request: PreparedRequest, response: GatewayResult, sna
     if (request.method === 'eth_getBlockByNumber' && decoded.number !== BigInt(request.params[0] as string)) {
       throw new QuorumError('response_request_mismatch');
     }
-    if (request.method === 'eth_getBlockByHash' && decoded.hash !== request.params[0]) {
+    if (request.method === 'eth_getBlockByHash' && decoded.hash !== (request.params[0] as string).toLowerCase()) {
       throw new QuorumError('response_request_mismatch');
     }
   } else if (['eth_getTransactionByHash', 'eth_getTransactionReceipt'].includes(request.method) && value !== null) {
@@ -166,7 +166,7 @@ function validateResponse(request: PreparedRequest, response: GatewayResult, sna
     if (
       typeof responseHash !== 'string' ||
       !/^0x[0-9a-fA-F]{64}$/.test(responseHash) ||
-      responseHash.toLowerCase() !== request.params[0]
+      responseHash.toLowerCase() !== (request.params[0] as string).toLowerCase()
     ) {
       throw new QuorumError('response_request_mismatch');
     }
@@ -176,6 +176,7 @@ function validateResponse(request: PreparedRequest, response: GatewayResult, sna
 export class QuorumService {
   private cached?: Snapshot;
   private readonly config: AppConfig;
+  private readonly pendingSnapshotProbes = new Map<string, Promise<void>>();
   private refresh?: Promise<Snapshot>;
   private readonly upstream: UpstreamClient;
 
@@ -208,7 +209,7 @@ export class QuorumService {
     ]);
     const agreed = agree(pinned.method, left, right);
     validateResponse(pinned, agreed, snapshot.blockNumber);
-    await this.assertSnapshotCurrent(snapshot);
+    await this.assertSnapshotCurrentAfterRead(snapshot);
     return agreed;
   }
 
@@ -284,6 +285,21 @@ export class QuorumService {
     ) {
       throw new QuorumError('snapshot_reorg');
     }
+  }
+
+  private assertSnapshotCurrentAfterRead(snapshot: Snapshot): Promise<void> {
+    const key = `${snapshot.blockTag}:${snapshot.blockHash}:${snapshot.stateRoot}`;
+    const pending = this.pendingSnapshotProbes.get(key);
+    if (pending) return pending;
+
+    const probe = new Promise<void>((resolve, reject) => {
+      queueMicrotask(() => {
+        this.pendingSnapshotProbes.delete(key);
+        void this.assertSnapshotCurrent(snapshot).then(resolve, reject);
+      });
+    });
+    this.pendingSnapshotProbes.set(key, probe);
+    return probe;
   }
 }
 
