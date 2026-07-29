@@ -7,6 +7,9 @@ export const REYA_READ_LIMITS = Object.freeze({
   artifactDeadlineMs: 15_000,
   queryBytes: 512 * 1024,
   queryDeadlineMs: 8_000,
+  registryDeadlineMs: 8_000,
+  registryRequestBytes: 512,
+  registryResponseBytes: 4 * 1024,
   responseChunks: 4_096,
   rpcRequestBytes: 128 * 1024,
   rpcResponseBytes: 2 * 1024 * 1024,
@@ -27,6 +30,7 @@ const TOP_LEVEL_KEYS = Object.freeze([
 const DEADLINE_KEYS = Object.freeze([
   'artifactDeadlineMs',
   'queryDeadlineMs',
+  'registryDeadlineMs',
   'rpcDeadlineMs',
   'sourceDeadlineMs',
 ]);
@@ -110,6 +114,7 @@ export function validateReadClientOptions(options) {
   let queryDeadlineMs = REYA_READ_LIMITS.queryDeadlineMs;
   let artifactDeadlineMs = REYA_READ_LIMITS.artifactDeadlineMs;
   let rpcDeadlineMs = REYA_READ_LIMITS.rpcDeadlineMs;
+  let registryDeadlineMs = REYA_READ_LIMITS.registryDeadlineMs;
   let sourceDeadlineMs = REYA_READ_LIMITS.sourceDeadlineMs;
   if (Object.hasOwn(options, 'deadlines')) {
     assertAllowedKeys(options.deadlines, DEADLINE_KEYS);
@@ -133,6 +138,12 @@ export function validateReadClientOptions(options) {
         REYA_READ_LIMITS.rpcDeadlineMs
       );
     }
+    if (Object.hasOwn(options.deadlines, 'registryDeadlineMs')) {
+      registryDeadlineMs = validateDeadline(
+        options.deadlines.registryDeadlineMs,
+        REYA_READ_LIMITS.registryDeadlineMs
+      );
+    }
     if (Object.hasOwn(options.deadlines, 'sourceDeadlineMs')) {
       sourceDeadlineMs = validateDeadline(
         options.deadlines.sourceDeadlineMs,
@@ -145,6 +156,7 @@ export function validateReadClientOptions(options) {
     artifactDeadlineMs,
     fetchImpl,
     queryDeadlineMs,
+    registryDeadlineMs,
     rpcDeadlineMs,
     serviceOrigin,
     sourceDeadlineMs,

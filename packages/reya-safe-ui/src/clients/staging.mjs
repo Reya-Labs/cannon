@@ -1,11 +1,5 @@
-import {
-  REYA_CHAIN_ID,
-  validateServiceOrigin,
-} from './config.mjs';
-import {
-  fail,
-  failStagingService,
-} from './errors.mjs';
+import { REYA_CHAIN_ID, validateServiceOrigin } from './config.mjs';
+import { fail, ReyaReadClientError } from './errors.mjs';
 import {
   snapshotSafeAddress,
   snapshotSafeTransaction,
@@ -27,8 +21,7 @@ export const REYA_STAGING_LIMITS = Object.freeze({
 
 const DIGEST_PATTERN = /^0x[0-9a-f]{64}$/;
 const SIGNATURE_PATTERN = /^0x[0-9a-f]{128}(?:1b|1c)$/;
-const RESPONSE_SIGNATURE_PATTERN =
-  /^0x[0-9a-fA-F]{128}(?:1[bB]|1[cC])$/;
+const RESPONSE_SIGNATURE_PATTERN = /^0x[0-9a-fA-F]{128}(?:1[bB]|1[cC])$/;
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder('utf-8', { fatal: true });
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -38,12 +31,22 @@ const SUPERSEDE_KEYS = Object.freeze([
   'idempotencyKey',
   'reason',
 ]);
-const PROPOSAL_KEYS = Object.freeze([
-  'createdAt',
-  'sigs',
-  'txn',
-  'updatedAt',
-]);
+
+export class ReyaStagingServiceError extends ReyaReadClientError {
+  constructor(httpStatus, serviceCode) {
+    super('REQUEST_FAILED');
+    this.name = 'ReyaStagingServiceError';
+    this.code = 'SERVICE_REJECTED';
+    this.message = 'The Reya staging service rejected the request.';
+    this.httpStatus = httpStatus;
+    this.serviceCode = serviceCode;
+  }
+}
+
+function failStagingService(httpStatus, serviceCode) {
+  throw new ReyaStagingServiceError(httpStatus, serviceCode);
+}
+const PROPOSAL_KEYS = Object.freeze(['createdAt', 'sigs', 'txn', 'updatedAt']);
 const SUPERSEDE_RESPONSE_KEYS = Object.freeze(['digest', 'status']);
 const ERROR_KEYS = Object.freeze(['code', 'message']);
 const OPTIONAL_ERROR_KEYS = Object.freeze(['details']);
@@ -71,14 +74,7 @@ const SERVICE_ERROR_CODES = new Map([
       'proposer_role_required',
     ]),
   ],
-  [
-    404,
-    new Set([
-      'not_found',
-      'proposal_not_found',
-      'safe_not_allowed',
-    ]),
-  ],
+  [404, new Set(['not_found', 'proposal_not_found', 'safe_not_allowed'])],
   [
     409,
     new Set([
@@ -179,11 +175,7 @@ function assertInputSignature(value) {
 }
 
 function assertResponseSignature(value) {
-  return assertString(
-    value,
-    132,
-    RESPONSE_SIGNATURE_PATTERN
-  ).toLowerCase();
+  return assertString(value, 132, RESPONSE_SIGNATURE_PATTERN).toLowerCase();
 }
 
 function snapshotArray(value, maximum, itemParser) {
@@ -294,35 +286,19 @@ function validateOptions(options) {
       () => fail('INVALID_CONFIGURATION')
     );
     const safeAddress = snapshotSafeAddress(
-      dataProperty(
-        record,
-        'safeAddress',
-        () => fail('INVALID_CONFIGURATION')
-      )
+      dataProperty(record, 'safeAddress', () => fail('INVALID_CONFIGURATION'))
     );
     const serviceOrigin = validateServiceOrigin(
-      dataProperty(
-        record,
-        'serviceOrigin',
-        () => fail('INVALID_CONFIGURATION')
-      )
+      dataProperty(record, 'serviceOrigin', () => fail('INVALID_CONFIGURATION'))
     );
     const fetchImpl = Object.hasOwn(record, 'fetchImpl')
-      ? dataProperty(
-          record,
-          'fetchImpl',
-          () => fail('INVALID_CONFIGURATION')
-        )
+      ? dataProperty(record, 'fetchImpl', () => fail('INVALID_CONFIGURATION'))
       : globalThis.fetch;
     if (typeof fetchImpl !== 'function') {
       fail('INVALID_CONFIGURATION');
     }
     const deadlineMs = Object.hasOwn(record, 'deadlineMs')
-      ? dataProperty(
-          record,
-          'deadlineMs',
-          () => fail('INVALID_CONFIGURATION')
-        )
+      ? dataProperty(record, 'deadlineMs', () => fail('INVALID_CONFIGURATION'))
       : REYA_STAGING_LIMITS.deadlineMs;
     if (
       !Number.isSafeInteger(deadlineMs) ||
@@ -350,10 +326,7 @@ function requestBody(value) {
   } catch {
     rejectInput();
   }
-  if (
-    TEXT_ENCODER.encode(body).byteLength >
-    REYA_STAGING_LIMITS.requestBytes
-  ) {
+  if (TEXT_ENCODER.encode(body).byteLength > REYA_STAGING_LIMITS.requestBytes) {
     rejectInput();
   }
   return body;
@@ -390,12 +363,7 @@ export function createReyaStagingClient(options) {
     serviceOrigin: config.serviceOrigin,
     async submitSignature(...args) {
       if (args.length < 1 || args.length > 2) rejectInput();
-      const input = exactKeys(
-        args[0],
-        STAGE_KEYS,
-        [],
-        rejectInput
-      );
+      const input = exactKeys(args[0], STAGE_KEYS, [], rejectInput);
       const signature = assertInputSignature(
         dataProperty(input, 'signature', rejectInput)
       );
@@ -427,12 +395,7 @@ export function createReyaStagingClient(options) {
     },
     async supersede(...args) {
       if (args.length < 1 || args.length > 2) rejectInput();
-      const input = exactKeys(
-        args[0],
-        SUPERSEDE_KEYS,
-        [],
-        rejectInput
-      );
+      const input = exactKeys(args[0], SUPERSEDE_KEYS, [], rejectInput);
       const expectedDigest = assertString(
         dataProperty(input, 'expectedDigest', rejectInput),
         66,

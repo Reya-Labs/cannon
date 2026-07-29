@@ -9,7 +9,7 @@ afterEach(() => {
 });
 
 describe('local client transport', () => {
-  it('rewrites only an allowed virtual route and preserves query and options', async () => {
+  it('rewrites only an exact artifact route and preserves query and options', async () => {
     const response = new Response('{}', { status: 200 });
     const fetchMock = vi.fn(async (...args: Parameters<typeof fetch>) => {
       void args;
@@ -22,18 +22,24 @@ describe('local client transport', () => {
       method: 'POST',
     };
 
-    await expect(localFetch(`${VIRTUAL_ORIGIN}/rpc/1729?probe=1`, init)).resolves.toBe(response);
+    const cid = 'QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn';
+    await expect(localFetch(`${VIRTUAL_ORIGIN}/artifacts/api/v0/cat?arg=${cid}`, init)).resolves.toBe(response);
     expect(fetchMock).toHaveBeenCalledOnce();
     const [target, options] = fetchMock.mock.calls[0]!;
-    expect(String(target)).toBe(`${INGRESS_ORIGIN}/rpc/1729?probe=1`);
+    expect(String(target)).toBe(`${INGRESS_ORIGIN}/artifacts/api/v0/cat?arg=${cid}`);
     expect(options).toBe(init);
   });
 
   it.each([
     'https://attacker.example/rpc/1729',
     `${VIRTUAL_ORIGIN}/rpc/1`,
+    `${VIRTUAL_ORIGIN}/rpc/1729?probe=1`,
     `${VIRTUAL_ORIGIN}/rpc/1729/suffix`,
+    `${VIRTUAL_ORIGIN}/artifacts/api/v0/cat`,
+    `${VIRTUAL_ORIGIN}/artifacts/api/v0/cat?arg=not-a-cid`,
+    `${VIRTUAL_ORIGIN}/artifacts/api/v0/cat?arg=QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn&arg=QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn`,
     `${VIRTUAL_ORIGIN}/source/reya-deployments/dev/reya-network`,
+    `${VIRTUAL_ORIGIN}/staging/1729/0x1111111111111111111111111111111111111111`,
     `${VIRTUAL_ORIGIN}/staging/1729/0x1111111111111111111111111111111111111111/suffix`,
   ])('rejects an undeclared route: %s', async (url) => {
     const fetchMock = vi.fn();
