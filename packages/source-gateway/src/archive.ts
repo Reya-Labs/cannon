@@ -17,6 +17,9 @@ export type ArchiveLimits = {
 
 /**
  * Fail-closed limits applied while downloading and unpacking a GitHub source archive.
+ *
+ * The fields cap compressed and decompressed bytes, archive entries, bytes per
+ * selected TOML file, aggregate selected TOML bytes, and total request time.
  */
 export const ARCHIVE_LIMITS: Readonly<ArchiveLimits> = Object.freeze({
   compressedBytes: 8 * 1024 * 1024,
@@ -131,6 +134,12 @@ async function drainEntry(stream: Readable, maximum: number): Promise<void> {
  *
  * The archive URL is fixed and credential-free. All headers, paths, entry types,
  * stream sizes, and decoded text are validated before source is returned.
+ *
+ * @param commit - Exact lowercase 40-character Git commit.
+ * @param fetchImpl - Credential-free fetch implementation used for codeload.
+ * @param limits - Download, extraction, selection, and deadline limits.
+ * @returns Canonical repository-relative TOML paths mapped to UTF-8 source.
+ * @throws HttpError for invalid commits, rejected archives, upstream failure, or timeout.
  */
 export async function fetchTomlArchive(
   commit: string,

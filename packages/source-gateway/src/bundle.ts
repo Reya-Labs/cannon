@@ -72,6 +72,11 @@ function includePath(current: string, include: string): string {
  *
  * Unreachable archive files are omitted and every included file receives a
  * SHA-256 digest before the canonical bundle itself is digested.
+ *
+ * @param commit - Exact lowercase 40-character Git commit.
+ * @param archiveFiles - Validated repository-relative TOML source files.
+ * @returns Canonical bundle, serialized body, and digest-derived ETag.
+ * @throws HttpError for an invalid commit or rejected include graph.
  */
 export function encodeSourceBundle(commit: string, archiveFiles: ReadonlyMap<string, string>): EncodedBundle {
   if (!COMMIT_PATTERN.test(commit)) {

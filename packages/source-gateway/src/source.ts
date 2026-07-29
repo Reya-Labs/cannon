@@ -64,6 +64,9 @@ class Gate {
 
 /**
  * Fetches, validates, de-duplicates, and briefly caches immutable source bundles.
+ *
+ * Concurrent requests for the same commit share one load. Completed bundles are
+ * retained in a byte- and entry-bounded process-local least-recently-used cache.
  */
 export class SourceBundleService {
   private readonly cache = new Map<string, CachedBundle>();
@@ -78,6 +81,10 @@ export class SourceBundleService {
 
   /**
    * Returns the encoded source closure for one exact lowercase Git commit.
+   *
+   * @param commit - Exact lowercase 40-character Git commit.
+   * @returns Serialized immutable bundle and its digest-derived ETag.
+   * @throws HttpError for invalid input, queue exhaustion, upstream failure, or rejected source.
    */
   async get(commit: string): Promise<Pick<EncodedBundle, 'body' | 'etag'>> {
     const cached = this.cache.get(commit);
