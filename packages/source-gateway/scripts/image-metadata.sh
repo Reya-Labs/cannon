@@ -13,11 +13,7 @@ if [[ ! "${revision}" =~ ^[0-9a-f]{40}$ ]]; then
   exit 1
 fi
 
-version=$(
-  sed -nE \
-    's/^[[:space:]]*"version":[[:space:]]*"([^"]+)",?[[:space:]]*$/\1/p' \
-    packages/source-gateway/package.json
-)
+version=$(node -p "require('./packages/source-gateway/package.json').version")
 if [[ ! "${version}" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]*$ ]]; then
   echo "source-gateway package version is missing or invalid" >&2
   exit 1

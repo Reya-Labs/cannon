@@ -3,10 +3,10 @@ import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import { proxyAuthenticator } from './auth';
 import type { AppConfig } from './config';
+import { COMMIT_PATTERN } from './constants';
 import { HttpError, isHttpError } from './errors';
 import { SourceBundleService } from './source';
 
-const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 const appVersion = process.env.BUILD_REVISION ?? 'unknown';
 
 function rejectRequestBody(req: Request): void {

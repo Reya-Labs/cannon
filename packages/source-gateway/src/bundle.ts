@@ -1,16 +1,15 @@
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import toml from '@iarna/toml';
+import { COMMIT_PATTERN, SOURCE_PREFIX } from './constants';
 import { HttpError } from './errors';
 
 export const SOURCE_REPOSITORY = 'Reya-Labs/reya-deployments';
 export const SOURCE_ROOT = 'packages/tomls/src/omnibus/reya_network.toml';
-const SOURCE_PREFIX = 'packages/tomls/src/';
 const MAX_GRAPH_DEPTH = 16;
 const MAX_GRAPH_FILES = 512;
 const MAX_GRAPH_BYTES = 4 * 1024 * 1024;
 const MAX_BUNDLE_BYTES = 8 * 1024 * 1024;
-const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 
 export type SourceFile = {
   content: string;
@@ -68,6 +67,12 @@ function includePath(current: string, include: string): string {
   return resolved;
 }
 
+/**
+ * Encodes the deterministic, integrity-addressed include closure for Reya Network.
+ *
+ * Unreachable archive files are omitted and every included file receives a
+ * SHA-256 digest before the canonical bundle itself is digested.
+ */
 export function encodeSourceBundle(commit: string, archiveFiles: ReadonlyMap<string, string>): EncodedBundle {
   if (!COMMIT_PATTERN.test(commit)) {
     throw new HttpError(400, 'invalid_commit', 'commit must be a lowercase full Git SHA');
@@ -77,9 +82,9 @@ export function encodeSourceBundle(commit: string, archiveFiles: ReadonlyMap<str
   let totalBytes = 0;
 
   const visit = (current: string, depth: number): void => {
-    if (depth > MAX_GRAPH_DEPTH) reject('source include graph exceeds the depth limit');
     if (active.has(current)) reject(`source include graph contains a cycle at ${current}`);
     if (reachable.has(current)) return;
+    if (depth > MAX_GRAPH_DEPTH) reject('source include graph exceeds the depth limit');
     const content = archiveFiles.get(current);
     if (content === undefined) reject(`source include is missing at ${current}`);
     reachable.add(current);

@@ -3,6 +3,7 @@ import { pipeline } from 'node:stream/promises';
 import { posix } from 'node:path';
 import { createGunzip } from 'node:zlib';
 import tar from 'tar-stream';
+import { COMMIT_PATTERN, SOURCE_PREFIX } from './constants';
 import { HttpError } from './errors';
 
 export type ArchiveLimits = {
@@ -14,6 +15,9 @@ export type ArchiveLimits = {
   timeoutMs: number;
 };
 
+/**
+ * Fail-closed limits applied while downloading and unpacking a GitHub source archive.
+ */
 export const ARCHIVE_LIMITS: Readonly<ArchiveLimits> = Object.freeze({
   compressedBytes: 8 * 1024 * 1024,
   decompressedBytes: 32 * 1024 * 1024,
@@ -23,8 +27,6 @@ export const ARCHIVE_LIMITS: Readonly<ArchiveLimits> = Object.freeze({
   timeoutMs: 15_000,
 });
 
-const SOURCE_PREFIX = 'packages/tomls/src/';
-const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 const ALLOWED_MEDIA_TYPES = new Set(['application/gzip', 'application/octet-stream', 'application/x-gzip']);
 
 function reject(message: string): never {
@@ -124,6 +126,12 @@ async function drainEntry(stream: Readable, maximum: number): Promise<void> {
   }
 }
 
+/**
+ * Downloads one immutable reya-deployments commit and returns only its TOML files.
+ *
+ * The archive URL is fixed and credential-free. All headers, paths, entry types,
+ * stream sizes, and decoded text are validated before source is returned.
+ */
 export async function fetchTomlArchive(
   commit: string,
   fetchImpl: typeof fetch = globalThis.fetch,
@@ -231,7 +239,7 @@ export async function fetchTomlArchive(
     throw new HttpError(502, 'source_upstream_failed', 'source archive request failed');
   } finally {
     clearTimeout(timeout);
-    if (controller.signal.aborted && response?.body) {
+    if (response?.body && !response.body.locked) {
       try {
         await response.body.cancel();
       } catch {
