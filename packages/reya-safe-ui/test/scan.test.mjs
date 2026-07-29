@@ -65,6 +65,37 @@ test('rejects embedded data and protocol-relative resources', async (context) =>
   );
 });
 
+test('rejects entity-encoded navigation that raw text scanning cannot see', async (context) => {
+  const refreshOutput = await fixture(context);
+  const refreshIndex = path.join(refreshOutput, 'index.html');
+  const html = await readFile(refreshIndex, 'utf8');
+  await writeFile(
+    refreshIndex,
+    html.replace(
+      '</head>',
+      '<meta http-equiv="refresh" content="0; url=h&#116;tps&#58;//repo&#46;usecannon&#46;com"></head>'
+    )
+  );
+  await assert.rejects(
+    () => scanExport(refreshOutput),
+    /index\.html contains forbidden meta refresh/
+  );
+
+  const linkOutput = await fixture(context);
+  const linkIndex = path.join(linkOutput, 'index.html');
+  await writeFile(
+    linkIndex,
+    html.replace(
+      '</body>',
+      '<a href="h&#116;tps&#58;//repo&#46;usecannon&#46;com">legacy</a></body>'
+    )
+  );
+  await assert.rejects(
+    () => scanExport(linkOutput),
+    /index\.html attribute a\[href\] contains forbidden decoded remote HTTP URL/
+  );
+});
+
 test('rejects an undeclared export file', async (context) => {
   const output = await fixture(context);
   await writeFile(path.join(output, 'runtime.js'), 'void 0;\n');
