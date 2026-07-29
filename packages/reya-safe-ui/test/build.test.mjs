@@ -6,6 +6,10 @@ import { test } from 'node:test';
 import { buildExport } from '../src/build.mjs';
 import { compareCanonicalText } from '../src/config.mjs';
 import { scanExport } from '../scripts/scan-export.mjs';
+import {
+  SAFE_ADDRESS,
+  SERVICE_ORIGIN,
+} from '../test-support/client-fixtures.mjs';
 
 const BUILD_SHA = '89abcdef0123456789abcdef0123456789abcdef';
 const ENV = Object.freeze({
@@ -13,10 +17,8 @@ const ENV = Object.freeze({
   REYA_SAFE_UI_BUILD_SHA: BUILD_SHA,
   REYA_SAFE_UI_CHAIN_ID: '1729',
   REYA_SAFE_UI_PROFILE: 'reya-mainnet',
-  REYA_SAFE_UI_SAFE_ADDRESS:
-    '0x1111111111111111111111111111111111111111',
-  REYA_SAFE_UI_SERVICE_ORIGIN:
-    'https://cannon-api.reya-tailnet.ts.net',
+  REYA_SAFE_UI_SAFE_ADDRESS: SAFE_ADDRESS,
+  REYA_SAFE_UI_SERVICE_ORIGIN: SERVICE_ORIGIN,
 });
 
 async function snapshot(root, current = root) {

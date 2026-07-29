@@ -6,16 +6,18 @@ import { test } from 'node:test';
 import { buildExport } from '../src/build.mjs';
 import { digestFiles, sha256 } from '../src/config.mjs';
 import { scanExport } from '../scripts/scan-export.mjs';
+import {
+  SAFE_ADDRESS,
+  SERVICE_ORIGIN,
+} from '../test-support/client-fixtures.mjs';
 
 const ENV = Object.freeze({
   REYA_SAFE_UI_ACTIVATION: 'disabled',
   REYA_SAFE_UI_BUILD_SHA: 'fedcba9876543210fedcba9876543210fedcba98',
   REYA_SAFE_UI_CHAIN_ID: '1729',
   REYA_SAFE_UI_PROFILE: 'reya-mainnet',
-  REYA_SAFE_UI_SAFE_ADDRESS:
-    '0x1111111111111111111111111111111111111111',
-  REYA_SAFE_UI_SERVICE_ORIGIN:
-    'https://cannon-api.reya-tailnet.ts.net',
+  REYA_SAFE_UI_SAFE_ADDRESS: SAFE_ADDRESS,
+  REYA_SAFE_UI_SERVICE_ORIGIN: SERVICE_ORIGIN,
 });
 
 async function fixture(context) {

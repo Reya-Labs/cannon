@@ -10,10 +10,12 @@ import {
   SOURCE_ROOT,
   SOURCE_ROUTE_PREFIX,
 } from '../src/clients/source.mjs';
+import {
+  SAFE_ADDRESS,
+  SERVICE_ORIGIN,
+} from '../test-support/client-fixtures.mjs';
 
 const BUILD_SHA = '0123456789abcdef0123456789abcdef01234567';
-const SAFE_ADDRESS = '0x1111111111111111111111111111111111111111';
-const SERVICE_ORIGIN = 'https://cannon-api.reya-tailnet.ts.net';
 
 function validEnvironment() {
   return {
