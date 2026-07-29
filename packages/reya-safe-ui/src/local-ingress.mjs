@@ -1,11 +1,13 @@
 import http from 'node:http';
 import { PREVIEW_RPC_METHODS } from './runtime/protocol.mjs';
+import { resolveOpRegistryPackage } from './runtime/op-registry-resolver.mjs';
 
-const ADDRESS_PATTERN = /^0x[0-9a-f]{40}$/;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
-const STAGING_PATTERN = /^\/staging\/1729\/(0x[0-9a-f]{40})$/;
 const SOURCE_PATTERN =
   /^\/source\/reya-deployments\/([0-9a-f]{40})\/reya-network$/;
+const OP_REGISTRY_PATH = '/registry/op/resolve';
+const ARTIFACT_PATH = '/artifacts/api/v0/cat';
+const CID_PATTERN = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
 const MAX_REQUEST_BYTES = 1024 * 1024;
 const MAX_REQUEST_CHUNKS = 4096;
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
@@ -81,14 +83,28 @@ function canonicalRpcUrl(value) {
   return url.href;
 }
 
-export function loadLocalIngressConfig(env = process.env) {
-  const safeAddress = required(env, 'REYA_LOCAL_SAFE_ADDRESS');
-  if (
-    !ADDRESS_PATTERN.test(safeAddress) ||
-    safeAddress === `0x${'0'.repeat(40)}`
-  ) {
-    throw new Error('REYA_LOCAL_SAFE_ADDRESS is invalid');
+function optionalCanonicalRpcUrl(value, key) {
+  if (value === undefined || value.trim() === '') return null;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${key} is invalid`);
   }
+  if (
+    url.protocol !== 'https:' ||
+    url.username !== '' ||
+    url.password !== '' ||
+    url.search !== '' ||
+    url.hash !== '' ||
+    value !== url.href
+  ) {
+    throw new Error(`${key} is invalid`);
+  }
+  return url.href;
+}
+
+export function loadLocalIngressConfig(env = process.env) {
   const sourceCommit = required(env, 'REYA_LOCAL_SOURCE_COMMIT');
   if (!COMMIT_PATTERN.test(sourceCommit)) {
     throw new Error('REYA_LOCAL_SOURCE_COMMIT is invalid');
@@ -112,19 +128,22 @@ export function loadLocalIngressConfig(env = process.env) {
   }
 
   return Object.freeze({
+    artifactOrigin: canonicalLoopbackOrigin(
+      env.REYA_LOCAL_ARTIFACT_ORIGIN ?? defaultLoopbackOrigin(8083),
+      'REYA_LOCAL_ARTIFACT_ORIGIN'
+    ),
     identity,
+    opRpcUrl: optionalCanonicalRpcUrl(
+      env.REYA_CANNON_OP_RPC_URL,
+      'REYA_CANNON_OP_RPC_URL'
+    ),
     port: 8787,
     proxySecret,
     rpcUrl: canonicalRpcUrl(required(env, 'REYA_CANNON_QA_RPC_URL')),
-    safeAddress,
     sourceCommit,
     sourceOrigin: canonicalLoopbackOrigin(
       env.REYA_LOCAL_SOURCE_ORIGIN ?? defaultLoopbackOrigin(8082),
       'REYA_LOCAL_SOURCE_ORIGIN'
-    ),
-    stagingOrigin: canonicalLoopbackOrigin(
-      env.REYA_LOCAL_STAGING_ORIGIN ?? defaultLoopbackOrigin(8081),
-      'REYA_LOCAL_STAGING_ORIGIN'
     ),
     uiOrigin: canonicalLoopbackOrigin(
       required(env, 'REYA_LOCAL_UI_ORIGIN'),
@@ -158,13 +177,12 @@ async function readRequest(request, maximumBytes = MAX_REQUEST_BYTES) {
   return Buffer.concat(chunks, length);
 }
 
-async function boundedResponse(response) {
+async function boundedResponse(response, maximumBytes = MAX_RESPONSE_BYTES) {
   if (response.body === null) throw new Error('upstream response is empty');
   const declared = response.headers.get('content-length');
   if (
     declared !== null &&
-    (!/^(?:0|[1-9][0-9]*)$/.test(declared) ||
-      Number(declared) > MAX_RESPONSE_BYTES)
+    (!/^(?:0|[1-9][0-9]*)$/.test(declared) || Number(declared) > maximumBytes)
   ) {
     await response.body.cancel();
     throw new Error('upstream response is too large');
@@ -176,7 +194,7 @@ async function boundedResponse(response) {
       throw new Error('upstream response has too many chunks');
     }
     length += chunk.byteLength;
-    if (length > MAX_RESPONSE_BYTES) {
+    if (length > maximumBytes) {
       throw new Error('upstream response is too large');
     }
     chunks.push(Buffer.from(chunk));
@@ -186,10 +204,7 @@ async function boundedResponse(response) {
 
 function cors(response, config) {
   response.setHeader('Access-Control-Allow-Origin', config.uiOrigin);
-  response.setHeader(
-    'Access-Control-Allow-Headers',
-    'Content-Type,X-Idempotency-Key'
-  );
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   response.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   response.setHeader('Cache-Control', 'no-store');
   response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
@@ -213,10 +228,8 @@ function reject(response, status, code) {
 
 function routeAllows(config, pathname, method) {
   if (pathname === '/rpc/1729') return method === 'POST';
-  const staging = STAGING_PATTERN.exec(pathname);
-  if (staging?.[1] === config.safeAddress) {
-    return method === 'GET' || method === 'POST';
-  }
+  if (pathname === OP_REGISTRY_PATH) return method === 'POST';
+  if (pathname === ARTIFACT_PATH) return method === 'POST';
   const source = SOURCE_PATTERN.exec(pathname);
   return source?.[1] === config.sourceCommit && method === 'GET';
 }
@@ -233,9 +246,7 @@ function validatePreflight(request, config, url) {
     url.search !== '' ||
     typeof requestedMethod !== 'string' ||
     !routeAllows(config, url.pathname, requestedMethod) ||
-    requestedHeaders.some(
-      (header) => header !== 'content-type' && header !== 'x-idempotency-key'
-    )
+    requestedHeaders.some((header) => header !== 'content-type')
   ) {
     throw Object.assign(new Error('preflight rejected'), { status: 404 });
   }
@@ -285,9 +296,9 @@ function exactRpcRequest(bytes) {
   return value;
 }
 
-async function rpcRequest(config, bytes, fetchImpl) {
+async function rpcRequest(rpcUrl, bytes, fetchImpl) {
   const request = exactRpcRequest(bytes);
-  const upstream = await fetchImpl(config.rpcUrl, {
+  const upstream = await fetchImpl(rpcUrl, {
     body: JSON.stringify(request),
     headers: {
       accept: 'application/json',
@@ -326,40 +337,15 @@ async function rpcRequest(config, bytes, fetchImpl) {
   return Buffer.from(JSON.stringify(value));
 }
 
-async function proxyRequest({
-  body,
-  config,
-  fetchImpl,
-  idempotencyKey,
-  method,
-  origin,
-  path,
-}) {
-  const headers = {
-    accept: 'application/json',
-    origin: config.uiOrigin,
-    'x-reya-proxy-secret': config.proxySecret,
-    'x-reya-user': config.identity,
-  };
-  if (origin === config.stagingOrigin) {
-    headers['x-reya-roles'] = 'proposer,signer';
-  }
-  if (body.byteLength > 0) headers['content-type'] = 'application/json';
-  if (idempotencyKey !== undefined) {
-    if (
-      Array.isArray(idempotencyKey) ||
-      !/^[a-zA-Z0-9._:-]{16,128}$/.test(idempotencyKey)
-    ) {
-      throw Object.assign(new Error('idempotency key is invalid'), {
-        status: 400,
-      });
-    }
-    headers['x-idempotency-key'] = idempotencyKey;
-  }
-  const upstream = await fetchImpl(`${origin}${path}`, {
-    ...(body.byteLength > 0 ? { body } : {}),
-    headers,
-    method,
+async function readSource(config, path, fetchImpl) {
+  const upstream = await fetchImpl(`${config.sourceOrigin}${path}`, {
+    headers: {
+      accept: 'application/json',
+      origin: config.uiOrigin,
+      'x-reya-proxy-secret': config.proxySecret,
+      'x-reya-user': config.identity,
+    },
+    method: 'GET',
     redirect: 'error',
     signal: AbortSignal.timeout(20_000),
   });
@@ -390,10 +376,20 @@ export async function createLocalIngress(
     })
   );
   const chainResponse = JSON.parse(
-    (await rpcRequest(config, chainProbe, fetchImpl)).toString('utf8')
+    (await rpcRequest(config.rpcUrl, chainProbe, fetchImpl)).toString('utf8')
   );
   if (chainResponse.result !== '0x6c1') {
     throw new Error('local ingress RPC upstream is not Reya Network');
+  }
+  if (config.opRpcUrl !== null) {
+    const opChainResponse = JSON.parse(
+      (await rpcRequest(config.opRpcUrl, chainProbe, fetchImpl)).toString(
+        'utf8'
+      )
+    );
+    if (opChainResponse.result !== '0xa') {
+      throw new Error('local ingress OP RPC upstream is not OP Mainnet');
+    }
   }
 
   const server = http.createServer((request, response) => {
@@ -416,7 +412,7 @@ export async function createLocalIngress(
       ) {
         requireJsonRequest(request);
         const body = await rpcRequest(
-          config,
+          config.rpcUrl,
           await readRequest(request, 128 * 1024),
           fetchImpl
         );
@@ -428,32 +424,98 @@ export async function createLocalIngress(
         return;
       }
 
-      const staging = STAGING_PATTERN.exec(url.pathname);
       if (
-        staging &&
-        staging[1] === config.safeAddress &&
-        url.search === '' &&
-        (request.method === 'GET' || request.method === 'POST')
+        url.pathname === OP_REGISTRY_PATH &&
+        request.method === 'POST' &&
+        url.search === ''
       ) {
-        if (request.method === 'GET') rejectRequestBody(request);
-        else requireJsonRequest(request);
-        const proxied = await proxyRequest({
-          body:
-            request.method === 'POST'
-              ? await readRequest(request)
-              : Buffer.alloc(0),
-          config,
-          fetchImpl,
-          idempotencyKey: request.headers['x-idempotency-key'],
-          method: request.method,
-          origin: config.stagingOrigin,
-          path: `/1729/${config.safeAddress}`,
+        requireJsonRequest(request);
+        if (config.opRpcUrl === null) {
+          throw new Error('OP registry is unavailable');
+        }
+        let input;
+        let inputText;
+        try {
+          inputText = (await readRequest(request, 512)).toString('utf8');
+          input = JSON.parse(inputText);
+        } catch {
+          throw Object.assign(new Error('registry request is invalid'), {
+            status: 400,
+          });
+        }
+        if (
+          !isPlainObject(input) ||
+          JSON.stringify(Object.keys(input)) !==
+            JSON.stringify(['chainId', 'packageRef']) ||
+          JSON.stringify(input) !== inputText ||
+          input.chainId !== 1729 ||
+          typeof input.packageRef !== 'string'
+        ) {
+          throw Object.assign(new Error('registry request is invalid'), {
+            status: 400,
+          });
+        }
+        let resolved;
+        try {
+          resolved = await resolveOpRegistryPackage({
+            fetchImpl,
+            packageRef: input.packageRef,
+            rpcUrl: config.opRpcUrl,
+          });
+        } catch (error) {
+          if (error?.message === 'OP registry package reference is invalid') {
+            throw Object.assign(error, { status: 400 });
+          }
+          throw error;
+        }
+        const body = Buffer.from(JSON.stringify(resolved));
+        response.writeHead(200, {
+          'content-length': String(body.byteLength),
+          'content-type': 'application/json',
         });
-        response.writeHead(proxied.status, {
-          'content-length': String(proxied.body.byteLength),
-          'content-type': proxied.contentType,
+        response.end(body);
+        return;
+      }
+
+      if (url.pathname === ARTIFACT_PATH && request.method === 'POST') {
+        rejectRequestBody(request);
+        const keys = [...url.searchParams.keys()];
+        const cid = url.searchParams.get('arg');
+        if (
+          keys.length !== 1 ||
+          keys[0] !== 'arg' ||
+          cid === null ||
+          !CID_PATTERN.test(cid) ||
+          url.search !== `?arg=${cid}`
+        ) {
+          throw Object.assign(new Error('artifact request is invalid'), {
+            status: 400,
+          });
+        }
+        const artifactUrl = new URL(config.artifactOrigin);
+        artifactUrl.pathname = '/api/v0/cat';
+        artifactUrl.searchParams.set('arg', cid);
+        const upstream = await fetchImpl(artifactUrl, {
+          headers: { accept: 'application/octet-stream' },
+          method: 'POST',
+          redirect: 'error',
+          signal: AbortSignal.timeout(15_000),
         });
-        response.end(proxied.body);
+        if (
+          upstream.status !== 200 ||
+          upstream.redirected ||
+          upstream.headers.get('content-type')?.split(';', 1)[0].trim() !==
+            'application/octet-stream'
+        ) {
+          await upstream.body?.cancel();
+          throw new Error('artifact upstream rejected the request');
+        }
+        const body = await boundedResponse(upstream, 50 * 1024 * 1024);
+        response.writeHead(200, {
+          'content-length': String(body.byteLength),
+          'content-type': 'application/octet-stream',
+        });
+        response.end(body);
         return;
       }
 
@@ -465,14 +527,7 @@ export async function createLocalIngress(
         request.method === 'GET'
       ) {
         rejectRequestBody(request);
-        const proxied = await proxyRequest({
-          body: Buffer.alloc(0),
-          config,
-          fetchImpl,
-          method: 'GET',
-          origin: config.sourceOrigin,
-          path: url.pathname,
-        });
+        const proxied = await readSource(config, url.pathname, fetchImpl);
         response.writeHead(proxied.status, {
           'content-length': String(proxied.body.byteLength),
           'content-type': proxied.contentType,

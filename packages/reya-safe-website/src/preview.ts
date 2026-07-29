@@ -2,7 +2,7 @@ import MulticallABI from '@cannon/abi/Multicall.json';
 import { SafeTransaction } from '@cannon/types/SafeTransaction';
 import { encodeFunctionData, zeroAddress } from 'viem';
 
-const MULTICALL_ADDRESS = '0xE2C5658cC5C448B48141168f3e475dF8f65A1e3e' as const;
+const MULTICALL_ADDRESS = '0xe2c5658cc5c448b48141168f3e475df8f65a1e3e' as const;
 
 const ADDRESS_PATTERN = /^0x[0-9a-f]{40}$/;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
@@ -112,13 +112,15 @@ function simulationCall(
 }
 
 /**
- * Parses and verifies a bounded read-only Cannon preview for one source commit
- * and Safe. The simulation call list is treated as the canonical evidence.
+ * Parses and structurally validates bounded, review-only local Cannon evidence
+ * for one source commit and Safe. This does not authenticate or recompute the
+ * simulation and therefore must never authorize signing.
  */
 export function parseReyaPreview(
   input: string,
   expected: {
     commit: string;
+    previousDeployCid?: string;
     safeAddress: `0x${string}`;
   }
 ): ReyaPreview {
@@ -161,6 +163,7 @@ export function parseReyaPreview(
     deployerAddress === expected.safeAddress ||
     !UINT_PATTERN.test(String(value.deployerStartingNonce)) ||
     !CID_PATTERN.test(String(value.previousDeployCid)) ||
+    (expected.previousDeployCid !== undefined && value.previousDeployCid !== expected.previousDeployCid) ||
     Reflect.ownKeys(cannon).length !== 2 ||
     cannon.stateFormatVersion !== 7 ||
     cannon.version !== '2.26.1' ||

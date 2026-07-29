@@ -17,6 +17,7 @@
   "dependencies": {
     "@radix-ui/react-slot": "1.2.3",
     "@reya/cannon-safe-ui": "workspace:*",
+    "@usecannon/artifact-codec": "workspace:*",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "react": "18.3.1",
@@ -25,11 +26,13 @@
     "viem": "2.30.1"
   },
   "devDependencies": {
+    "@testing-library/react": "16.3.0",
     "@usecannon/website": "workspace:*",
     "@types/node": "22.14.0",
     "@types/react": "18.2.37",
     "@types/react-dom": "18.2.6",
     "esbuild": "0.27.3",
+    "jsdom": "26.0.0",
     "serve": "14.2.4",
     "tailwindcss": "3.4.17",
     "tailwindcss-animate": "1.0.7",

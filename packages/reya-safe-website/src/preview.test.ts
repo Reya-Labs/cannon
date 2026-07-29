@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { prepareReyaSafeTransaction } from '@reya/cannon-safe-ui/safe-review';
 import { makeStageableSafeTransaction, parseReyaPreview } from './preview';
 
 const SAFE = '0x1111111111111111111111111111111111111111';
@@ -90,6 +91,12 @@ describe('Reya website preview admission', () => {
     expect(txn.operation).toBe('1');
     expect(txn.safeTxGas).toBe('100');
     expect(txn.refundReceiver).toBe(SAFE);
+    expect(
+      prepareReyaSafeTransaction({
+        safeAddress: SAFE,
+        txn,
+      }).safeTxHash
+    ).toMatch(/^0x[0-9a-f]{64}$/);
   });
 
   it.each([
@@ -116,6 +123,16 @@ describe('Reya website preview admission', () => {
     expect(() =>
       parseReyaPreview(JSON.stringify(candidate), {
         commit: COMMIT,
+        safeAddress: SAFE,
+      })
+    ).toThrow('PREVIEW_REJECTED');
+  });
+
+  it('binds a selected previous-package CID when supplied', () => {
+    expect(() =>
+      parseReyaPreview(JSON.stringify(preview()), {
+        commit: COMMIT,
+        previousDeployCid: 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
         safeAddress: SAFE,
       })
     ).toThrow('PREVIEW_REJECTED');

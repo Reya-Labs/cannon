@@ -5,7 +5,10 @@
   "description": "Fail-closed static shell for the Reya Cannon signer",
   "type": "module",
   "exports": {
-    "./clients": "./src/clients/index.mjs"
+    "./artifact-loader": "./src/runtime/artifact-loader.mjs",
+    "./clients": "./src/clients/index.mjs",
+    "./read-only": "./src/clients/read-only.mjs",
+    "./safe-review": "./src/clients/safe-review.mjs"
   },
   "packageManager": "pnpm@10.11.0",
   "engines": {
@@ -17,15 +20,15 @@
     }
   },
   "dependencies": {
-    "@iarna/toml": "3.0.0"
-  },
-  "devDependencies": {
+    "@iarna/toml": "3.0.0",
     "@usecannon/artifact-codec": "workspace:*",
-    "@usecannon/builder": "workspace:*",
-    "es-module-lexer": "1.6.0",
-    "parse5": "7.2.1",
     "pako": "2.1.0",
     "viem": "2.30.1"
+  },
+  "devDependencies": {
+    "@usecannon/builder": "workspace:*",
+    "es-module-lexer": "1.6.0",
+    "parse5": "7.2.1"
   },
   "scripts": {
     "build": "node src/build.mjs",

@@ -1,11 +1,14 @@
-declare module '@reya/cannon-safe-ui/clients' {
+declare module '@reya/cannon-safe-ui/read-only' {
+  export const ARTIFACT_CAT_PATH: '/artifacts/api/v0/cat';
+  export const OP_REGISTRY_RESOLVE_PATH: '/registry/op/resolve';
+  export const REYA_OMNIBUS_LATEST: 'reya-omnibus:latest@main';
+  export const RPC_ROUTE_PATH: '/rpc/1729';
+  export const SOURCE_ROUTE_PREFIX: '/source/reya-deployments/';
+
+  export function isReyaOmnibusPackageRef(value: unknown): boolean;
+
   export class ReyaReadClientError extends Error {
     code: string;
-  }
-
-  export class ReyaStagingServiceError extends ReyaReadClientError {
-    httpStatus: number;
-    serviceCode: string;
   }
 
   export function createReyaReadOnlyClients(options: {
@@ -21,6 +24,17 @@ declare module '@reya/cannon-safe-ui/clients' {
     rpc: {
       read(input: { method: string; params: unknown[] }): Promise<unknown>;
     };
+    registry: {
+      resolve(input: { chainId: 1729; packageRef: string }): Promise<{
+        chainId: 1729;
+        cid: string;
+        deployUrl: string;
+        mutability: '' | 'tag' | 'version';
+        packageRef: string;
+        registryAddress: string;
+        registryChainId: 10;
+      }>;
+    };
     serviceOrigin: string;
     source: {
       bundle(input: { commit: string }): Promise<{
@@ -30,45 +44,21 @@ declare module '@reya/cannon-safe-ui/clients' {
       }>;
     };
   };
+}
 
-  export function createReyaStagingClient(options: {
-    deadlineMs?: number;
-    fetchImpl?: typeof fetch;
-    safeAddress: `0x${string}`;
-    serviceOrigin: string;
+declare module '@reya/cannon-safe-ui/artifact-loader' {
+  export function createReadOnlyArtifactLoader(options: {
+    maximumBytes?: number;
+    readArtifact: (cid: string) => Promise<Uint8Array>;
   }): {
-    chainId: 1729;
-    current(): Promise<null | {
-      createdAt: number;
-      sigs: readonly string[];
-      txn: Record<string, unknown>;
-      updatedAt: number;
-    }>;
-    safeAddress: `0x${string}`;
-    submitSignature(input: { signature: string; txn: Record<string, unknown> }): Promise<{
-      created: boolean;
-      proposal: {
-        createdAt: number;
-        sigs: readonly string[];
-        txn: Record<string, unknown>;
-        updatedAt: number;
-      };
-    }>;
+    read(url: string): Promise<unknown>;
   };
+}
 
-  export function createReyaSafeSigningClient(options: {
-    safeAddress: `0x${string}`;
-    signTypedData: (value: unknown) => Promise<string>;
-  }): {
-    prepare(input: { txn: Record<string, unknown> }): {
-      safeTxHash: `0x${string}`;
-      txn: Record<string, unknown>;
-      typedData: unknown;
-    };
-    sign(input: { ownerAddress: `0x${string}`; prepared: object }): Promise<{
-      safeTxHash: `0x${string}`;
-      signature: `0x${string}`;
-      signer: `0x${string}`;
-    }>;
+declare module '@reya/cannon-safe-ui/safe-review' {
+  export function prepareReyaSafeTransaction(input: { safeAddress: `0x${string}`; txn: Record<string, unknown> }): {
+    safeTxHash: `0x${string}`;
+    txn: Readonly<Record<string, unknown>>;
+    typedData: Readonly<Record<string, unknown>>;
   };
 }

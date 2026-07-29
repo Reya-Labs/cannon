@@ -151,8 +151,9 @@ approved Reya Safe fails the run.
 
 `src/clients/` contains ESM clients that remain unreachable from the disabled
 production shell built by `src/build.mjs`. The separate
-`@reya/cannon-safe-website` package imports the reviewed RPC, source, staging
-and signing subset only for local browser QA. CI runs `pnpm verify:dormant` to
+`@reya/cannon-safe-website` package imports the reviewed RPC, source, artifact,
+OP-registry and Safe-payload preparation subset only for local browser QA. It
+does not expose a browser staging route. CI runs `pnpm verify:dormant` to
 prove that the production shell remains separated and to reject hard-coded
 remote origins, hosted Cannon/public IPFS/Git/RPC fallbacks, browser
 credentials, upload routes, and `localStorage` from all UI source.
@@ -177,6 +178,7 @@ The reviewed read surface is finite:
 - `GET /query/selector`
 - `GET /source/reya-deployments/:fullCommitSha/reya-network`
 - `POST /artifacts/api/v0/cat?arg=<CIDv0>`
+- `POST /registry/op/resolve`
 - `POST /rpc/1729`
 
 The source client accepts only a lowercase 40-character commit for the fixed
@@ -238,13 +240,16 @@ the same conformance vectors before these dormant clients can be activated.
 
 These modules are not activation-ready infrastructure. The `/staging` prefix
 is the reviewed consolidated-ingress contract and must strip to the backend's
-root route. The consolidated
-Tailscale ingress and its `/query`, `/artifacts`, `/source`, and `/rpc` routes do not
-yet exist. The bounded source-gateway package implements the `/source`
-application contract, but it is not published or deployed by this change.
-Activation also requires the reviewed query API and read-only artifact
-workloads, exact-origin CORS, signer access testing, artifact backfill and
-recovery evidence, and a separate change that intentionally imports the
-clients and updates CSP. Activation depends on the reviewed query API contract,
-including its normalization of Redis aggregate namespace counts into bounded
-JSON numbers; these clients reject raw node-redis string/Buffer counts.
+root route. The consolidated Tailscale ingress and its `/query`, `/artifacts`,
+`/source`, `/registry/op/resolve`, and `/rpc` routes do not yet exist. The
+bounded source-gateway package implements the `/source` application contract,
+but it is not published or deployed by this change. The registry resolver
+workload must keep its OP Mainnet RPC URL server-side, probe chain `10`, and
+expose only the fixed Cannon registry `getPackageInfo` read implemented by this
+package. Activation also requires that resolver and its secret OP RPC
+configuration, the reviewed query API and read-only artifact workloads,
+exact-origin CORS, signer access testing, artifact backfill and recovery
+evidence, and a separate change that intentionally imports the clients and
+updates CSP. Activation depends on the reviewed query API contract, including
+its normalization of Redis aggregate namespace counts into bounded JSON
+numbers; these clients reject raw node-redis string/Buffer counts.

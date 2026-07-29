@@ -18,7 +18,10 @@ async function validFixture() {
   fixtures.push(root);
   await Promise.all([
     writeFile(root + '/app.css', 'body{}'),
-    writeFile(root + '/app.js', 'execution disabled; no transaction execution or broadcast method'),
+    writeFile(
+      root + '/app.js',
+      'review-only profile has no signing, staging, execution or broadcast method; Sign and stage unavailable'
+    ),
     writeFile(
       root + '/index.html',
       "Reya Cannon Safe staging Content-Security-Policy http://127.0.0.1:8787 script-src 'self'"
@@ -48,6 +51,24 @@ describe('local profile export scanner', () => {
     const result = scan(root);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('forbidden capability');
+  });
+
+  it('rejects staging and wallet-signing mutation capabilities', async () => {
+    for (const capability of [
+      '/staging/1729/0x1111111111111111111111111111111111111111',
+      'createReyaSafeSigningClient',
+      'eth_signTypedData_v4',
+      'SIGNING_IN_PROGRESS',
+      'submitSignature',
+      'WALLET_REQUEST_FAILED',
+    ]) {
+      const root = await validFixture();
+      await writeFile(root + '/app.js', capability);
+
+      const result = scan(root);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('forbidden capability');
+    }
   });
 
   it('rejects a symlinked required asset', async () => {
