@@ -24,6 +24,18 @@ function readDataProperty(value, key) {
   return descriptor.value;
 }
 
+function writeSafeDataProperty(target, key, value) {
+  if (FORBIDDEN_KEYS.has(key)) {
+    throw new Error('definition contains a forbidden key');
+  }
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
 function assertSourcePath(sourcePath) {
   if (
     typeof sourcePath !== 'string' ||
@@ -151,7 +163,11 @@ function cloneValue(value) {
     const clone = new Date(value.getTime());
     Object.setPrototypeOf(clone, Object.getPrototypeOf(value));
     for (const key of Object.keys(value)) {
-      clone[key] = cloneValue(value[key]);
+      writeSafeDataProperty(
+        clone,
+        key,
+        cloneValue(readDataProperty(value, key)),
+      );
     }
     return clone;
   }
@@ -159,7 +175,11 @@ function cloneValue(value) {
   if (isPlainObject(value)) {
     const clone = {};
     for (const key of Object.keys(value)) {
-      clone[key] = cloneValue(value[key]);
+      writeSafeDataProperty(
+        clone,
+        key,
+        cloneValue(readDataProperty(value, key)),
+      );
     }
     return clone;
   }
@@ -188,7 +208,18 @@ function mergeValue(target, source, depth) {
   if (isPlainObject(source)) {
     const merged = isPlainObject(target) ? target : {};
     for (const key of Object.keys(source)) {
-      merged[key] = mergeValue(merged[key], source[key], depth + 1);
+      const targetValue = Object.hasOwn(merged, key)
+        ? readDataProperty(merged, key)
+        : undefined;
+      writeSafeDataProperty(
+        merged,
+        key,
+        mergeValue(
+          targetValue,
+          readDataProperty(source, key),
+          depth + 1,
+        ),
+      );
     }
     return merged;
   }

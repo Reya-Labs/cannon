@@ -243,21 +243,23 @@ test('rejects malformed TOML and malformed include declarations', () => {
 });
 
 test('rejects prototype-polluting definition keys', () => {
-  assert.throws(
-    () =>
-      assembleCannonDefinition({
-        root: ROOT,
-        files: [
-          source(
-            ROOT,
-            `
-["__proto__"]
+  for (const key of ['__proto__', 'constructor', 'prototype']) {
+    assert.throws(
+      () =>
+        assembleCannonDefinition({
+          root: ROOT,
+          files: [
+            source(
+              ROOT,
+              `
+["${key}"]
 polluted = true
 `,
-          ),
-        ],
-      }),
-    /forbidden key/,
-  );
+            ),
+          ],
+        }),
+      /forbidden key/,
+    );
+  }
   assert.equal({}.polluted, undefined);
 });
