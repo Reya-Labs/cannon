@@ -43,6 +43,110 @@ The scan permits only the five expected export files. It binds the SBOM to the t
 revision and rejects any deployed component or dependency. It also rejects remote URLs, hosted Cannon/IPFS providers,
 scripts, forms, frames, symlinks, file-integrity mismatches, and any deviation from the generated CSP.
 
+## Non-signable local upgrade preview
+
+The workspace also contains an offline-first QA CLI for the exact
+`reya-omnibus:1.0.158@main` to `1.0.159` upgrade at Reya deployments commit
+`2b10669075b91eb8db781d199292f30c52f8e994`. This tool is not part of the
+Cloudflare export. It does not connect a wallet, stage a Safe transaction,
+sign, publish, or submit anything.
+
+Use the repository-pinned toolchain:
+
+- Node `22.23.1`
+- pnpm `10.11.0`
+- Anvil `1.2.3-v1.2.3`, commit
+  `a813a2cee7dd4926e7c56fd8a785b54f32e0d10f`
+
+From the Cannon repository root, install only the required workspace closure
+from a clean checkout:
+
+```sh
+pnpm install --frozen-lockfile --ignore-scripts --filter @reya/cannon-safe-ui...
+git status --short
+```
+
+The preview command rejects any tracked, staged, or untracked worktree change.
+Before importing Cannon, it verifies the pinned Node and pnpm versions, rebuilds
+the exact local builder, and then records the commit, lockfile, package metadata,
+and SHA-256 directory digests of the executed builder and artifact-codec output.
+
+The source repository and every CLI path must be absolute. Verify that the
+separate `reya-deployments` checkout contains the pinned Git object:
+
+```sh
+git -C /absolute/path/to/reya-deployments \
+  cat-file -e 2b10669075b91eb8db781d199292f30c52f8e994^{commit}
+```
+
+Hydration is a separate, explicit bootstrap step. It downloads raw Cannon
+artifacts from one operator-chosen, credential-free Kubo `cat` origin, verifies
+every CID, recursively closes the baseline imports, and writes a mode-`0600`
+local cache. There is no default origin and the preview runtime never contacts
+that origin:
+
+```sh
+pnpm --filter @reya/cannon-safe-ui hydrate:local-qa -- \
+  --origin https://approved-kubo-origin.example \
+  --cache-dir /absolute/path/to/reya-cannon-artifacts
+```
+
+For this fixture, `inventory.json` must contain 77 artifacts and these exact
+digests:
+
+```text
+manifestSha256  f37837881e4fad205b26d11bba1c1cdfb186891fdb762435445913c44e94acae
+inventorySha256 c71b8ac6fbcad5b01d251c9a813f275eccba4d635028f02f93f01c07280f85d6
+```
+
+Provide `REYA_CANNON_QA_RPC_URL` through a secret-safe environment injection.
+The endpoint must report chain `1729` and serve state at an exact finalized
+block number. Latest-only gateways fail closed with
+`RPC_PINNED_STATE_UNAVAILABLE`. The upstream URL is held only by a loopback
+proxy and is not placed in Anvil arguments, output, or errors.
+
+```sh
+test -n "${REYA_CANNON_QA_RPC_URL:?set through a secret-safe environment}"
+
+pnpm --filter @reya/cannon-safe-ui preview:local -- \
+  --artifact-cache /absolute/path/to/reya-cannon-artifacts \
+  --source-repository /absolute/path/to/reya-deployments \
+  --output /absolute/path/to/reya-preview-first.json
+```
+
+The output path is create-only. The result records the immutable source,
+artifact inventory, Cannon worktree provenance, selected block number/hash,
+deployer starting nonce, full simulation order, EOA deployer prerequisites,
+and the Safe-only proposal calls. Provenance includes the exact Node and pnpm
+versions plus hashes of the builder and artifact-codec runtime output. Local
+transaction hashes are simulation evidence, not a `safeTxHash`.
+
+Repeat the preview against the exact first-run block rather than selecting a
+new finalized block:
+
+```sh
+QA_FORK_BLOCK_NUMBER="$(
+  jq -er '.qaEvidence.forkBlock.blockNumber' \
+    /absolute/path/to/reya-preview-first.json
+)"
+QA_FORK_BLOCK_HASH="$(
+  jq -er '.qaEvidence.forkBlock.blockHash' \
+    /absolute/path/to/reya-preview-first.json
+)"
+
+pnpm --filter @reya/cannon-safe-ui preview:local -- \
+  --artifact-cache /absolute/path/to/reya-cannon-artifacts \
+  --source-repository /absolute/path/to/reya-deployments \
+  --fork-block-number "$QA_FORK_BLOCK_NUMBER" \
+  --fork-block-hash "$QA_FORK_BLOCK_HASH" \
+  --output /absolute/path/to/reya-preview-second.json
+```
+
+Review `deployerPrerequisites` independently before treating
+`safeProposalCalls` as stageable. A deployer-only simulation is rejected as
+non-proposable, and any signer other than the fixed local-QA deployer and the
+approved Reya Safe fails the run.
+
 ## Dormant Reya read clients
 
 `src/clients/` contains dormant ESM clients for a later activation change.

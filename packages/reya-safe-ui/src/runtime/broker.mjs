@@ -112,9 +112,11 @@ export function createPreviewBroker({
   );
   const pending = new Map();
   let active = 0;
+  let activeArtifacts = 0;
   let closed = false;
   let expectedId = 1;
   let requests = 0;
+  let reservedResultBytes = 0;
   let resultBytes = 0;
 
   const terminate = () => {
@@ -154,6 +156,9 @@ export function createPreviewBroker({
 
   const run = async (request) => {
     active += 1;
+    if (request.operation === 'artifactCat') activeArtifacts += 1;
+    const reservation = resultLimit(request.operation, bounded);
+    reservedResultBytes += reservation;
     const controller = new AbortController();
     let timeout;
     try {
@@ -200,6 +205,8 @@ export function createPreviewBroker({
       if (timeout !== undefined) clearTimeout(timeout);
       pending.delete(controller);
       active -= 1;
+      if (request.operation === 'artifactCat') activeArtifacts -= 1;
+      reservedResultBytes -= reservation;
     }
   };
 
@@ -212,6 +219,7 @@ export function createPreviewBroker({
         !Array.isArray(event.ports) ||
         event.ports.length !== 0 ||
         active >= bounded.concurrentRequests ||
+        activeArtifacts >= bounded.artifactConcurrency ||
         requests >= bounded.requestCount
       ) {
         throw new Error('preview broker event is invalid');
@@ -222,6 +230,14 @@ export function createPreviewBroker({
         limits: bounded,
         runId,
       });
+      if (
+        resultBytes +
+          reservedResultBytes +
+          resultLimit(request.operation, bounded) >
+        bounded.resultBytes
+      ) {
+        throw new Error('preview broker result reservation exceeds byte limits');
+      }
       expectedId += 1;
       requests += 1;
       void run(request);

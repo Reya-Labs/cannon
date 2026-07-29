@@ -1,15 +1,16 @@
 import { REYA_READ_LIMITS } from './config.mjs';
 import { fail } from './errors.mjs';
 import { isCanonicalCidV0, validateCidInput } from './schema.mjs';
-import { boundedRequest } from './transport.mjs';
+import { boundedRequest, validateRequestContext } from './transport.mjs';
 
 export const ARTIFACT_CAT_PATH = '/artifacts/api/v0/cat';
 
 export function createArtifactClient(config) {
   return Object.freeze({
     async cat(...args) {
-      if (args.length !== 1) fail('INVALID_INPUT');
+      if (args.length < 1 || args.length > 2) fail('INVALID_INPUT');
       const [input] = args;
+      const externalSignal = validateRequestContext(args[1]);
       const cid = validateCidInput(input);
       const url = new URL(config.serviceOrigin);
       url.pathname = ARTIFACT_CAT_PATH;
@@ -18,6 +19,7 @@ export function createArtifactClient(config) {
       const bytes = await boundedRequest({
         accept: 'application/octet-stream',
         deadlineMs: config.artifactDeadlineMs,
+        externalSignal,
         fetchImpl: config.fetchImpl,
         maximumBytes: REYA_READ_LIMITS.artifactBytes,
         method: 'POST',

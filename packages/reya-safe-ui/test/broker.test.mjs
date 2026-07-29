@@ -235,6 +235,66 @@ test('caps concurrent work and aborts every active request on violation', async 
   assert.equal(broker.closed, true);
 });
 
+test('permits only one in-flight artifact read', async () => {
+  const worker = new FakeWorker();
+  const signals = [];
+  const broker = createPreviewBroker({
+    expectedCommit: COMMIT,
+    handlers: handlers({
+      artifactCat: async (_input, { signal }) => {
+        signals.push(signal);
+        return new Promise(() => {});
+      },
+    }),
+    runId: RUN_ID,
+    worker,
+  });
+
+  worker.emit(request(1, 'artifactCat', { cid: CID }));
+  worker.emit(request(2, 'artifactCat', { cid: CID }));
+  await settle();
+
+  assert.equal(signals.length, 1);
+  assert.equal(signals[0].aborted, true);
+  assert.equal(worker.terminations, 1);
+  assert.equal(broker.closed, true);
+});
+
+test('reserves bounded response memory before starting handlers', async () => {
+  const worker = new FakeWorker();
+  const signals = [];
+  const broker = createPreviewBroker({
+    expectedCommit: COMMIT,
+    handlers: handlers({
+      artifactCat: async (_input, { signal }) => {
+        signals.push(signal);
+        return new Promise(() => {});
+      },
+      sourceBundle: async (_input, { signal }) => {
+        signals.push(signal);
+        return new Promise(() => {});
+      },
+    }),
+    limits: {
+      ...PREVIEW_BROKER_LIMITS,
+      artifactBytes: 5,
+      resultBytes: 6,
+      sourceResultBytes: 2,
+    },
+    runId: RUN_ID,
+    worker,
+  });
+
+  worker.emit(request(1, 'artifactCat', { cid: CID }));
+  worker.emit(request(2, 'sourceBundle', { commit: COMMIT }));
+  await settle();
+
+  assert.equal(signals.length, 1);
+  assert.equal(signals[0].aborted, true);
+  assert.equal(worker.terminations, 1);
+  assert.equal(broker.closed, true);
+});
+
 test('caps aggregate request count and aborts active work', async () => {
   const worker = new FakeWorker();
   const signals = [];
@@ -282,6 +342,7 @@ test('caps cumulative result bytes and aborts the rejected request', async () =>
     }),
     limits: {
       ...PREVIEW_BROKER_LIMITS,
+      rpcResultBytes: resultSize,
       resultBytes: resultSize * 2 - 1,
     },
     runId: RUN_ID,
@@ -297,14 +358,12 @@ test('caps cumulative result bytes and aborts the rejected request', async () =>
   );
   await settle();
 
-  assert.equal(signals.length, 2);
+  assert.equal(signals.length, 1);
   assert.equal(signals[0].aborted, false);
-  assert.equal(signals[1].aborted, true);
   assert.deepEqual(
     worker.messages.map(({ type }) => type),
-    ['ready', 'result', 'error']
+    ['ready', 'result']
   );
-  assert.equal(worker.messages[2].error, 'PREVIEW_READ_FAILED');
   assert.equal(worker.terminations, 1);
   assert.equal(broker.closed, true);
 });

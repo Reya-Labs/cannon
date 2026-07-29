@@ -800,12 +800,24 @@ importers:
         specifier: 3.0.0
         version: 3.0.0
     devDependencies:
+      '@usecannon/artifact-codec':
+        specifier: workspace:*
+        version: link:../artifact-codec
+      '@usecannon/builder':
+        specifier: workspace:*
+        version: link:../builder
       es-module-lexer:
         specifier: 1.6.0
         version: 1.6.0
+      pako:
+        specifier: 2.1.0
+        version: 2.1.0
       parse5:
         specifier: 7.2.1
         version: 7.2.1
+      viem:
+        specifier: 2.30.1
+        version: 2.30.1(bufferutil@4.0.9)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.24.2)
 
   packages/safe-app-backend:
     dependencies:

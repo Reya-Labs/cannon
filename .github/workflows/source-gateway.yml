@@ -30,10 +30,10 @@ jobs:
           node-version: 22.23.1
           cache: pnpm
           cache-dependency-path: |
-            packages/reya-safe-ui/pnpm-lock.yaml
+            pnpm-lock.yaml
             packages/source-gateway/pnpm-lock.yaml
       - run: pnpm --dir packages/source-gateway --ignore-workspace install --frozen-lockfile --ignore-scripts
-      - run: pnpm --dir packages/reya-safe-ui --ignore-workspace install --frozen-lockfile --ignore-scripts
+      - run: pnpm install --frozen-lockfile --ignore-scripts --filter @reya/cannon-safe-ui...
       - run: pnpm --dir packages/source-gateway --ignore-workspace audit --prod --audit-level high
       - run: pnpm --dir packages/reya-safe-ui --ignore-workspace audit --prod --audit-level high
       - run: pnpm --dir packages/source-gateway --ignore-workspace lint
