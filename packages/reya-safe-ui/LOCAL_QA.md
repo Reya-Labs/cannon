@@ -53,12 +53,22 @@ browser-facing `POST /artifacts/api/v0/cat?arg=<CIDv0>`, proxies it to the
 reader's `POST /api/v0/cat?arg=<CIDv0>`, checks the response media type and
 size, and the browser independently recomputes the content CID.
 
+The local-QA artifact fixture also pins the known EOA-produced partial
+deployment and its complete transitive artifact closure. Hydration accepts a
+partial root only on Reya chain `1729`; all imported deployments must still be
+complete and every byte is verified against its CID before the cache inventory
+is sealed.
+
 Start the loopback-only ingress. It probes the server-side RPC URL for chain
 `1729`, strips all browser-supplied identity headers, injects the local QA
 identity for the source gateway, and allows only the reviewed RPC, source,
 artifact, OP-registry and interactive-preview routes. The preview route accepts
-one canonical request bound to the configured source commit, Safe, Cannonfile
-and previous CID. It controls no path, RPC URL, signer or package resolution.
+one canonical request bound to the configured or fixture-pinned source commit,
+Safe, optional partial deployment CID and previous-package CID. For a partial
+deployment, the runner loads the exact source commit authenticated by the
+artifact, verifies its pinned bundle digest, checks that the assembled
+Cannonfile definition exactly equals the artifact definition, and resumes from
+the partial state. It controls no path, RPC URL, signer or package resolution.
 Staging routes are absent.
 `REYA_CANNON_OP_RPC_URL` is optional at process startup; when absent, package
 aliases fail closed while exact CID reads continue to work:
@@ -75,16 +85,21 @@ pnpm --filter @reya/cannon-safe-website scan
 pnpm --filter @reya/cannon-safe-website serve
 ```
 
-Open `http://127.0.0.1:3000`. Automatic preview currently requires the approved
-immutable Cannonfile URL. The previous-package input accepts an exact CID or
-`reya-omnibus:<version-or-latest>@main`; an OP Mainnet alias is resolved once
+Open `http://127.0.0.1:3000`. The deployment input accepts either the approved
+immutable Cannonfile URL or a fixture-pinned partial deployment CID. The
+optional Cannonfile field shown for a CID is a comparison aid and, when
+supplied, must exactly match the repository and commit embedded in the partial
+artifact. The previous-package input remains separate and accepts an exact CID
+or `reya-omnibus:<version-or-latest>@main`; an OP Mainnet alias is resolved once
 and the exact resulting version and CID are displayed.
 
-Selecting **Preview Transactions to Queue** automatically rebuilds the pinned
-Cannonfile against a fresh disposable Anvil fork of current Reya state. The
-loopback runner loads only the server-configured immutable source closure and
-CID-verified artifact cache, permits one build at a time, and returns the
-ordered calls directly to the browser. No preview file is uploaded.
+Selecting **Preview Transactions to Queue** automatically builds the pinned
+Cannonfile from the previous complete package, or resumes the authenticated
+partial state produced by the EOA, against a fresh disposable Anvil fork of
+current Reya state. The loopback runner loads only manifest-pinned immutable
+source closures and its CID-verified artifact cache, permits one build at a
+time, and returns the ordered calls directly to the browser. No preview file is
+uploaded.
 
 This interactive path deliberately uses current RPC state so it works with a
 latest-only Reya endpoint. It is useful for operator review but is not

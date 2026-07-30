@@ -9,6 +9,7 @@ import { OP_REGISTRY_GET_PACKAGE_INFO_ABI } from '../src/runtime/op-registry-res
 
 const SAFE = '0x1111111111111111111111111111111111111111';
 const COMMIT = '0123456789abcdef0123456789abcdef01234567';
+const PARTIAL_COMMIT = '89abcdef0123456789abcdef0123456789abcdef';
 const UI_ORIGIN = 'http://127.0.0.1:3000';
 const SECRET = 'local-test-secret-with-at-least-32-bytes';
 
@@ -46,6 +47,9 @@ test('local ingress exposes only bounded review reads and injects source identit
   const observed = [];
   const previewRequests = [];
   const previewRunner = {
+    allowsSourceCommit(commit) {
+      return commit === COMMIT || commit === PARTIAL_COMMIT;
+    },
     close() {},
     async run(encoded) {
       previewRequests.push(encoded);
@@ -156,7 +160,8 @@ test('local ingress exposes only bounded review reads and injects source identit
   const previewRequest = {
     chainId: 1729,
     commit: COMMIT,
-    previousDeployCid: 'QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn',
+    partialDeployCid: null,
+    previousPackageCid: 'QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn',
     safeAddress: SAFE,
   };
   const preview = await fetch(`${origin}/preview/1729`, {
@@ -252,6 +257,24 @@ test('local ingress exposes only bounded review reads and injects source identit
   assert.equal(observed.at(-1).init.headers['x-reya-proxy-secret'], SECRET);
   assert.equal(observed.at(-1).init.headers['x-reya-user'], 'local-test-user');
   assert.equal(observed.at(-1).init.headers['x-reya-roles'], undefined);
+
+  const partialSource = await fetch(
+    `${origin}/source/reya-deployments/${PARTIAL_COMMIT}/reya-network`,
+    { headers: { origin: UI_ORIGIN } }
+  );
+  assert.equal(partialSource.status, 200);
+  assert.equal(
+    observed.at(-1).url,
+    `http://127.0.0.1:8082/source/reya-deployments/${PARTIAL_COMMIT}/reya-network`
+  );
+
+  const beforeUnpinnedSource = observed.length;
+  const unpinnedSource = await fetch(
+    `${origin}/source/reya-deployments/${'f'.repeat(40)}/reya-network`,
+    { headers: { origin: UI_ORIGIN } }
+  );
+  assert.equal(unpinnedSource.status, 404);
+  assert.equal(observed.length, beforeUnpinnedSource);
 
   const before = observed.length;
   const supersede = await fetch(`${origin}/staging/1729/${SAFE}/supersede`, {

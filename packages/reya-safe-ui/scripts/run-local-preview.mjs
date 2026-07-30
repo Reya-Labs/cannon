@@ -1,9 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import {
-  link,
-  unlink,
-  writeFile,
-} from 'node:fs/promises';
+import { link, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -113,7 +109,9 @@ function upstreamRpcUrl(env) {
 }
 
 async function writeAtomicCreateOnly(target, encoded) {
-  const temporary = `${target}.tmp-${process.pid}-${randomBytes(8).toString('hex')}`;
+  const temporary = `${target}.tmp-${process.pid}-${randomBytes(8).toString(
+    'hex'
+  )}`;
   await writeFile(temporary, encoded, {
     encoding: 'utf8',
     flag: 'wx',
@@ -186,7 +184,7 @@ export async function runLocalPreview({
       allowedCids: verifiedCids,
       baseLoader: readOnlyArtifactLoader,
     });
-    const previousDeployment = await artifactLoader.read(
+    const startingDeployment = await artifactLoader.read(
       `ipfs://${manifest.baseline.deployCid}`
     );
     const registry = createLocalQaRegistry({
@@ -212,11 +210,14 @@ export async function runLocalPreview({
         artifactLoader,
         commit: manifest.source.commit,
         definition,
-        previousDeployment,
-        previousDeployCid: manifest.baseline.deployCid,
+        deploymentMode: 'cannonfile',
+        partialDeployCid: null,
+        previousPackageCid: manifest.baseline.deployCid,
         registry,
         rpc: Object.freeze({ request: fork.request }),
         safeAddress: manifest.safeAddress,
+        sourceGitUrl: manifest.source.gitUrl,
+        startingDeployment,
       });
     } catch (error) {
       if (interrupted) {
@@ -260,11 +261,7 @@ export function localPreviewFailureCode(error) {
   const seen = new Set();
   let current = error;
   for (let depth = 0; depth < 8; depth += 1) {
-    if (
-      current === null ||
-      typeof current !== 'object' ||
-      seen.has(current)
-    ) {
+    if (current === null || typeof current !== 'object' || seen.has(current)) {
       break;
     }
     seen.add(current);
@@ -315,9 +312,7 @@ if (invokedDirectly) {
     process.stdout.write(encoded);
   } catch (error) {
     const code = localPreviewFailureCode(error);
-    process.stderr.write(
-      `Local Reya Cannon preview failed: ${code}\n`
-    );
+    process.stderr.write(`Local Reya Cannon preview failed: ${code}\n`);
     process.exitCode = code === 'LOCAL_PREVIEW_INTERRUPTED' ? 130 : 1;
   }
 }

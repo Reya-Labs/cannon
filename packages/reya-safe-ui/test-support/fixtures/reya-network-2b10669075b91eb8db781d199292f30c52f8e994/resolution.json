@@ -1,11 +1,12 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "purpose": "local-qa-only",
   "cannonVersion": "2.26.1",
   "stateFormatVersion": 7,
   "safeAddress": "0x1fe50318e5e3165742edc9c4a15d997bdb935eb9",
   "source": {
     "repository": "Reya-Labs/reya-deployments",
+    "gitUrl": "https://github.com/Reya-Labs/reya-deployments",
     "commit": "2b10669075b91eb8db781d199292f30c52f8e994",
     "root": "packages/tomls/src/omnibus/reya_network.toml",
     "bundleSha256": "d5fd78c3d3774a4b0d51ee570a436ebbde72f415829650c64b99711daa74c689"
@@ -33,6 +34,20 @@
     "fullPackageRef": "reya-omnibus:1.0.158@main",
     "deployCid": "QmaXwNU4gdBwgx4nZDV7qsPCG2GQXhyKqvxWEQoiF7CmZN"
   },
+  "partialDeployments": [
+    {
+      "chainId": 1729,
+      "fullPackageRef": "reya-omnibus:1.0.159@main",
+      "deployCid": "QmRBigSTWzxDodgwMDHaXoaDJ3b1DoV7nwKPdFECMwGYZi",
+      "source": {
+        "repository": "Reya-Labs/reya-deployments",
+        "gitUrl": "https://github.com/Reya-Labs/reya-deployments",
+        "commit": "42dd2d0289129ac153716f2e39e5b505b00df2ef",
+        "root": "packages/tomls/src/omnibus/reya_network.toml",
+        "bundleSha256": "57156435e6e6f9713020f0d7b63ff914ecb7b694d33033d97fdf87fa9ac53d4c"
+      }
+    }
+  ],
   "resolutions": [
     {
       "chainId": 13370,
@@ -168,5 +183,5 @@
       "resolutionType": "legacy-unset"
     }
   ],
-  "manifestSha256": "f37837881e4fad205b26d11bba1c1cdfb186891fdb762435445913c44e94acae"
+  "manifestSha256": "0b448f4778eef3c3e9aed4f1ced634346d61013651474cba4c5a0e11c89d425b"
 }

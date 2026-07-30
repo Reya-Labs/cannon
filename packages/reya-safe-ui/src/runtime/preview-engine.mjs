@@ -24,17 +24,22 @@ const ADDRESS_PATTERN = /^0x[0-9a-f]{40}$/;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 const CID_V0_PATTERN = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
 const CID_URL_PATTERN = /^ipfs:\/\/Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
+const VERSION_PATTERN =
+  /^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]{0,31})?$/;
 const HASH_PATTERN = /^0x[0-9a-f]{64}$/;
 const HEX_PATTERN = /^0x(?:[0-9a-f]{2})*$/;
 const PREVIEW_KEYS = Object.freeze([
   'artifactLoader',
   'commit',
   'definition',
-  'previousDeployment',
-  'previousDeployCid',
+  'deploymentMode',
+  'partialDeployCid',
+  'previousPackageCid',
   'registry',
   'rpc',
   'safeAddress',
+  'sourceGitUrl',
+  'startingDeployment',
 ]);
 const REYA_CHAIN = Object.freeze({
   id: CHAIN_ID,
@@ -62,11 +67,7 @@ function exactKeys(value, expected) {
   const keys = Reflect.ownKeys(value);
   return (
     keys.length === expected.length &&
-    keys.every(
-      (key) =>
-        typeof key === 'string' &&
-        expected.includes(key)
-    )
+    keys.every((key) => typeof key === 'string' && expected.includes(key))
   );
 }
 
@@ -88,10 +89,13 @@ function canonicalHash(value) {
   return value;
 }
 
-function validatePreviousDeployment(value) {
+function validateStartingDeployment(
+  value,
+  { commit, definition, deploymentMode, sourceGitUrl }
+) {
   if (
     !isPlainObject(value) ||
-    value.status !== 'complete' ||
+    value.status !== (deploymentMode === 'partial' ? 'partial' : 'complete') ||
     value.chainId !== CHAIN_ID ||
     typeof value.generator !== 'string' ||
     value.generator.length < 1 ||
@@ -99,13 +103,22 @@ function validatePreviousDeployment(value) {
     !CID_URL_PATTERN.test(value.miscUrl) ||
     !isPlainObject(value.def) ||
     value.def.name !== 'reya-omnibus' ||
-    value.def.version !== '1.0.158' ||
+    typeof value.def.version !== 'string' ||
+    !VERSION_PATTERN.test(value.def.version) ||
     value.def.preset !== 'main' ||
     !isPlainObject(value.state) ||
     !isPlainObject(value.options) ||
     !isPlainObject(value.meta)
   ) {
-    throw new Error('preview upgrade baseline is invalid');
+    throw new Error('preview starting deployment is invalid');
+  }
+  if (
+    deploymentMode === 'partial' &&
+    (JSON.stringify(value.def) !== JSON.stringify(definition) ||
+      value.meta.gitUrl !== sourceGitUrl ||
+      value.meta.commitHash !== commit)
+  ) {
+    throw new Error('preview partial deployment provenance is invalid');
   }
   return value;
 }
@@ -119,8 +132,8 @@ function canonicalCall(
   const senderRole = isAddressEqual(transaction?.from, safeAddress)
     ? 'safe'
     : isAddressEqual(transaction?.from, deployerAddress)
-      ? 'deployer'
-      : null;
+    ? 'deployer'
+    : null;
   if (
     typeof step !== 'string' ||
     step.length < 1 ||
@@ -137,8 +150,8 @@ function canonicalCall(
     receipt.transactionHash !== hash ||
     transaction.hash !== hash ||
     !isAddressEqual(receipt.from, transaction.from) ||
-    ((receipt.to === null || receipt.to === undefined) !==
-      (transaction.to === null || transaction.to === undefined)) ||
+    (receipt.to === null || receipt.to === undefined) !==
+      (transaction.to === null || transaction.to === undefined) ||
     (receipt.to !== null &&
       receipt.to !== undefined &&
       !isAddressEqual(receipt.to, transaction.to)) ||
@@ -148,7 +161,9 @@ function canonicalCall(
     (senderRole === 'safe' &&
       (transaction.to === null || transaction.to === undefined))
   ) {
-    throw new Error('preview transaction is outside the approved signer contract');
+    throw new Error(
+      'preview transaction is outside the approved signer contract'
+    );
   }
   const to =
     transaction.to === null || transaction.to === undefined
@@ -177,7 +192,8 @@ export function createPreviewResult({
   commit,
   deployerAddress,
   deployerStartingNonce,
-  previousDeployCid,
+  partialDeployCid,
+  previousPackageCid,
   safeAddress,
 }) {
   if (
@@ -185,7 +201,8 @@ export function createPreviewResult({
     calls.length < 1 ||
     calls.length > 4_096 ||
     !COMMIT_PATTERN.test(commit) ||
-    !CID_V0_PATTERN.test(previousDeployCid) ||
+    (partialDeployCid !== null && !CID_V0_PATTERN.test(partialDeployCid)) ||
+    !CID_V0_PATTERN.test(previousPackageCid) ||
     typeof deployerStartingNonce !== 'string' ||
     !/^(?:0|[1-9][0-9]*)$/.test(deployerStartingNonce)
   ) {
@@ -219,7 +236,7 @@ export function createPreviewResult({
   );
 
   return Object.freeze({
-    schemaVersion: 2,
+    schemaVersion: 3,
     type: 'reya-cannon-read-only-preview',
     commit,
     cannon: Object.freeze({
@@ -230,7 +247,8 @@ export function createPreviewResult({
     safeAddress: safe.toLowerCase(),
     deployerAddress: deployer.toLowerCase(),
     deployerStartingNonce,
-    previousDeployCid,
+    partialDeployCid,
+    previousPackageCid,
     deployerPrerequisites: Object.freeze(deployerPrerequisites),
     safeProposalCalls: Object.freeze(safeProposalCalls),
     simulationTransactions: Object.freeze(simulationTransactions),
@@ -256,17 +274,26 @@ export async function runReadOnlyPreview(options) {
     artifactLoader,
     commit,
     definition,
-    previousDeployment,
-    previousDeployCid,
+    deploymentMode,
+    partialDeployCid,
+    previousPackageCid,
     registry,
     rpc,
     safeAddress,
+    sourceGitUrl,
+    startingDeployment,
   } = options;
   if (
     !COMMIT_PATTERN.test(commit) ||
-    !CID_V0_PATTERN.test(previousDeployCid) ||
+    !['cannonfile', 'partial'].includes(deploymentMode) ||
+    (partialDeployCid !== null && !CID_V0_PATTERN.test(partialDeployCid)) ||
+    (deploymentMode === 'partial') !== (partialDeployCid !== null) ||
+    !CID_V0_PATTERN.test(previousPackageCid) ||
     !isPlainObject(definition) ||
-    !isPlainObject(previousDeployment) ||
+    typeof sourceGitUrl !== 'string' ||
+    sourceGitUrl.length < 1 ||
+    sourceGitUrl.length > 256 ||
+    !isPlainObject(startingDeployment) ||
     registry === null ||
     typeof registry !== 'object' ||
     typeof registry.getUrl !== 'function' ||
@@ -280,7 +307,12 @@ export async function runReadOnlyPreview(options) {
   ) {
     throw new Error('preview engine options are invalid');
   }
-  validatePreviousDeployment(previousDeployment);
+  validateStartingDeployment(startingDeployment, {
+    commit,
+    definition,
+    deploymentMode,
+    sourceGitUrl,
+  });
   const safe = canonicalAddress(safeAddress, 'preview Safe address');
   const deployer = canonicalAddress(
     LOCAL_QA_DEPLOYER_ADDRESS,
@@ -358,24 +390,26 @@ export async function runReadOnlyPreview(options) {
   currentRuntime = runtime;
   runtime.on(Events.SkipDeploy, (step, error) => {
     skipped.push(
-      `${String(step)}: ${error instanceof Error ? error.message : String(error)}`
+      `${String(step)}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
     );
   });
 
-  await runtime.restoreMisc(previousDeployment.miscUrl);
+  await runtime.restoreMisc(startingDeployment.miscUrl);
   const chainDefinition = new ChainDefinition(definition);
   const context = await createInitialContext(
     chainDefinition,
-    previousDeployment.meta ?? {},
+    startingDeployment.meta ?? {},
     CHAIN_ID,
-    previousDeployment.options ?? {},
+    startingDeployment.options ?? {},
     deployer
   );
   try {
     await cannonBuild(
       runtime,
       chainDefinition,
-      structuredClone(previousDeployment.state ?? {}),
+      structuredClone(startingDeployment.state ?? {}),
       context
     );
   } catch (error) {
@@ -407,7 +441,8 @@ export async function runReadOnlyPreview(options) {
     commit,
     deployerAddress: deployer.toLowerCase(),
     deployerStartingNonce,
-    previousDeployCid,
+    partialDeployCid,
+    previousPackageCid,
     safeAddress: safe.toLowerCase(),
   });
 }

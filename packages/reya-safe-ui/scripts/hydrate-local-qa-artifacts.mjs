@@ -305,15 +305,17 @@ function inflateDeployment(bytes, cid, maximumBytes) {
     }
     if (chunk.byteLength > maximumBytes - decodedBytes) {
       exceededLimit = true;
-      throw new Error(
-        `deployment artifact ${cid} exceeds the JSON byte limit`
-      );
+      throw new Error(`deployment artifact ${cid} exceeds the JSON byte limit`);
     }
     decodedBytes += chunk.byteLength;
     chunks.push(chunk);
   };
   try {
-    for (let offset = 0; offset < bytes.byteLength; offset += INFLATE_CHUNK_BYTES) {
+    for (
+      let offset = 0;
+      offset < bytes.byteLength;
+      offset += INFLATE_CHUNK_BYTES
+    ) {
       const end = Math.min(offset + INFLATE_CHUNK_BYTES, bytes.byteLength);
       inflate.push(bytes.subarray(offset, end), end === bytes.byteLength);
       if (inflate.err) break;
@@ -413,6 +415,7 @@ export async function collectArtifactClosure({
   baselineCid,
   blueprintCids,
   decodeDeployment,
+  partialDeployCids = [],
   readArtifact,
 }) {
   const roles = new Map();
@@ -442,6 +445,7 @@ export async function collectArtifactClosure({
 
   enqueue(baselineCid, 'baseline-deploy');
   for (const cid of blueprintCids) enqueue(cid, 'blueprint-deploy');
+  for (const cid of partialDeployCids) enqueue(cid, 'partial-deploy');
 
   while (pending.length > 0) {
     const { cid, role } = pending.shift();
@@ -474,10 +478,13 @@ export async function collectArtifactClosure({
       loaded.set(cid, bytes);
       lengths.set(cid, bytes.byteLength);
     }
+    const isImportedDeployment =
+      role === 'baseline-import-deploy' || role === 'partial-import-deploy';
     if (
       role !== 'baseline-deploy' &&
-      role !== 'baseline-import-deploy' &&
-      role !== 'blueprint-deploy'
+      !isImportedDeployment &&
+      role !== 'blueprint-deploy' &&
+      role !== 'partial-deploy'
     ) {
       continue;
     }
@@ -485,39 +492,42 @@ export async function collectArtifactClosure({
     const allowedChainIds =
       role === 'blueprint-deploy'
         ? [13370]
-        : role === 'baseline-deploy'
-          ? [1729]
-          : [1729, 13370];
+        : role === 'baseline-deploy' || role === 'partial-deploy'
+        ? [1729]
+        : [1729, 13370];
+    const expectedStatus = role === 'partial-deploy' ? 'partial' : 'complete';
     if (
       deployment === null ||
       typeof deployment !== 'object' ||
       Array.isArray(deployment) ||
       !allowedChainIds.includes(deployment.chainId) ||
-      deployment.status !== 'complete'
+      deployment.status !== expectedStatus
     ) {
       throw new Error(
-        `${role} ${cid} is not a complete allowed-chain deployment`
+        `${role} ${cid} is not an allowed-chain ${expectedStatus} deployment`
       );
     }
-    if (role === 'baseline-import-deploy') {
+    if (isImportedDeployment) {
       roles.get(cid).delete(role);
-      roles
-        .get(cid)
-        .add(`baseline-import-deploy-${deployment.chainId}`);
+      roles.get(cid).add(`${role}-${deployment.chainId}`);
     }
-    const miscCid = cidFromUrl(
-      deployment.miscUrl,
-      `deployment ${cid} miscUrl`
-    );
+    const miscCid = cidFromUrl(deployment.miscUrl, `deployment ${cid} miscUrl`);
     enqueue(miscCid, 'deployment-misc');
 
     if (
       role === 'baseline-deploy' ||
-      role === 'baseline-import-deploy'
+      role === 'baseline-import-deploy' ||
+      role === 'partial-deploy' ||
+      role === 'partial-import-deploy'
     ) {
       for (const importCid of discoverBaselineImportCids(deployment.state)) {
         if (importCid !== miscCid) {
-          enqueue(importCid, 'baseline-import-deploy');
+          enqueue(
+            importCid,
+            role.startsWith('partial-')
+              ? 'partial-import-deploy'
+              : 'baseline-import-deploy'
+          );
         }
       }
     }
@@ -595,6 +605,9 @@ export async function hydrateLocalQaArtifacts({
     baselineCid: validated.baseline.deployCid,
     blueprintCids: validated.resolutions.map(({ deployCid }) => deployCid),
     decodeDeployment: (bytes, cid) => parseDeploymentArtifact(bytes, cid),
+    partialDeployCids: validated.partialDeployments.map(
+      ({ deployCid }) => deployCid
+    ),
     readArtifact: (cid, { maximumBytes }) =>
       hydrateArtifact({
         cacheDir: output,

@@ -1,11 +1,5 @@
 import assert from 'node:assert/strict';
-import {
-  mkdtemp,
-  readFile,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises';
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -30,6 +24,8 @@ const CIDS = Object.freeze({
   importBMisc: 'QmdC14m9ysVQNyztkYStXkbXHumqkWaBTBi5BVvG54JN8w',
   nestedImport: 'QmWATRTVayY5YceSHtUDRDVBLEHr5ZXry26vBCcYozYLrc',
   nestedMisc: 'QmXauq3nfZigz93X8YVZsVfVv7e9AQkV8jpwqKEg9vuuo3',
+  partial: 'QmRBigSTWzxDodgwMDHaXoaDJ3b1DoV7nwKPdFECMwGYZi',
+  partialMisc: 'QmeSt2mnJKE8qmRhLyYbHQQxDKpsFbcWnw5e7JF4xVbN6k',
 });
 
 async function uniqueCids(count) {
@@ -57,7 +53,10 @@ test('accepts only explicit credential-free artifact origins', () => {
     'https://repo.usecannon.com/api',
     'https://repo.usecannon.com?token=secret',
   ]) {
-    assert.throws(() => validateArtifactOrigin(value), /artifact origin|origin is required/);
+    assert.throws(
+      () => validateArtifactOrigin(value),
+      /artifact origin|origin is required/
+    );
   }
 });
 
@@ -86,7 +85,10 @@ test('hydrates raw bytes at cacheDir/CID and verifies downloaded and cached data
     }),
     bytes
   );
-  assert.deepEqual(new Uint8Array(await readFile(path.join(temporary, cid))), bytes);
+  assert.deepEqual(
+    new Uint8Array(await readFile(path.join(temporary, cid))),
+    bytes
+  );
   assert.equal(requests, 1);
 
   await hydrateArtifact({
@@ -265,7 +267,9 @@ test('recursively hydrates prior baseline imports and every deployment miscUrl',
         miscUrl: `ipfs://${CIDS.baselineMisc}`,
         status: 'complete',
         state: {
-          first: { artifacts: { imports: { a: { url: `ipfs://${CIDS.importA}` } } } },
+          first: {
+            artifacts: { imports: { a: { url: `ipfs://${CIDS.importA}` } } },
+          },
           second: [{ url: `ipfs://${CIDS.importB}` }],
         },
       },
@@ -308,11 +312,23 @@ test('recursively hydrates prior baseline imports and every deployment miscUrl',
         state: {},
       },
     ],
+    [
+      CIDS.partial,
+      {
+        chainId: 1729,
+        miscUrl: `ipfs://${CIDS.partialMisc}`,
+        status: 'partial',
+        state: {
+          inherited: { url: `ipfs://${CIDS.importA}` },
+        },
+      },
+    ],
   ]);
   const reads = [];
   const artifacts = await collectArtifactClosure({
     baselineCid: CIDS.baseline,
     blueprintCids: [CIDS.blueprint],
+    partialDeployCids: [CIDS.partial],
     decodeDeployment(_bytes, cid) {
       const deployment = deployments.get(cid);
       assert.ok(deployment, `unexpected deployment decode for ${cid}`);
@@ -333,16 +349,17 @@ test('recursively hydrates prior baseline imports and every deployment miscUrl',
   assert.equal(reads.includes(CIDS.nestedImport), true);
   assert.deepEqual(
     artifacts.find(({ cid }) => cid === CIDS.nestedImport).roles,
-    ['baseline-import-deploy-1729']
+    ['baseline-import-deploy-1729', 'partial-import-deploy-1729']
   );
-  assert.deepEqual(
-    artifacts.find(({ cid }) => cid === CIDS.importB).roles,
-    ['baseline-import-deploy-13370']
-  );
-  assert.deepEqual(
-    artifacts.find(({ cid }) => cid === CIDS.nestedMisc).roles,
-    ['deployment-misc']
-  );
+  assert.deepEqual(artifacts.find(({ cid }) => cid === CIDS.importB).roles, [
+    'baseline-import-deploy-13370',
+  ]);
+  assert.deepEqual(artifacts.find(({ cid }) => cid === CIDS.nestedMisc).roles, [
+    'deployment-misc',
+  ]);
+  assert.deepEqual(artifacts.find(({ cid }) => cid === CIDS.partial).roles, [
+    'partial-deploy',
+  ]);
 });
 
 test('baseline import discovery rejects cycles and has deterministic ordering', () => {
@@ -387,8 +404,49 @@ test('rejects a prior baseline import from the wrong chain', async () => {
           return new Uint8Array([1]);
         },
       }),
-    /baseline-import-deploy .* is not a complete allowed-chain deployment/
+    /baseline-import-deploy .* is not an allowed-chain complete deployment/
   );
+});
+
+test('rejects a partial root that is complete or has the wrong chain', async () => {
+  for (const deployment of [
+    {
+      chainId: 1729,
+      miscUrl: `ipfs://${CIDS.partialMisc}`,
+      state: {},
+      status: 'complete',
+    },
+    {
+      chainId: 13370,
+      miscUrl: `ipfs://${CIDS.partialMisc}`,
+      state: {},
+      status: 'partial',
+    },
+  ]) {
+    await assert.rejects(
+      () =>
+        collectArtifactClosure({
+          baselineCid: CIDS.baseline,
+          blueprintCids: [],
+          decodeDeployment(_bytes, cid) {
+            if (cid === CIDS.baseline) {
+              return {
+                chainId: 1729,
+                miscUrl: `ipfs://${CIDS.baselineMisc}`,
+                state: {},
+                status: 'complete',
+              };
+            }
+            return deployment;
+          },
+          partialDeployCids: [CIDS.partial],
+          async readArtifact() {
+            return new Uint8Array([1]);
+          },
+        }),
+      /partial-deploy .* is not an allowed-chain partial deployment/
+    );
+  }
 });
 
 test('rejects more than 512 unique artifacts before reading the excess artifact', async () => {
@@ -441,6 +499,9 @@ test('rejects a closure over 512 MiB and passes a shrinking pre-write budget', a
       }),
     /aggregate byte limit/
   );
-  assert.deepEqual(observedBudgets.slice(0, 10), Array(10).fill(bytes.byteLength));
+  assert.deepEqual(
+    observedBudgets.slice(0, 10),
+    Array(10).fill(bytes.byteLength)
+  );
   assert.equal(observedBudgets[10], 12 * 1024 * 1024);
 });

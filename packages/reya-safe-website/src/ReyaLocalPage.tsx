@@ -10,6 +10,7 @@ import { prepareReyaSafeTransaction } from '@reya/cannon-safe-ui/safe-review';
 import { createReyaLocalClients } from './clients';
 import {
   immutableCannonfileUrl,
+  normalizeArtifactCid,
   ResolvedArtifactInput,
   ResolvedDeploymentSource,
   resolveArtifactInput,
@@ -53,9 +54,10 @@ function displayError(error: unknown): string {
 export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
   const clients = useMemo(() => createReyaLocalClients(config), [config]);
   const [safeState, setSafeState] = useState<SafeState | null>(null);
-  const [sourceDigest, setSourceDigest] = useState<string | null>(null);
   const [preview, setPreview] = useState<ReyaPreview | null>(null);
   const [deploymentSourceInput, setDeploymentSourceInput] = useState('');
+  const [comparisonCannonfileInput, setComparisonCannonfileInput] =
+    useState('');
   const [previousPackageInput, setPreviousPackageInput] = useState(
     'reya-omnibus:latest@main'
   );
@@ -77,7 +79,6 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
       clients.read.source.bundle({ commit: config.sourceCommit }),
       readReyaSafeState(clients.read.rpc, config.safeAddress),
     ]);
-    setSourceDigest(source.bundleSha256);
     setSafeState(state);
     setStatus('Source, Reya RPC and Safe reads are ready.');
     return { source, state };
@@ -127,14 +128,15 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
   const previewTransactions = async () => {
     const revision = formRevision.current;
     const deploymentInput = deploymentSourceInput.trim();
+    const comparisonCannonfileUrl = comparisonCannonfileInput.trim();
     const previousInput = previousPackageInput.trim();
     setBusy(true);
     resetPreview();
     try {
-      if (!sourceDigest) throw new Error('SOURCE_NOT_READY');
       const [deployment, previous] = await Promise.all([
         resolveDeploymentSourceInput({
           artifacts: clients.read.artifacts,
+          comparisonCannonfileUrl,
           expectedCommit: config.sourceCommit,
           input: deploymentInput,
         }),
@@ -145,23 +147,21 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
           requireComplete: true,
         }),
       ]);
-      if (
-        deployment.inputKind !== 'cannonfile' ||
-        deployment.cannonfileUrl === null
-      ) {
-        throw new Error('AUTOMATIC_PREVIEW_REQUIRES_CANNONFILE');
-      }
+      const source = await clients.read.source.bundle({
+        commit: deployment.sourceCommit,
+      });
       const generated = await clients.preview.generate({
-        previousDeployCid: previous.cid,
+        commit: deployment.sourceCommit,
+        partialDeployCid: deployment.cid,
+        previousPackageCid: previous.cid,
       });
       const parsed = parseReyaPreview(generated, {
-        commit: config.sourceCommit,
-        previousDeployCid: previous.cid,
+        commit: deployment.sourceCommit,
+        partialDeployCid: deployment.cid,
+        previousPackageCid: previous.cid,
         safeAddress: config.safeAddress,
+        sourceBundleSha256: source.bundleSha256,
       });
-      if (parsed.sourceBundleSha256 !== sourceDigest) {
-        throw new Error('SOURCE_DIGEST_MISMATCH');
-      }
       if (revision !== formRevision.current) {
         throw new Error('PREVIEW_INPUT_CHANGED');
       }
@@ -241,7 +241,7 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
           <div className="space-y-6">
             <label className="block">
               <span className="mb-2 block text-sm font-medium">
-                Enter Cannonfile URL
+                Enter Cannonfile URL or partial deployment CID
               </span>
               <span className="relative block">
                 <input
@@ -269,15 +269,40 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
                 <span className="mt-2 block break-all text-xs text-slate-400">
                   {resolvedDeployment.inputKind === 'cannonfile'
                     ? `Pinned source · ${resolvedDeployment.cannonfileUrl}`
-                    : `${resolvedDeployment.descriptor.packageRef} · ${resolvedDeployment.cid}`}
+                    : `Partial ${resolvedDeployment.descriptor.packageRef} · ${resolvedDeployment.cid}`}
                 </span>
               )}
               <span className="mt-2 block text-xs text-slate-500">
-                The local review runner builds this pinned Cannonfile
-                automatically. Deployment-CID queueing will be added with the
-                production preview service.
+                A Cannonfile starts from the previous complete package. A
+                partial deployment CID resumes the exact state produced by the
+                EOA deployment and authenticates its pinned source commit.
               </span>
             </label>
+
+            {normalizeArtifactCid(deploymentSourceInput.trim()) !== null && (
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium">
+                  Cannonfile (Optional)
+                </span>
+                <input
+                  aria-label="Comparison Cannonfile"
+                  className="block w-full rounded-lg border border-slate-700 bg-[#090b0f] px-4 py-3 text-sm outline-none focus:border-slate-400"
+                  disabled={busy}
+                  onChange={(event) => {
+                    setComparisonCannonfileInput(event.target.value);
+                    invalidatePreview();
+                  }}
+                  placeholder="Pinned Reya deployments Cannonfile URL"
+                  spellCheck={false}
+                  value={comparisonCannonfileInput}
+                />
+                <span className="mt-2 block text-xs text-slate-500">
+                  Optional review aid. If supplied, it must exactly match the
+                  source repository and commit embedded in the partial
+                  deployment artifact.
+                </span>
+              </label>
+            )}
 
             <label className="block">
               <span className="mb-2 block text-sm font-medium">
@@ -353,7 +378,7 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
               <dl className="grid gap-3 rounded-lg border border-slate-800 bg-[#090b0f] p-4 text-xs md:grid-cols-2">
                 <div>
                   <dt className="text-slate-500">Source commit</dt>
-                  <dd className="break-all">{config.sourceCommit}</dd>
+                  <dd className="break-all">{preview.commit}</dd>
                 </div>
                 <div>
                   <dt className="text-slate-500">Previous package</dt>
@@ -362,9 +387,15 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-slate-500">Previous CID</dt>
-                  <dd className="break-all">{preview.previousDeployCid}</dd>
+                  <dt className="text-slate-500">Previous package CID</dt>
+                  <dd className="break-all">{preview.previousPackageCid}</dd>
                 </div>
+                {preview.partialDeployCid && (
+                  <div>
+                    <dt className="text-slate-500">Partial deployment CID</dt>
+                    <dd className="break-all">{preview.partialDeployCid}</dd>
+                  </div>
+                )}
                 <div>
                   <dt className="text-slate-500">Chain · Safe · nonce</dt>
                   <dd className="break-all">
@@ -486,10 +517,11 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
               <h2 className="mb-2 text-lg font-medium">3. Sign and stage</h2>
               <p className="mb-4 text-sm text-amber-200">
                 Disabled in this slice. The local preview runner recomputes the
-                calls from the pinned Cannonfile and previous CID, but it uses
-                current RPC state and is not a production authorization service.
-                Production signing requires the reviewed preview worker and an
-                authenticated source, CID, Safe and nonce binding.
+                calls from the authenticated Cannonfile or partial deployment
+                CID and previous package CID, but it uses current RPC state and
+                is not a production authorization service. Production signing
+                requires the reviewed preview worker and an authenticated
+                source, CID, Safe and nonce binding.
               </p>
               <Button disabled type="button">
                 Sign and stage unavailable

@@ -119,12 +119,17 @@ export function createReyaLocalClients(config: ReyaLocalProfileConfig) {
   });
   return Object.freeze({
     preview: Object.freeze({
-      async generate(input: { previousDeployCid: string }): Promise<string> {
+      async generate(input: {
+        commit: string;
+        partialDeployCid: string | null;
+        previousPackageCid: string;
+      }): Promise<string> {
         const response = await fetchImpl(`${VIRTUAL_SERVICE_ORIGIN}${PREVIEW_PATH}`, {
           body: JSON.stringify({
             chainId: 1729,
-            commit: config.sourceCommit,
-            previousDeployCid: input.previousDeployCid,
+            commit: input.commit,
+            partialDeployCid: input.partialDeployCid,
+            previousPackageCid: input.previousPackageCid,
             safeAddress: config.safeAddress,
           }),
           headers: {

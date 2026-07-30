@@ -236,16 +236,21 @@ function reject(response, status, code) {
   response.end(body);
 }
 
-function routeAllows(config, pathname, method) {
+function routeAllows(config, pathname, method, previewRunner) {
   if (pathname === '/rpc/1729') return method === 'POST';
   if (pathname === PREVIEW_PATH) return method === 'POST';
   if (pathname === OP_REGISTRY_PATH) return method === 'POST';
   if (pathname === ARTIFACT_PATH) return method === 'POST';
   const source = SOURCE_PATTERN.exec(pathname);
-  return source?.[1] === config.sourceCommit && method === 'GET';
+  return (
+    method === 'GET' &&
+    source !== null &&
+    (source[1] === config.sourceCommit ||
+      previewRunner?.allowsSourceCommit(source[1]) === true)
+  );
 }
 
-function validatePreflight(request, config, url) {
+function validatePreflight(request, config, url, previewRunner) {
   const requestedMethod = request.headers['access-control-request-method'];
   const requestedHeaders = String(
     request.headers['access-control-request-headers'] ?? ''
@@ -256,7 +261,7 @@ function validatePreflight(request, config, url) {
   if (
     url.search !== '' ||
     typeof requestedMethod !== 'string' ||
-    !routeAllows(config, url.pathname, requestedMethod) ||
+    !routeAllows(config, url.pathname, requestedMethod, previewRunner) ||
     requestedHeaders.some((header) => header !== 'content-type')
   ) {
     throw Object.assign(new Error('preflight rejected'), { status: 404 });
@@ -382,7 +387,8 @@ export async function createLocalIngress(
     previewRunner !== null &&
     (typeof previewRunner !== 'object' ||
       typeof previewRunner.run !== 'function' ||
-      typeof previewRunner.close !== 'function')
+      typeof previewRunner.close !== 'function' ||
+      typeof previewRunner.allowsSourceCommit !== 'function')
   ) {
     throw new Error('local ingress preview runner is invalid');
   }
@@ -420,7 +426,7 @@ export async function createLocalIngress(
       }
       const url = new URL(request.url ?? '/', defaultLoopbackOrigin(80));
       if (request.method === 'OPTIONS') {
-        validatePreflight(request, config, url);
+        validatePreflight(request, config, url, previewRunner);
         response.writeHead(204).end();
         return;
       }
@@ -565,7 +571,8 @@ export async function createLocalIngress(
       const source = SOURCE_PATTERN.exec(url.pathname);
       if (
         source &&
-        source[1] === config.sourceCommit &&
+        (source[1] === config.sourceCommit ||
+          previewRunner?.allowsSourceCommit(source[1]) === true) &&
         url.search === '' &&
         request.method === 'GET'
       ) {

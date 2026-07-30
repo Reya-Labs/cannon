@@ -2,12 +2,13 @@
 
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
 } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReyaLocalPage } from './ReyaLocalPage';
 
 const COMMIT = '0123456789abcdef0123456789abcdef01234567';
@@ -60,6 +61,8 @@ vi.mock('./safe-state', () => ({
 
 vi.mock('./deployment-input', () => ({
   immutableCannonfileUrl: () => CANNONFILE,
+  normalizeArtifactCid: (value: string) =>
+    value === CID || value === `ipfs://${CID}` ? CID : null,
   resolveArtifactInput: mocks.loadPrevious,
   resolveDeploymentSourceInput: mocks.loadDeployment,
 }));
@@ -80,14 +83,18 @@ vi.mock('./preview', () => ({
   parseReyaPreview: mocks.parsePreview,
 }));
 
+afterEach(cleanup);
+
 describe('Reya Queue Deployment page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.loadPrevious.mockResolvedValue({
       cid: CID,
       descriptor: {
+        cannonfileUrl: null,
         cid: CID,
         packageRef: 'reya-omnibus:1.2.3@main',
+        sourceCommit: null,
         status: 'complete',
         version: '1.2.3',
       },
@@ -97,7 +104,8 @@ describe('Reya Queue Deployment page', () => {
     mocks.parsePreview.mockReturnValue({
       commit: COMMIT,
       deployerPrerequisiteCount: 0,
-      previousDeployCid: CID,
+      partialDeployCid: null,
+      previousPackageCid: CID,
       safeAddress: SAFE,
       safeProposalCalls: [
         {
@@ -159,6 +167,7 @@ describe('Reya Queue Deployment page', () => {
         cid: null,
         descriptor: null,
         inputKind: 'cannonfile',
+        sourceCommit: COMMIT,
       });
     });
 
@@ -166,7 +175,9 @@ describe('Reya Queue Deployment page', () => {
       '1 ordered Safe call(s) · 0 deployer prerequisite(s)'
     );
     expect(mocks.generatePreview).toHaveBeenCalledWith({
-      previousDeployCid: CID,
+      commit: COMMIT,
+      partialDeployCid: null,
+      previousPackageCid: CID,
     });
     expect(screen.queryByLabelText('Cannon preview evidence')).toBeNull();
     expect(
@@ -187,5 +198,76 @@ describe('Reya Queue Deployment page', () => {
     expect(
       screen.getByText('Inputs changed. Generate a new preview before review.')
     ).toBeTruthy();
+  });
+
+  it('resumes a partial deployment CID and checks an optional pinned Cannonfile', async () => {
+    mocks.loadDeployment.mockResolvedValue({
+      cannonfileUrl: null,
+      cid: CID,
+      descriptor: {
+        cannonfileUrl: CANNONFILE,
+        cid: CID,
+        packageRef: 'reya-omnibus:1.2.4@main',
+        sourceCommit: COMMIT,
+        status: 'partial',
+        version: '1.2.4',
+      },
+      inputKind: 'cid',
+      sourceCommit: COMMIT,
+    });
+    mocks.parsePreview.mockReturnValue({
+      commit: COMMIT,
+      deployerPrerequisiteCount: 0,
+      partialDeployCid: CID,
+      previousPackageCid: CID,
+      safeAddress: SAFE,
+      safeProposalCalls: [
+        {
+          data: '0x1234',
+          from: SAFE,
+          gasUsed: '42',
+          senderRole: 'safe',
+          sequence: 0,
+          step: 'Review one call',
+          to: '0x3333333333333333333333333333333333333333',
+          transactionHash: `0x${'c'.repeat(64)}`,
+          value: '0',
+        },
+      ],
+      sourceBundleSha256: 'a'.repeat(64),
+    });
+
+    render(
+      <ReyaLocalPage
+        config={{
+          chainId: 1729,
+          ingressOrigin: 'http://127.0.0.1:8787',
+          safeAddress: SAFE,
+          sourceCommit: COMMIT,
+        }}
+      />
+    );
+    await screen.findByText('Source, Reya RPC and Safe reads are ready.');
+    fireEvent.change(screen.getByLabelText('Deployment data'), {
+      target: { value: `ipfs://${CID}` },
+    });
+    const comparison = screen.getByLabelText('Comparison Cannonfile');
+    fireEvent.change(comparison, { target: { value: CANNONFILE } });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Preview Transactions to Queue' })
+    );
+
+    await screen.findByText('Partial deployment CID');
+    expect(mocks.loadDeployment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        comparisonCannonfileUrl: CANNONFILE,
+        input: `ipfs://${CID}`,
+      })
+    );
+    expect(mocks.generatePreview).toHaveBeenCalledWith({
+      commit: COMMIT,
+      partialDeployCid: CID,
+      previousPackageCid: CID,
+    });
   });
 });
