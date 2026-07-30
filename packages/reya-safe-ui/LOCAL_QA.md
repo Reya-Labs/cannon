@@ -1,9 +1,10 @@
 # Reya Cannon browser QA
 
 This local profile connects Cannon's existing website presentation layer to the
-reviewed Reya read clients. It reads current Reya mainnet state, but the browser
-and loopback ingress expose no signing, staging, execution or transaction
-broadcast method.
+reviewed Reya clients. Its default profile is review-only. An explicit local
+canary can additionally connect a current Safe owner, sign the exact displayed
+Safe EIP-712 payload and persist the proposal in a loopback staging backend.
+Neither profile exposes execution or transaction broadcast.
 
 Use the repository-pinned Node `22.23.1` and pnpm `10.11.0`. Keep the RPC URL
 and proxy secret in a secret-safe shell environment; do not put either value in
@@ -30,6 +31,13 @@ Optional overrides:
 export REYA_CANNON_OP_RPC_URL=<secret-op-mainnet-rpc-url>
 # Defaults to this loopback origin.
 export REYA_LOCAL_ARTIFACT_ORIGIN=http://127.0.0.1:8083
+```
+
+Keep proposal staging disabled unless the local staging canary is the intended
+test:
+
+```sh
+export REYA_LOCAL_STAGING=disabled
 ```
 
 Build the standalone source gateway once, then run it on another terminal:
@@ -69,7 +77,7 @@ deployment, the runner loads the exact source commit authenticated by the
 artifact, verifies its pinned bundle digest, checks that the assembled
 Cannonfile definition exactly equals the artifact definition, and resumes from
 the partial state. It controls no path, RPC URL, signer or package resolution.
-Staging routes are absent.
+The staging route is absent unless the local canary is explicitly enabled.
 `REYA_CANNON_OP_RPC_URL` is optional at process startup; when absent, package
 aliases fail closed while exact CID reads continue to work:
 
@@ -103,18 +111,80 @@ uploaded.
 
 This interactive path deliberately uses current RPC state so it works with a
 latest-only Reya endpoint. It is useful for operator review but is not
-reproducible evidence: signing and staging remain disabled. The separate
-`preview:local` CLI continues to require an exact readable finalized block and
-remains the fail-closed reproducibility check. Production signing requires the
-reviewed preview service to bind authenticated evidence to the source, selected
-deployment CID, Safe and nonce.
+reproducible evidence. The separate `preview:local` CLI continues to require an
+exact readable finalized block and remains the fail-closed reproducibility
+check. Production signing still requires the deployed preview service to bind
+authenticated evidence to the source, selected deployment CID, Safe and nonce.
 
-Connecting a wallet is optional and read-only: it verifies that the selected
-account is a current owner of the configured Safe. No typed-data signature,
-staging write, publication, execution or transaction broadcast is available
-from this UI.
+The review-only profile can connect a wallet only to verify that the selected
+account is a current owner of the configured Safe. It exposes no typed-data
+signature or staging write. The generated review JSON is an unsigned,
+shareable evidence packet; it contains no wallet address or signature, and
+importing it can never authorize signing or staging.
 
-The Safe staging backend and Valkey can be tested separately, but this
-review-only browser slice does not connect to them. Reintroduce a staging route
-only with the trusted preview worker and its independently reviewed
-authorization binding.
+## Explicit local proposal-staging canary
+
+Use a test Safe first. Enabling this profile permits the selected Safe owner to
+create a real EIP-712 signature and writes that signed proposal to the
+disposable local backend. It does not publish a Cannon package, execute a Safe
+transaction, or broadcast anything to Reya.
+
+Start a disposable loopback Valkey-compatible Redis and the staging backend.
+Use a fresh proxy secret shared only with the source gateway, backend and local
+ingress. Keep the RPC URL and secret in environment injection rather than
+command arguments or committed files:
+
+```sh
+redis-server \
+  --bind 127.0.0.1 \
+  --port 16379 \
+  --protected-mode yes \
+  --save "" \
+  --appendonly no
+
+ADMISSION_MODE=safe-owner \
+REDIS_URL=redis://127.0.0.1:16379 \
+REDIS_MIN_REPLICAS=0 \
+RPC_URLS="1729=${REYA_CANNON_QA_RPC_URL}" \
+SAFE_ALLOWLIST="1729:${REYA_LOCAL_SAFE_ADDRESS}" \
+CORS_ORIGINS="${REYA_LOCAL_UI_ORIGIN}" \
+AUTH_PROXY_SECRET="${REYA_LOCAL_AUTH_PROXY_SECRET}" \
+TRUST_PROXY=false \
+PORT=18084 \
+pnpm --filter backend start
+```
+
+Then opt both the constrained website build and the ingress into the one exact
+loopback staging origin:
+
+```sh
+export REYA_LOCAL_STAGING=enabled
+export REYA_LOCAL_STAGING_ORIGIN=http://127.0.0.1:18084
+
+pnpm --filter @reya/cannon-safe-ui local:ingress
+pnpm --filter @reya/cannon-safe-website build
+pnpm --filter @reya/cannon-safe-website scan
+pnpm --filter @reya/cannon-safe-website serve
+```
+
+Before the wallet opens, the page recomputes the full preview and current Safe
+state. Any difference in source, package CIDs, ordered calls, Safe address,
+nonce or `safeTxHash` replaces the displayed preview and requires a fresh
+review acknowledgement. The signer permits only `eth_signTypedData_v4` for the
+exact displayed payload. The staging client submits once and never
+automatically retries an ambiguous mutation.
+
+The ingress permits only `GET` and `POST` on the configured
+`/staging/1729/<safe>` route. It supplies the local identity and proposer role
+server-side and rejects alternate Safes, supersession and browser-supplied
+identity headers. Disable the canary again after QA:
+
+```sh
+export REYA_LOCAL_STAGING=disabled
+unset REYA_LOCAL_STAGING_ORIGIN
+```
+
+This is local proposal-staging evidence, not production activation approval.
+Production still requires the reviewed workload identities, exact-origin
+access path, durable Valkey, source/artifact services, recovery rehearsal and a
+separate activation decision.

@@ -8,6 +8,7 @@ const SOURCE_PATTERN =
 const OP_REGISTRY_PATH = '/registry/op/resolve';
 const ARTIFACT_PATH = '/artifacts/api/v0/cat';
 const PREVIEW_PATH = '/preview/1729';
+const STAGING_PREFIX = '/staging';
 const ADDRESS_PATTERN = /^0x[0-9a-f]{40}$/;
 const CID_PATTERN = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
 const MAX_REQUEST_BYTES = 1024 * 1024;
@@ -135,6 +136,28 @@ export function loadLocalIngressConfig(env = process.env) {
   ) {
     throw new Error('REYA_LOCAL_INGRESS_PORT must be 8787');
   }
+  const stagingMode = env.REYA_LOCAL_STAGING?.trim() || 'disabled';
+  if (stagingMode !== 'disabled' && stagingMode !== 'enabled') {
+    throw new Error(
+      'REYA_LOCAL_STAGING must be exactly "disabled" or "enabled"'
+    );
+  }
+  let stagingOrigin = null;
+  if (stagingMode === 'enabled') {
+    stagingOrigin = canonicalLoopbackOrigin(
+      required(env, 'REYA_LOCAL_STAGING_ORIGIN'),
+      'REYA_LOCAL_STAGING_ORIGIN'
+    );
+    if (stagingOrigin !== defaultLoopbackOrigin(18084)) {
+      throw new Error(
+        `REYA_LOCAL_STAGING_ORIGIN must be ${defaultLoopbackOrigin(18084)}`
+      );
+    }
+  } else if (env.REYA_LOCAL_STAGING_ORIGIN !== undefined) {
+    throw new Error(
+      'REYA_LOCAL_STAGING_ORIGIN requires REYA_LOCAL_STAGING=enabled'
+    );
+  }
 
   return Object.freeze({
     artifactOrigin: canonicalLoopbackOrigin(
@@ -155,6 +178,7 @@ export function loadLocalIngressConfig(env = process.env) {
       env.REYA_LOCAL_SOURCE_ORIGIN ?? defaultLoopbackOrigin(8082),
       'REYA_LOCAL_SOURCE_ORIGIN'
     ),
+    stagingOrigin,
     uiOrigin: canonicalLoopbackOrigin(
       required(env, 'REYA_LOCAL_UI_ORIGIN'),
       'REYA_LOCAL_UI_ORIGIN'
@@ -241,6 +265,12 @@ function routeAllows(config, pathname, method, previewRunner) {
   if (pathname === PREVIEW_PATH) return method === 'POST';
   if (pathname === OP_REGISTRY_PATH) return method === 'POST';
   if (pathname === ARTIFACT_PATH) return method === 'POST';
+  if (
+    typeof config.stagingOrigin === 'string' &&
+    pathname === `${STAGING_PREFIX}/1729/${config.safeAddress}`
+  ) {
+    return method === 'GET' || method === 'POST';
+  }
   const source = SOURCE_PATTERN.exec(pathname);
   return (
     method === 'GET' &&
@@ -376,6 +406,42 @@ async function readSource(config, path, fetchImpl) {
   });
 }
 
+async function stagingRequest(config, request, fetchImpl) {
+  const post = request.method === 'POST';
+  if (!post) rejectRequestBody(request);
+  if (post) requireJsonRequest(request);
+  const body = post ? await readRequest(request, MAX_REQUEST_BYTES) : undefined;
+  const upstream = await fetchImpl(
+    `${config.stagingOrigin}/1729/${config.safeAddress}`,
+    {
+      body,
+      headers: {
+        accept: 'application/json',
+        ...(post ? { 'content-type': 'application/json' } : {}),
+        origin: config.uiOrigin,
+        'x-reya-proxy-secret': config.proxySecret,
+        'x-reya-roles': 'proposer',
+        'x-reya-user': config.identity,
+      },
+      method: request.method,
+      redirect: 'error',
+      signal: AbortSignal.timeout(15_000),
+    }
+  );
+  if (
+    upstream.redirected ||
+    upstream.headers.get('content-type')?.split(';', 1)[0].trim() !==
+      'application/json'
+  ) {
+    await upstream.body?.cancel();
+    throw new Error('staging upstream response is invalid');
+  }
+  return Object.freeze({
+    body: await boundedResponse(upstream, 1200 * 1024),
+    status: upstream.status,
+  });
+}
+
 export async function createLocalIngress(
   config,
   { fetchImpl = globalThis.fetch, previewRunner = null } = {}
@@ -470,6 +536,21 @@ export async function createLocalIngress(
           'content-type': 'application/json',
         });
         response.end(body);
+        return;
+      }
+
+      if (
+        typeof config.stagingOrigin === 'string' &&
+        url.pathname === `${STAGING_PREFIX}/1729/${config.safeAddress}` &&
+        (request.method === 'GET' || request.method === 'POST') &&
+        url.search === ''
+      ) {
+        const proxied = await stagingRequest(config, request, fetchImpl);
+        response.writeHead(proxied.status, {
+          'content-length': String(proxied.body.byteLength),
+          'content-type': 'application/json',
+        });
+        response.end(proxied.body);
         return;
       }
 

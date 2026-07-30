@@ -52,6 +52,7 @@ describe('local client transport', () => {
       ingressOrigin: INGRESS_ORIGIN,
       safeAddress,
       sourceCommit: commit,
+      stagingEnabled: false,
     });
 
     await expect(
@@ -73,6 +74,37 @@ describe('local client transport', () => {
         safeAddress,
       })
     );
+  });
+
+  it('exposes only the configured Safe staging route when activation is explicit', async () => {
+    const fetchMock = vi.fn(
+      async (..._args: Parameters<typeof fetch>) =>
+        new Response('[]', {
+          headers: {
+            'content-length': '2',
+            'content-type': 'application/json',
+          },
+          status: 200,
+        })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const safeAddress = '0x1111111111111111111111111111111111111111' as const;
+    const clients = createReyaLocalClients({
+      chainId: 1729,
+      ingressOrigin: INGRESS_ORIGIN,
+      safeAddress,
+      sourceCommit: '0123456789abcdef0123456789abcdef01234567',
+      stagingEnabled: true,
+    });
+
+    await expect(clients.activation?.staging.current()).resolves.toBeNull();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`${INGRESS_ORIGIN}/staging/1729/${safeAddress}`);
+    await expect(
+      createLoopbackFetch(INGRESS_ORIGIN, {
+        safeAddress,
+        stagingEnabled: true,
+      })(`${VIRTUAL_ORIGIN}/staging/1729/0x2222222222222222222222222222222222222222`)
+    ).rejects.toThrow('route is not allowed');
   });
 
   it.each([

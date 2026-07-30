@@ -5,6 +5,7 @@ import {
   RPC_ROUTE_PATH,
   SOURCE_ROUTE_PREFIX,
 } from '@reya/cannon-safe-ui/read-only';
+import { createReyaSafeSigningClient, createReyaStagingClient } from '@reya/cannon-safe-ui/clients';
 import { getContentCID } from '@usecannon/artifact-codec';
 import { keccak256, stringToHex } from 'viem';
 import { ReyaLocalProfileConfig } from './profile-config';
@@ -25,9 +26,22 @@ function allowedSourcePath(pathname: string): boolean {
   return COMMIT_PATTERN.test(commit);
 }
 
-function allowedVirtualUrl(url: URL): boolean {
+function stagingPath(safeAddress: `0x${string}`): string {
+  return `/staging/1729/${safeAddress}`;
+}
+
+function allowedVirtualUrl(
+  url: URL,
+  access?: Readonly<{
+    safeAddress: `0x${string}`;
+    stagingEnabled: boolean;
+  }>
+): boolean {
   if (url.origin !== VIRTUAL_SERVICE_ORIGIN || url.username !== '' || url.password !== '' || url.hash !== '') {
     return false;
+  }
+  if (access?.stagingEnabled === true && url.pathname === stagingPath(access.safeAddress)) {
+    return url.search === '';
   }
   if (url.pathname === ARTIFACT_CAT_PATH) {
     const keys = [...url.searchParams.keys()];
@@ -74,10 +88,16 @@ async function boundedResponseText(response: Response, declaredBytes: number): P
  * Creates a transport that rewrites only the declared virtual service
  * routes to the fixed local ingress. No caller-controlled host is forwarded.
  */
-export function createLoopbackFetch(ingressOrigin: string): typeof fetch {
+export function createLoopbackFetch(
+  ingressOrigin: string,
+  access?: Readonly<{
+    safeAddress: `0x${string}`;
+    stagingEnabled: boolean;
+  }>
+): typeof fetch {
   return async (input, init) => {
     const virtual = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
-    if (!allowedVirtualUrl(virtual)) {
+    if (!allowedVirtualUrl(virtual, access)) {
       throw new Error('Reya local client route is not allowed');
     }
     const target = new URL(ingressOrigin);
@@ -106,11 +126,15 @@ export function verifyAbiSelector(signature: string, selector: string): boolean 
  *
  * Read-only RPC, pinned source, OP-registry, and artifact routes are mapped
  * from a non-routable virtual origin to the fixed loopback ingress. Artifact
- * bytes are content-address verified in the browser. The returned client set
- * exposes no wallet-signing or staging transport.
+ * bytes are content-address verified in the browser. An explicitly enabled
+ * local canary additionally receives the fixed Safe staging route and a
+ * signing-client factory; neither can select a chain, Safe, host, or route.
  */
 export function createReyaLocalClients(config: ReyaLocalProfileConfig) {
-  const fetchImpl = createLoopbackFetch(config.ingressOrigin);
+  const fetchImpl = createLoopbackFetch(config.ingressOrigin, {
+    safeAddress: config.safeAddress,
+    stagingEnabled: config.stagingEnabled,
+  });
   const read = createReyaReadOnlyClients({
     fetchImpl,
     serviceOrigin: VIRTUAL_SERVICE_ORIGIN,
@@ -118,6 +142,21 @@ export function createReyaLocalClients(config: ReyaLocalProfileConfig) {
     verifyArtifactCid: (bytes: Uint8Array) => getContentCID(bytes),
   });
   return Object.freeze({
+    activation: config.stagingEnabled
+      ? Object.freeze({
+          createSigningClient(signTypedData: (request: Readonly<Record<string, unknown>>) => Promise<string>) {
+            return createReyaSafeSigningClient({
+              safeAddress: config.safeAddress,
+              signTypedData,
+            });
+          },
+          staging: createReyaStagingClient({
+            fetchImpl,
+            safeAddress: config.safeAddress,
+            serviceOrigin: VIRTUAL_SERVICE_ORIGIN,
+          }),
+        })
+      : null,
     preview: Object.freeze({
       async generate(input: {
         commit: string;

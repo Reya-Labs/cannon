@@ -17,13 +17,11 @@ const forbidden = [
   /rpc\.reya\.network\/[0-9a-f]{16,}/i,
   /eth_sendRawTransaction/,
   /eth_sendTransaction/,
-  /eth_signTypedData/,
+  /personal_sign/,
+  /wallet_switchEthereumChain/,
   /execTransaction/,
-  /createReyaSafeSigningClient/,
-  /SIGNING_IN_PROGRESS/,
-  /WALLET_REQUEST_FAILED/,
-  /\/staging\/1729\//,
-  /submitSignature/,
+  /\/staging\/(?!1729\/)/,
+  /\/staging\/1729\/[^"'`/]{0,80}\/supersede/,
 ];
 
 const rootEntries = await readdir(root, { withFileTypes: true });
@@ -92,8 +90,11 @@ for (const expected of [
 }
 const application = await readFile(path.join(root, 'app.js'), 'utf8');
 for (const expected of [
-  'review-only profile has no signing, staging, execution or broadcast method',
-  'Sign and stage unavailable',
+  'Local canary only',
+  'Sign and stage local proposal',
+  'PREVIEW_CHANGED_REVIEW_REQUIRED',
+  'eth_signTypedData_v4',
+  'Execution and broadcast remain unavailable',
 ]) {
   if (!application.includes(expected)) {
     throw new Error(`Reya profile application is missing ${expected}`);
@@ -101,5 +102,5 @@ for (const expected of [
 }
 
 process.stdout.write(
-  `Validated Reya local profile export: ${files.length} files; no hosted Cannon, telemetry, signing, staging, broadcast or execution capability.\n`
+  `Validated Reya local profile export: ${files.length} files; fixed Safe signing and local staging only; no hosted Cannon, telemetry, broadcast or execution capability.\n`
 );

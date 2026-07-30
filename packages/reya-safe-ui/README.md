@@ -147,16 +147,19 @@ Review `deployerPrerequisites` independently before treating
 non-proposable, and any signer other than the fixed local-QA deployer and the
 approved Reya Safe fails the run.
 
-## Dormant Reya service clients
+## Dormant production clients and explicit local canary
 
 `src/clients/` contains ESM clients that remain unreachable from the disabled
 production shell built by `src/build.mjs`. The separate
 `@reya/cannon-safe-website` package imports the reviewed RPC, source, artifact,
-OP-registry and Safe-payload preparation subset only for local browser QA. It
-does not expose a browser staging route. CI runs `pnpm verify:dormant` to
-prove that the production shell remains separated and to reject hard-coded
-remote origins, hosted Cannon/public IPFS/Git/RPC fallbacks, browser
-credentials, upload routes, and `localStorage` from all UI source.
+OP-registry and Safe-payload preparation subset only for local browser QA. Its
+default profile remains review-only. A separate exact
+`REYA_LOCAL_STAGING=enabled` build may expose the fixed local staging route for
+a Safe-owner canary; it still exposes no execution or transaction-broadcast
+method. CI runs `pnpm verify:dormant` to prove that the production shell remains
+separated and to reject hard-coded remote origins, hosted Cannon/public
+IPFS/Git/RPC fallbacks, browser credentials, upload routes, and `localStorage`
+from all UI source.
 
 The client factory accepts one exact HTTPS Tailscale service origin such as
 `https://cannon-api.<tailnet>.ts.net`. It rejects credentials, ports, paths,
@@ -219,16 +222,18 @@ bind back to the submitted transaction, signature, or superseded digest.
 Backend errors expose only a status-bound allowlisted code; upstream messages
 and details are discarded.
 
-The Safe signing client is also dormant and contains no wallet discovery,
-connection, chain-switching, staging, RPC, or execution method. It prepares the
-fixed chain-`1729` Safe EIP-712 payload, recomputes the Safe transaction hash,
-and brands the resulting deeply frozen object to one client instance. Signing
-accepts only that exact prepared object and one canonical lowercase owner
-address, permits only one in-flight wallet request, normalizes only recovery
-IDs `0`/`1` to the backend's required `27`/`28`, and independently recovers the
-returned signer before exposing the signature. Wallet failures and malformed
-or wrong-owner signatures are reduced to fixed local error codes without
-provider messages.
+The Safe signing client contains no wallet discovery, connection,
+chain-switching, staging, RPC, or execution method. It remains dormant in the
+production shell and is instantiated by the local canary only after the browser
+has independently verified chain `1729` and the selected current Safe owner. It
+prepares the fixed chain-`1729` Safe EIP-712 payload, recomputes the Safe
+transaction hash, and brands the resulting deeply frozen object to one client
+instance. Signing accepts only that exact prepared object and one canonical
+lowercase owner address, permits only one in-flight wallet request, normalizes
+only recovery IDs `0`/`1` to the backend's required `27`/`28`, and
+independently recovers the returned signer before exposing the signature.
+Wallet failures and malformed or wrong-owner signatures are reduced to fixed
+local error codes without provider messages.
 
 Function and error documents use a dependency-free, bounded canonical ABI
 signature subset: explicit integer widths; standard `address`, `bool`, `bytes`,
@@ -238,18 +243,18 @@ Aliases, fixed-point types, zero or leading-zero array lengths, control
 characters, and non-canonical syntax are rejected. The query API must enforce
 the same conformance vectors before these dormant clients can be activated.
 
-These modules are not activation-ready infrastructure. The `/staging` prefix
-is the reviewed consolidated-ingress contract and must strip to the backend's
-root route. The consolidated Tailscale ingress and its `/query`, `/artifacts`,
-`/source`, `/registry/op/resolve`, and `/rpc` routes do not yet exist. The
-bounded source-gateway package implements the `/source` application contract,
-but it is not published or deployed by this change. The registry resolver
-workload must keep its OP Mainnet RPC URL server-side, probe chain `10`, and
-expose only the fixed Cannon registry `getPackageInfo` read implemented by this
-package. Activation also requires that resolver and its secret OP RPC
-configuration, the reviewed query API and read-only artifact workloads,
-exact-origin CORS, signer access testing, artifact backfill and recovery
-evidence, and a separate change that intentionally imports the clients and
-updates CSP. Activation depends on the reviewed query API contract, including
-its normalization of Redis aggregate namespace counts into bounded JSON
-numbers; these clients reject raw node-redis string/Buffer counts.
+These modules and the local canary are not activation-ready infrastructure.
+The local ingress maps the exact `/staging/1729/<safe>` route to the backend's
+root route only when explicitly enabled. The production consolidated Tailscale
+ingress and its `/query`, `/artifacts`, `/source`, `/registry/op/resolve`,
+`/rpc`, and `/staging` routes still require deployment evidence. The bounded
+source-gateway package implements the `/source` application contract, but it is
+not published or deployed by this change. The registry resolver workload must
+keep its OP Mainnet RPC URL server-side, probe chain `10`, and expose only the
+fixed Cannon registry `getPackageInfo` read implemented by this package.
+Activation also requires that resolver and its secret OP RPC configuration,
+the reviewed query API and read-only artifact workloads, exact-origin CORS,
+signer access testing, artifact backfill and recovery evidence, and a separate
+activation decision. Activation depends on the reviewed query API contract,
+including its normalization of Redis aggregate namespace counts into bounded
+JSON numbers; these clients reject raw node-redis string/Buffer counts.

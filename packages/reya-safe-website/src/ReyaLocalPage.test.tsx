@@ -23,10 +23,52 @@ const mocks = vi.hoisted(() => ({
   loadDeployment: vi.fn(),
   loadPrevious: vi.fn(),
   parsePreview: vi.fn(),
+  stage: vi.fn(),
 }));
 
 vi.mock('./clients', () => ({
-  createReyaLocalClients: () => ({
+  createReyaLocalClients: (config: { stagingEnabled: boolean }) => ({
+    activation: config.stagingEnabled
+      ? {
+          createSigningClient: (
+            signTypedData: (value: unknown) => Promise<string>
+          ) => ({
+            prepare: () => ({
+              safeTxHash: `0x${'b'.repeat(64)}`,
+            }),
+            sign: async ({ ownerAddress }: { ownerAddress: string }) => ({
+              safeTxHash: `0x${'b'.repeat(64)}`,
+              signature: await signTypedData({
+                account: ownerAddress,
+                domain: {
+                  chainId: 1729,
+                  verifyingContract: SAFE,
+                },
+                message: {
+                  baseGas: 0n,
+                  data: '0x1234',
+                  gasPrice: 0n,
+                  gasToken: '0x0000000000000000000000000000000000000000',
+                  nonce: 7n,
+                  operation: 1,
+                  refundReceiver: SAFE,
+                  safeTxGas: 42n,
+                  to: '0x2222222222222222222222222222222222222222',
+                  value: 0n,
+                },
+                primaryType: 'SafeTx',
+                types: {
+                  SafeTx: [],
+                },
+              }),
+              signer: ownerAddress,
+            }),
+          }),
+          staging: {
+            submitSignature: mocks.stage,
+          },
+        }
+      : null,
     preview: {
       generate: mocks.generatePreview,
     },
@@ -140,6 +182,7 @@ describe('Reya Queue Deployment page', () => {
           ingressOrigin: 'http://127.0.0.1:8787',
           safeAddress: SAFE,
           sourceCommit: COMMIT,
+          stagingEnabled: false,
         }}
       />
     );
@@ -244,6 +287,7 @@ describe('Reya Queue Deployment page', () => {
           ingressOrigin: 'http://127.0.0.1:8787',
           safeAddress: SAFE,
           sourceCommit: COMMIT,
+          stagingEnabled: false,
         }}
       />
     );
@@ -269,5 +313,221 @@ describe('Reya Queue Deployment page', () => {
       partialDeployCid: CID,
       previousPackageCid: CID,
     });
+  });
+
+  it('recomputes the reviewed transaction before one typed-data signature and staging write', async () => {
+    const signature = `0x${'11'.repeat(64)}1b`;
+    mocks.loadDeployment.mockResolvedValue({
+      cannonfileUrl: CANNONFILE,
+      cid: null,
+      descriptor: null,
+      inputKind: 'cannonfile',
+      sourceCommit: COMMIT,
+    });
+    mocks.stage.mockResolvedValue({
+      created: true,
+      proposal: {
+        createdAt: 1,
+        sigs: [signature],
+        txn: {},
+        updatedAt: 1,
+      },
+    });
+    const provider = {
+      request: vi.fn(async ({ method }: { method: string }) => {
+        if (method === 'eth_chainId') return '0x6c1';
+        if (method === 'eth_requestAccounts' || method === 'eth_accounts') {
+          return [SAFE];
+        }
+        if (method === 'eth_signTypedData_v4') return signature;
+        throw new Error(`unexpected wallet method ${method}`);
+      }),
+    };
+    Object.defineProperty(window, 'ethereum', {
+      configurable: true,
+      value: provider,
+    });
+
+    render(
+      <ReyaLocalPage
+        config={{
+          chainId: 1729,
+          ingressOrigin: 'http://127.0.0.1:8787',
+          safeAddress: SAFE,
+          sourceCommit: COMMIT,
+          stagingEnabled: true,
+        }}
+      />
+    );
+    await screen.findByText('Source, Reya RPC and Safe reads are ready.');
+    fireEvent.change(screen.getByLabelText('Deployment data'), {
+      target: { value: CANNONFILE },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Preview Transactions to Queue' })
+    );
+    await screen.findByText('2. Safe transaction to sign');
+    fireEvent.click(screen.getByRole('button', { name: 'Connect wallet' }));
+    await screen.findByText('A current Safe owner wallet is connected.');
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: /I reviewed the ordered calls and Safe transaction hash/,
+      })
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Sign and stage local proposal' })
+    );
+
+    await screen.findByText(/Local proposal created/);
+    expect(mocks.generatePreview).toHaveBeenCalledTimes(2);
+    expect(provider.request).toHaveBeenCalledWith({
+      method: 'eth_signTypedData_v4',
+      params: [SAFE, expect.stringContaining('"primaryType":"SafeTx"')],
+    });
+    expect(mocks.stage).toHaveBeenCalledWith({
+      signature,
+      txn: expect.objectContaining({
+        _nonce: 7,
+        data: '0x1234',
+        operation: '1',
+      }),
+    });
+  });
+
+  it('never opens the wallet or stages when recomputation changes the reviewed calls', async () => {
+    const initial = mocks.parsePreview.getMockImplementation()?.('{}', {
+      commit: COMMIT,
+      partialDeployCid: null,
+      previousPackageCid: CID,
+      safeAddress: SAFE,
+      sourceBundleSha256: 'a'.repeat(64),
+    });
+    mocks.parsePreview.mockReturnValueOnce(initial).mockReturnValueOnce({
+      ...initial,
+      safeProposalCalls: [
+        {
+          ...initial.safeProposalCalls[0],
+          data: '0xabcd',
+          step: 'Changed after review',
+        },
+      ],
+    });
+    mocks.loadDeployment.mockResolvedValue({
+      cannonfileUrl: CANNONFILE,
+      cid: null,
+      descriptor: null,
+      inputKind: 'cannonfile',
+      sourceCommit: COMMIT,
+    });
+    const provider = {
+      request: vi.fn(async ({ method }: { method: string }) => {
+        if (method === 'eth_chainId') return '0x6c1';
+        if (method === 'eth_requestAccounts' || method === 'eth_accounts') {
+          return [SAFE];
+        }
+        if (method === 'eth_signTypedData_v4') {
+          return `0x${'11'.repeat(64)}1b`;
+        }
+        throw new Error(`unexpected wallet method ${method}`);
+      }),
+    };
+    Object.defineProperty(window, 'ethereum', {
+      configurable: true,
+      value: provider,
+    });
+
+    render(
+      <ReyaLocalPage
+        config={{
+          chainId: 1729,
+          ingressOrigin: 'http://127.0.0.1:8787',
+          safeAddress: SAFE,
+          sourceCommit: COMMIT,
+          stagingEnabled: true,
+        }}
+      />
+    );
+    await screen.findByText('Source, Reya RPC and Safe reads are ready.');
+    fireEvent.change(screen.getByLabelText('Deployment data'), {
+      target: { value: CANNONFILE },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Preview Transactions to Queue' })
+    );
+    await screen.findByText('2. Safe transaction to sign');
+    fireEvent.click(screen.getByRole('button', { name: 'Connect wallet' }));
+    await screen.findByText('A current Safe owner wallet is connected.');
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: /I reviewed the ordered calls and Safe transaction hash/,
+      })
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Sign and stage local proposal' })
+    );
+
+    await screen.findByText('PREVIEW_CHANGED_REVIEW_REQUIRED');
+    expect(
+      provider.request.mock.calls.some(
+        ([request]) => request.method === 'eth_signTypedData_v4'
+      )
+    ).toBe(false);
+    expect(mocks.stage).not.toHaveBeenCalled();
+  });
+
+  it('downloads the deterministic review snapshot and uses outer page scrolling for calls', async () => {
+    mocks.loadDeployment.mockResolvedValue({
+      cannonfileUrl: CANNONFILE,
+      cid: null,
+      descriptor: null,
+      inputKind: 'cannonfile',
+      sourceCommit: COMMIT,
+    });
+    const createObjectURL = vi.fn(() => 'blob:review');
+    const revokeObjectURL = vi.fn();
+    Object.defineProperties(URL, {
+      createObjectURL: {
+        configurable: true,
+        value: createObjectURL,
+      },
+      revokeObjectURL: {
+        configurable: true,
+        value: revokeObjectURL,
+      },
+    });
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined);
+
+    render(
+      <ReyaLocalPage
+        config={{
+          chainId: 1729,
+          ingressOrigin: 'http://127.0.0.1:8787',
+          safeAddress: SAFE,
+          sourceCommit: COMMIT,
+          stagingEnabled: false,
+        }}
+      />
+    );
+    await screen.findByText('Source, Reya RPC and Safe reads are ready.');
+    fireEvent.change(screen.getByLabelText('Deployment data'), {
+      target: { value: CANNONFILE },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Preview Transactions to Queue' })
+    );
+    const calls = await screen.findByRole('list', {
+      name: 'Ordered Safe calls',
+    });
+    expect(calls.className).not.toContain('overflow-auto');
+    expect(calls.className).not.toContain('max-h-');
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Download review JSON' })
+    );
+
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    expect(click).toHaveBeenCalledOnce();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:review');
   });
 });

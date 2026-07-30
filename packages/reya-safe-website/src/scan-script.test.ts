@@ -20,7 +20,7 @@ async function validFixture() {
     writeFile(root + '/app.css', 'body{}'),
     writeFile(
       root + '/app.js',
-      'review-only profile has no signing, staging, execution or broadcast method; Sign and stage unavailable'
+      'Local canary only; Sign and stage local proposal; PREVIEW_CHANGED_REVIEW_REQUIRED; eth_signTypedData_v4; Execution and broadcast remain unavailable'
     ),
     writeFile(
       root + '/index.html',
@@ -53,14 +53,15 @@ describe('local profile export scanner', () => {
     expect(result.stderr).toContain('forbidden capability');
   });
 
-  it('rejects staging and wallet-signing mutation capabilities', async () => {
+  it('rejects execution, broadcast and broadened staging capabilities', async () => {
     for (const capability of [
-      '/staging/1729/0x1111111111111111111111111111111111111111',
-      'createReyaSafeSigningClient',
-      'eth_signTypedData_v4',
-      'SIGNING_IN_PROGRESS',
-      'submitSignature',
-      'WALLET_REQUEST_FAILED',
+      '/staging/1/0x1111111111111111111111111111111111111111',
+      '/staging/1729/0x1111111111111111111111111111111111111111/supersede',
+      'eth_sendRawTransaction',
+      'eth_sendTransaction',
+      'execTransaction',
+      'personal_sign',
+      'wallet_switchEthereumChain',
     ]) {
       const root = await validFixture();
       await writeFile(root + '/app.js', capability);

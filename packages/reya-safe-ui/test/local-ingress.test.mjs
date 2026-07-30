@@ -24,6 +24,7 @@ function config(overrides = {}) {
     safeAddress: SAFE,
     sourceCommit: COMMIT,
     sourceOrigin: 'http://127.0.0.1:8082',
+    stagingOrigin: null,
     uiOrigin: UI_ORIGIN,
     ...overrides,
   };
@@ -370,6 +371,105 @@ test('local ingress refuses to listen when the upstream is not Reya Network', as
   );
 });
 
+test('explicit local staging proxies only the fixed Safe and injects trusted identity', async (t) => {
+  const observed = [];
+  const proposal = JSON.stringify([
+    {
+      createdAt: 1,
+      sigs: [`0x${'11'.repeat(64)}1b`],
+      txn: {
+        _nonce: 7,
+        baseGas: '0',
+        data: '0x1234',
+        gasPrice: '0',
+        gasToken: '0x0000000000000000000000000000000000000000',
+        operation: '1',
+        refundReceiver: SAFE,
+        safeTxGas: '42',
+        to: '0x2222222222222222222222222222222222222222',
+        value: '0',
+      },
+      updatedAt: 1,
+    },
+  ]);
+  const fetchImpl = async (url, init) => {
+    if (url === 'https://rpc.example.test/private') {
+      return rpcResponse(JSON.parse(init.body), '0x6c1');
+    }
+    if (url === `http://127.0.0.1:18084/1729/${SAFE}`) {
+      observed.push({ init, url });
+      return new Response(proposal, {
+        headers: {
+          'content-length': String(Buffer.byteLength(proposal)),
+          'content-type': 'application/json',
+        },
+        status: init.method === 'POST' ? 201 : 200,
+      });
+    }
+    throw new Error(`unexpected upstream ${url}`);
+  };
+  const ingress = await createLocalIngress(
+    config({
+      opRpcUrl: null,
+      stagingOrigin: 'http://127.0.0.1:18084',
+    }),
+    { fetchImpl }
+  );
+  t.after(() => ingress.close());
+  const address = ingress.server.address();
+  assert.equal(typeof address, 'object');
+  const origin = `http://127.0.0.1:${address.port}`;
+  const route = `${origin}/staging/1729/${SAFE}`;
+
+  const current = await fetch(route, {
+    headers: { origin: UI_ORIGIN },
+  });
+  assert.equal(current.status, 200);
+  assert.deepEqual(await current.json(), JSON.parse(proposal));
+
+  const encoded = JSON.stringify({
+    sigs: [`0x${'11'.repeat(64)}1b`],
+    txn: JSON.parse(proposal)[0].txn,
+  });
+  const staged = await fetch(route, {
+    body: encoded,
+    headers: {
+      'content-type': 'application/json',
+      origin: UI_ORIGIN,
+      'x-reya-proxy-secret': 'browser-forgery',
+      'x-reya-roles': 'operator',
+      'x-reya-user': 'browser-forgery',
+    },
+    method: 'POST',
+  });
+  assert.equal(staged.status, 201);
+  assert.deepEqual(await staged.json(), JSON.parse(proposal));
+
+  assert.equal(observed.length, 2);
+  assert.equal(observed[0].init.headers['x-reya-user'], 'local-test-user');
+  assert.equal(observed[0].init.headers['x-reya-roles'], 'proposer');
+  assert.equal(observed[0].init.headers['x-reya-proxy-secret'], SECRET);
+  assert.equal(observed[1].init.body.toString('utf8'), encoded);
+
+  const wrongSafe = await fetch(
+    `${origin}/staging/1729/0x2222222222222222222222222222222222222222`,
+    {
+      headers: { origin: UI_ORIGIN },
+    }
+  );
+  assert.equal(wrongSafe.status, 404);
+  const supersede = await fetch(`${route}/supersede`, {
+    body: '{}',
+    headers: {
+      'content-type': 'application/json',
+      origin: UI_ORIGIN,
+    },
+    method: 'POST',
+  });
+  assert.equal(supersede.status, 404);
+  assert.equal(observed.length, 2);
+});
+
 test('local ingress refuses an OP registry RPC that is not OP Mainnet', async () => {
   const fetchImpl = async (url, init) => {
     const request = JSON.parse(init.body);
@@ -507,6 +607,15 @@ test('local ingress configuration is fixed to loopback and does not expose RPC c
   };
   assert.equal(loadLocalIngressConfig(env).port, 8787);
   assert.equal(loadLocalIngressConfig(env).safeAddress, SAFE);
+  assert.equal(loadLocalIngressConfig(env).stagingOrigin, null);
+  assert.deepEqual(
+    loadLocalIngressConfig({
+      ...env,
+      REYA_LOCAL_STAGING: 'enabled',
+      REYA_LOCAL_STAGING_ORIGIN: 'http://127.0.0.1:18084',
+    }).stagingOrigin,
+    'http://127.0.0.1:18084'
+  );
   assert.throws(
     () =>
       loadLocalIngressConfig({
@@ -530,5 +639,22 @@ test('local ingress configuration is fixed to loopback and does not expose RPC c
         REYA_LOCAL_SAFE_ADDRESS: '0x0000000000000000000000000000000000000000',
       }),
     /SAFE_ADDRESS is invalid/
+  );
+  assert.throws(
+    () =>
+      loadLocalIngressConfig({
+        ...env,
+        REYA_LOCAL_STAGING_ORIGIN: 'http://127.0.0.1:18084',
+      }),
+    /requires REYA_LOCAL_STAGING=enabled/
+  );
+  assert.throws(
+    () =>
+      loadLocalIngressConfig({
+        ...env,
+        REYA_LOCAL_STAGING: 'enabled',
+        REYA_LOCAL_STAGING_ORIGIN: 'http://127.0.0.1:18085',
+      }),
+    /must be http:\/\/127\.0\.0\.1:18084/
   );
 });

@@ -21,6 +21,16 @@ function required(key) {
   return value;
 }
 
+function stagingEnabled() {
+  const value = process.env.REYA_LOCAL_STAGING?.trim() || 'disabled';
+  if (value !== 'disabled' && value !== 'enabled') {
+    throw new Error(
+      'REYA_LOCAL_STAGING must be exactly "disabled" or "enabled"'
+    );
+  }
+  return value === 'enabled';
+}
+
 function profileConfig() {
   if (required('REYA_LOCAL_PROFILE') !== 'enabled') {
     throw new Error('REYA_LOCAL_PROFILE must be enabled');
@@ -45,6 +55,7 @@ function profileConfig() {
     ingressOrigin,
     safeAddress,
     sourceCommit,
+    stagingEnabled: stagingEnabled(),
   });
 }
 
@@ -109,7 +120,7 @@ try {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Reya Cannon Safe staging</title>
-    <meta name="description" content="Local, execution-disabled Cannon Safe staging for Reya Network.">
+    <meta name="description" content="Local, execution-disabled Cannon Safe proposal staging for Reya Network.">
     <meta name="robots" content="noindex,nofollow,noarchive">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; connect-src http://127.0.0.1:8787; font-src 'self'; form-action 'none'; img-src 'self' data:; manifest-src 'none'; object-src 'none'; script-src 'self'; style-src 'self'">
     <link rel="stylesheet" href="/app.css">
