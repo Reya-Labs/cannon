@@ -1,10 +1,5 @@
 import assert from 'node:assert/strict';
-import {
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -13,6 +8,7 @@ import {
   LOCAL_QA_BASELINE,
   LOCAL_QA_FIXTURE_PATH,
   LOCAL_QA_PACKAGE_REFS,
+  LOCAL_QA_PARTIAL_DEPLOYMENTS,
   LOCAL_QA_SAFE_ADDRESS,
   LOCAL_QA_SOURCE,
   loadLocalQaResolutionManifest,
@@ -26,6 +22,7 @@ test('loads the exact commit, Safe, baseline, and chain-13370 package fixture', 
   assert.equal(manifest.safeAddress, LOCAL_QA_SAFE_ADDRESS);
   assert.deepEqual(manifest.source, LOCAL_QA_SOURCE);
   assert.deepEqual(manifest.baseline, LOCAL_QA_BASELINE);
+  assert.deepEqual(manifest.partialDeployments, LOCAL_QA_PARTIAL_DEPLOYMENTS);
   assert.deepEqual(
     manifest.resolutions.map(({ fullPackageRef }) => fullPackageRef),
     LOCAL_QA_PACKAGE_REFS
@@ -36,6 +33,7 @@ test('loads the exact commit, Safe, baseline, and chain-13370 package fixture', 
     true
   );
   assert.equal(Object.isFrozen(manifest), true);
+  assert.equal(Object.isFrozen(manifest.partialDeployments), true);
   assert.equal(Object.isFrozen(manifest.resolutions), true);
 });
 
@@ -108,9 +106,19 @@ test('rejects fixture tampering, alternate schemas, and non-canonical ordering',
   wrongBlock.registrySnapshots[0].blockNumber = '154866870';
   cases.push(wrongBlock);
 
+  const wrongPartialSource = structuredClone(fixture);
+  wrongPartialSource.partialDeployments[0].source.commit =
+    LOCAL_QA_SOURCE.commit;
+  cases.push(wrongPartialSource);
+
+  const duplicatePartial = structuredClone(fixture);
+  duplicatePartial.partialDeployments.push(
+    structuredClone(duplicatePartial.partialDeployments[0])
+  );
+  cases.push(duplicatePartial);
+
   const floatingVersion = structuredClone(fixture);
-  floatingVersion.resolutions[0].fullPackageRef =
-    'reya-core:latest@router';
+  floatingVersion.resolutions[0].fullPackageRef = 'reya-core:latest@router';
   cases.push(floatingVersion);
 
   const wrongChain = structuredClone(fixture);

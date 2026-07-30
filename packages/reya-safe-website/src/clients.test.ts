@@ -31,7 +31,7 @@ describe('local client transport', () => {
   });
 
   it('generates one canonical preview request through the fixed ingress route', async () => {
-    const encoded = '{"schemaVersion":2}';
+    const encoded = '{"schemaVersion":3}';
     const fetchMock = vi.fn(async (...args: Parameters<typeof fetch>) => {
       void args;
       return new Response(encoded, {
@@ -45,17 +45,21 @@ describe('local client transport', () => {
     vi.stubGlobal('fetch', fetchMock);
     const commit = '0123456789abcdef0123456789abcdef01234567';
     const safeAddress = '0x1111111111111111111111111111111111111111' as const;
-    const previousDeployCid = 'QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn';
+    const partialDeployCid = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+    const previousPackageCid = 'QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn';
     const clients = createReyaLocalClients({
       chainId: 1729,
       ingressOrigin: INGRESS_ORIGIN,
       safeAddress,
       sourceCommit: commit,
+      stagingEnabled: false,
     });
 
     await expect(
       clients.preview.generate({
-        previousDeployCid,
+        commit,
+        partialDeployCid,
+        previousPackageCid,
       })
     ).resolves.toBe(encoded);
     const [target, options] = fetchMock.mock.calls[0]!;
@@ -65,10 +69,42 @@ describe('local client transport', () => {
       JSON.stringify({
         chainId: 1729,
         commit,
-        previousDeployCid,
+        partialDeployCid,
+        previousPackageCid,
         safeAddress,
       })
     );
+  });
+
+  it('exposes only the configured Safe staging route when activation is explicit', async () => {
+    const fetchMock = vi.fn<typeof fetch>(
+      async () =>
+        new Response('[]', {
+          headers: {
+            'content-length': '2',
+            'content-type': 'application/json',
+          },
+          status: 200,
+        })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const safeAddress = '0x1111111111111111111111111111111111111111' as const;
+    const clients = createReyaLocalClients({
+      chainId: 1729,
+      ingressOrigin: INGRESS_ORIGIN,
+      safeAddress,
+      sourceCommit: '0123456789abcdef0123456789abcdef01234567',
+      stagingEnabled: true,
+    });
+
+    await expect(clients.activation?.staging.current()).resolves.toBeNull();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`${INGRESS_ORIGIN}/staging/1729/${safeAddress}`);
+    await expect(
+      createLoopbackFetch(INGRESS_ORIGIN, {
+        safeAddress,
+        stagingEnabled: true,
+      })(`${VIRTUAL_ORIGIN}/staging/1729/0x2222222222222222222222222222222222222222`)
+    ).rejects.toThrow('route is not allowed');
   });
 
   it.each([

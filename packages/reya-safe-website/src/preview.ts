@@ -28,7 +28,8 @@ export type ReyaPreviewCall = Readonly<{
 export type ReyaPreview = Readonly<{
   commit: string;
   deployerPrerequisiteCount: number;
-  previousDeployCid: string;
+  partialDeployCid: string | null;
+  previousPackageCid: string;
   safeAddress: `0x${string}`;
   safeProposalCalls: readonly ReyaPreviewCall[];
   sourceBundleSha256: string;
@@ -120,8 +121,10 @@ export function parseReyaPreview(
   input: string,
   expected: {
     commit: string;
-    previousDeployCid?: string;
+    partialDeployCid: string | null;
+    previousPackageCid: string;
     safeAddress: `0x${string}`;
+    sourceBundleSha256: string;
   }
 ): ReyaPreview {
   if (input.length < 2 || input.length > 16 * 1024 * 1024) {
@@ -141,7 +144,8 @@ export function parseReyaPreview(
     'deployerAddress',
     'deployerPrerequisites',
     'deployerStartingNonce',
-    'previousDeployCid',
+    'partialDeployCid',
+    'previousPackageCid',
     'qaEvidence',
     'safeAddress',
     'safeProposalCalls',
@@ -153,7 +157,7 @@ export function parseReyaPreview(
   const qaEvidence = record(value.qaEvidence);
   const deployerAddress = String(value.deployerAddress);
   if (
-    value.schemaVersion !== 2 ||
+    value.schemaVersion !== 3 ||
     value.type !== 'reya-cannon-read-only-preview' ||
     value.chainId !== 1729 ||
     value.commit !== expected.commit ||
@@ -162,14 +166,17 @@ export function parseReyaPreview(
     !ADDRESS_PATTERN.test(deployerAddress) ||
     deployerAddress === expected.safeAddress ||
     !UINT_PATTERN.test(String(value.deployerStartingNonce)) ||
-    !CID_PATTERN.test(String(value.previousDeployCid)) ||
-    (expected.previousDeployCid !== undefined && value.previousDeployCid !== expected.previousDeployCid) ||
+    (value.partialDeployCid !== null && !CID_PATTERN.test(String(value.partialDeployCid))) ||
+    value.partialDeployCid !== expected.partialDeployCid ||
+    !CID_PATTERN.test(String(value.previousPackageCid)) ||
+    value.previousPackageCid !== expected.previousPackageCid ||
     Reflect.ownKeys(cannon).length !== 2 ||
     cannon.stateFormatVersion !== 7 ||
     cannon.version !== '2.26.1' ||
     !['interactive-current-state', 'non-signable-local-qa'].includes(String(qaEvidence.mode)) ||
     typeof qaEvidence.bundleSha256 !== 'string' ||
     !/^[0-9a-f]{64}$/.test(qaEvidence.bundleSha256) ||
+    qaEvidence.bundleSha256 !== expected.sourceBundleSha256 ||
     !Array.isArray(value.deployerPrerequisites) ||
     !Array.isArray(value.safeProposalCalls) ||
     !Array.isArray(value.simulationTransactions) ||
@@ -197,7 +204,8 @@ export function parseReyaPreview(
   return Object.freeze({
     commit: expected.commit,
     deployerPrerequisiteCount: prerequisites.length,
-    previousDeployCid: String(value.previousDeployCid),
+    partialDeployCid: value.partialDeployCid === null ? null : String(value.partialDeployCid),
+    previousPackageCid: String(value.previousPackageCid),
     safeAddress: expected.safeAddress,
     safeProposalCalls: Object.freeze(calls),
     sourceBundleSha256: qaEvidence.bundleSha256,

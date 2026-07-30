@@ -8,6 +8,7 @@ const MAX_MANIFEST_BYTES = 1024 * 1024;
 
 export const LOCAL_QA_SOURCE = Object.freeze({
   repository: 'Reya-Labs/reya-deployments',
+  gitUrl: 'https://github.com/Reya-Labs/reya-deployments',
   commit: '2b10669075b91eb8db781d199292f30c52f8e994',
   root: 'packages/tomls/src/omnibus/reya_network.toml',
   bundleSha256:
@@ -41,6 +42,22 @@ export const LOCAL_QA_BASELINE = Object.freeze({
   deployCid: 'QmaXwNU4gdBwgx4nZDV7qsPCG2GQXhyKqvxWEQoiF7CmZN',
 });
 
+export const LOCAL_QA_PARTIAL_DEPLOYMENTS = Object.freeze([
+  Object.freeze({
+    chainId: 1729,
+    fullPackageRef: 'reya-omnibus:1.0.159@main',
+    deployCid: 'QmRBigSTWzxDodgwMDHaXoaDJ3b1DoV7nwKPdFECMwGYZi',
+    source: Object.freeze({
+      repository: 'Reya-Labs/reya-deployments',
+      gitUrl: 'https://github.com/Reya-Labs/reya-deployments',
+      commit: '42dd2d0289129ac153716f2e39e5b505b00df2ef',
+      root: 'packages/tomls/src/omnibus/reya_network.toml',
+      bundleSha256:
+        '57156435e6e6f9713020f0d7b63ff914ecb7b694d33033d97fdf87fa9ac53d4c',
+    }),
+  }),
+]);
+
 export const LOCAL_QA_SAFE_ADDRESS =
   '0x1fe50318e5e3165742edc9c4a15d997bdb935eb9';
 
@@ -60,11 +77,13 @@ const TOP_LEVEL_KEYS = Object.freeze([
   'source',
   'registrySnapshots',
   'baseline',
+  'partialDeployments',
   'resolutions',
   'manifestSha256',
 ]);
 const SOURCE_KEYS = Object.freeze([
   'repository',
+  'gitUrl',
   'commit',
   'root',
   'bundleSha256',
@@ -77,17 +96,19 @@ const SNAPSHOT_KEYS = Object.freeze([
   'blockNumber',
   'blockHash',
 ]);
-const BASELINE_KEYS = Object.freeze([
-  'chainId',
-  'fullPackageRef',
-  'deployCid',
-]);
+const BASELINE_KEYS = Object.freeze(['chainId', 'fullPackageRef', 'deployCid']);
 const RESOLUTION_KEYS = Object.freeze([
   'chainId',
   'fullPackageRef',
   'deployCid',
   'registryChainId',
   'resolutionType',
+]);
+const PARTIAL_DEPLOYMENT_KEYS = Object.freeze([
+  'chainId',
+  'fullPackageRef',
+  'deployCid',
+  'source',
 ]);
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const PACKAGE_REF_PATTERN =
@@ -152,6 +173,12 @@ function canonicalWithoutDigest(value) {
     source: { ...value.source },
     registrySnapshots: value.registrySnapshots.map((entry) => ({ ...entry })),
     baseline: { ...value.baseline },
+    partialDeployments: value.partialDeployments.map((entry) => ({
+      chainId: entry.chainId,
+      fullPackageRef: entry.fullPackageRef,
+      deployCid: entry.deployCid,
+      source: { ...entry.source },
+    })),
     resolutions: value.resolutions.map((entry) => ({ ...entry })),
   };
 }
@@ -171,7 +198,7 @@ function sameJson(left, right) {
 export function validateLocalQaResolutionManifest(value) {
   assertOrderedKeys(value, TOP_LEVEL_KEYS, 'top-level');
   if (
-    value.schemaVersion !== 1 ||
+    value.schemaVersion !== 2 ||
     value.purpose !== 'local-qa-only' ||
     value.cannonVersion !== '2.26.1' ||
     value.stateFormatVersion !== 7 ||
@@ -201,6 +228,33 @@ export function validateLocalQaResolutionManifest(value) {
   assertOrderedKeys(value.baseline, BASELINE_KEYS, 'baseline');
   if (!sameJson(value.baseline, LOCAL_QA_BASELINE)) {
     reject('upgrade baseline is invalid');
+  }
+
+  if (
+    !Array.isArray(value.partialDeployments) ||
+    value.partialDeployments.length !== LOCAL_QA_PARTIAL_DEPLOYMENTS.length
+  ) {
+    reject('partial deployment set is incomplete');
+  }
+  for (const [index, deployment] of value.partialDeployments.entries()) {
+    assertOrderedKeys(
+      deployment,
+      PARTIAL_DEPLOYMENT_KEYS,
+      `partial deployment ${index}`
+    );
+    assertOrderedKeys(
+      deployment.source,
+      SOURCE_KEYS,
+      `partial deployment ${index} source`
+    );
+    if (
+      deployment.chainId !== 1729 ||
+      !PACKAGE_REF_PATTERN.test(deployment.fullPackageRef) ||
+      !isCanonicalCidV0(deployment.deployCid) ||
+      !sameJson(deployment, LOCAL_QA_PARTIAL_DEPLOYMENTS[index])
+    ) {
+      reject(`partial deployment ${index} is invalid`);
+    }
   }
 
   if (
@@ -298,8 +352,7 @@ export function createLocalQaResolutionMap(manifest) {
       `${resolution.chainId}:${resolution.fullPackageRef}`,
       Object.freeze({
         cid: resolution.deployCid,
-        mutability:
-          resolution.resolutionType === 'version' ? 'version' : '',
+        mutability: resolution.resolutionType === 'version' ? 'version' : '',
       })
     );
   }

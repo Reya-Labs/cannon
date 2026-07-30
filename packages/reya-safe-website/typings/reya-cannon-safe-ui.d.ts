@@ -62,3 +62,56 @@ declare module '@reya/cannon-safe-ui/safe-review' {
     typedData: Readonly<Record<string, unknown>>;
   };
 }
+
+declare module '@reya/cannon-safe-ui/clients' {
+  export type ReyaSafeTransaction = Readonly<{
+    _nonce: number;
+    baseGas: string;
+    data: `0x${string}`;
+    gasPrice: string;
+    gasToken: `0x${string}`;
+    operation: string;
+    refundReceiver: `0x${string}`;
+    safeTxGas: string;
+    to: `0x${string}`;
+    value: string;
+  }>;
+
+  export function createReyaSafeSigningClient(options: {
+    safeAddress: `0x${string}`;
+    signTypedData: (request: Readonly<Record<string, unknown>>) => Promise<string>;
+  }): {
+    prepare(input: { txn: ReyaSafeTransaction }): {
+      safeTxHash: `0x${string}`;
+      txn: ReyaSafeTransaction;
+      typedData: Readonly<Record<string, unknown>>;
+    };
+    sign(input: { ownerAddress: `0x${string}`; prepared: Readonly<Record<string, unknown>> }): Promise<{
+      safeTxHash: `0x${string}`;
+      signature: `0x${string}`;
+      signer: `0x${string}`;
+    }>;
+  };
+
+  export function createReyaStagingClient(options: {
+    fetchImpl?: typeof fetch;
+    safeAddress: `0x${string}`;
+    serviceOrigin: string;
+  }): {
+    current(): Promise<{
+      createdAt: number;
+      sigs: readonly `0x${string}`[];
+      txn: ReyaSafeTransaction;
+      updatedAt: number;
+    } | null>;
+    submitSignature(input: { signature: `0x${string}`; txn: ReyaSafeTransaction }): Promise<{
+      created: boolean;
+      proposal: {
+        createdAt: number;
+        sigs: readonly `0x${string}`[];
+        txn: ReyaSafeTransaction;
+        updatedAt: number;
+      };
+    }>;
+  };
+}

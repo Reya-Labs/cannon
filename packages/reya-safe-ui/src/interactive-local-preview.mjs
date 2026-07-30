@@ -4,6 +4,7 @@ import { prepareLocalQaRuntime } from '../test-support/local-qa-provenance.mjs';
 import {
   LOCAL_QA_BASELINE,
   LOCAL_QA_FIXTURE_PATH,
+  LOCAL_QA_PARTIAL_DEPLOYMENTS,
   LOCAL_QA_SAFE_ADDRESS,
   LOCAL_QA_SOURCE,
   loadLocalQaResolutionManifest,
@@ -16,7 +17,8 @@ const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 const REQUEST_KEYS = Object.freeze([
   'chainId',
   'commit',
-  'previousDeployCid',
+  'partialDeployCid',
+  'previousPackageCid',
   'safeAddress',
 ]);
 
@@ -83,12 +85,28 @@ export function parseInteractivePreviewRequest(encoded, expected) {
     Reflect.ownKeys(value).some((key) => typeof key !== 'string') ||
     JSON.stringify(value) !== encoded ||
     value.chainId !== 1729 ||
-    value.commit !== expected.commit ||
     !COMMIT_PATTERN.test(value.commit) ||
-    value.previousDeployCid !== expected.previousDeployCid ||
-    !CID_PATTERN.test(value.previousDeployCid) ||
+    (value.partialDeployCid !== null &&
+      !CID_PATTERN.test(value.partialDeployCid)) ||
+    value.previousPackageCid !== expected.previousPackageCid ||
+    !CID_PATTERN.test(value.previousPackageCid) ||
     value.safeAddress !== expected.safeAddress ||
     !ADDRESS_PATTERN.test(value.safeAddress)
+  ) {
+    throw Object.assign(new Error('interactive preview request is invalid'), {
+      status: 400,
+    });
+  }
+  const partial =
+    value.partialDeployCid === null
+      ? null
+      : expected.partialDeployments.find(
+          ({ deployCid }) => deployCid === value.partialDeployCid
+        );
+  if (
+    (partial === null && value.commit !== expected.defaultCommit) ||
+    (value.partialDeployCid !== null &&
+      (partial === undefined || value.commit !== partial.source.commit))
   ) {
     throw Object.assign(new Error('interactive preview request is invalid'), {
       status: 400,
@@ -133,6 +151,7 @@ async function prepareContext({ artifactCache, signal, sourceRepository }) {
     cannonSource,
     createEphemeralArtifactOverlay,
     createLocalQaRegistry,
+    assembleCannonDefinition,
     definition: assembleCannonDefinition(sourceBundle),
     manifest,
     readOnlyArtifactLoader: createReadOnlyArtifactLoader({
@@ -187,6 +206,14 @@ export function createInteractiveLocalPreviewRunner({
   };
 
   return Object.freeze({
+    allowsSourceCommit(commit) {
+      return (
+        commit === sourceCommit ||
+        LOCAL_QA_PARTIAL_DEPLOYMENTS.some(
+          ({ source }) => source.commit === commit
+        )
+      );
+    },
     close() {
       lifecycle.abort(new Error('interactive preview runner stopped'));
     },
@@ -206,8 +233,9 @@ export function createInteractiveLocalPreviewRunner({
       let fork;
       try {
         const request = parseInteractivePreviewRequest(encoded, {
-          commit: sourceCommit,
-          previousDeployCid: LOCAL_QA_BASELINE.deployCid,
+          defaultCommit: sourceCommit,
+          partialDeployments: LOCAL_QA_PARTIAL_DEPLOYMENTS,
+          previousPackageCid: LOCAL_QA_BASELINE.deployCid,
           safeAddress,
         });
         const loaded = await context();
@@ -222,9 +250,43 @@ export function createInteractiveLocalPreviewRunner({
             allowedCids: loaded.verifiedCids,
             baseLoader: loaded.readOnlyArtifactLoader,
           });
-        const previousDeployment = await artifactLoader.read(
-          `ipfs://${request.previousDeployCid}`
+        const startingDeployCid =
+          request.partialDeployCid ?? request.previousPackageCid;
+        const startingDeployment = await artifactLoader.read(
+          `ipfs://${startingDeployCid}`
         );
+        const partialBinding =
+          request.partialDeployCid === null
+            ? null
+            : loaded.manifest.partialDeployments.find(
+                ({ deployCid }) => deployCid === request.partialDeployCid
+              );
+        if (request.partialDeployCid !== null && partialBinding === undefined) {
+          throw new Error(
+            'interactive preview partial deployment is not pinned'
+          );
+        }
+        const sourceBinding = partialBinding?.source ?? loaded.manifest.source;
+        const sourceBundle =
+          partialBinding === null
+            ? loaded.sourceBundle
+            : await loadLocalSourceBundle({
+                commit: sourceBinding.commit,
+                expectedBundleSha256: sourceBinding.bundleSha256,
+                repositoryPath: paths.sourceRepository,
+              });
+        const definition =
+          partialBinding === null
+            ? loaded.definition
+            : loaded.assembleCannonDefinition(sourceBundle);
+        if (
+          partialBinding !== null &&
+          JSON.stringify(startingDeployment.def) !== JSON.stringify(definition)
+        ) {
+          throw new Error(
+            'interactive preview partial deployment definition mismatch'
+          );
+        }
         const registry = loaded.createLocalQaRegistry({
           manifest: loaded.manifest,
           verifiedCids: loaded.verifiedCids,
@@ -237,13 +299,17 @@ export function createInteractiveLocalPreviewRunner({
         });
         const result = await loaded.runReadOnlyPreview({
           artifactLoader,
-          commit: sourceCommit,
-          definition: loaded.definition,
-          previousDeployment,
-          previousDeployCid: request.previousDeployCid,
+          commit: request.commit,
+          definition,
+          deploymentMode:
+            request.partialDeployCid === null ? 'cannonfile' : 'partial',
+          partialDeployCid: request.partialDeployCid,
+          previousPackageCid: request.previousPackageCid,
           registry,
           rpc: Object.freeze({ request: fork.request }),
           safeAddress,
+          sourceGitUrl: sourceBinding.gitUrl,
+          startingDeployment,
         });
         return Object.freeze({
           ...result,
@@ -252,7 +318,7 @@ export function createInteractiveLocalPreviewRunner({
               loaded.verifiedArtifactCache.inventory.artifacts.length,
             artifactInventorySha256:
               loaded.verifiedArtifactCache.inventory.inventorySha256,
-            bundleSha256: loaded.sourceBundle.bundleSha256,
+            bundleSha256: sourceBundle.bundleSha256,
             cannonSource: loaded.cannonSource,
             forkBlock: fork.forkBlock,
             manifestSha256: loaded.manifest.manifestSha256,

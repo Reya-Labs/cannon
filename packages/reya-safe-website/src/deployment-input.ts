@@ -5,6 +5,9 @@ const CID_PATTERN = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
 const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]{0,31})?$/;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 const CANNONFILE_PATH = 'packages/tomls/src/omnibus/reya_network.toml';
+const SOURCE_REPOSITORY = 'https://github.com/Reya-Labs/reya-deployments';
+const CANNONFILE_URL_PATTERN =
+  /^https:\/\/github\.com\/Reya-Labs\/reya-deployments\/blob\/([0-9a-f]{40})\/packages\/tomls\/src\/omnibus\/reya_network\.toml$/;
 
 type ArtifactClient = Readonly<{
   cat(input: { cid: string }): Promise<Uint8Array>;
@@ -21,8 +24,10 @@ type RegistryClient = Readonly<{
 }>;
 
 export type DeploymentDescriptor = Readonly<{
+  cannonfileUrl: string | null;
   cid: string;
   packageRef: string;
+  sourceCommit: string | null;
   status: 'complete' | 'partial';
   version: string;
 }>;
@@ -39,12 +44,14 @@ export type ResolvedDeploymentSource =
       cid: null;
       descriptor: null;
       inputKind: 'cannonfile';
+      sourceCommit: string;
     }>
   | Readonly<{
       cannonfileUrl: null;
       cid: string;
       descriptor: DeploymentDescriptor;
       inputKind: 'cid';
+      sourceCommit: string;
     }>;
 
 function record(value: unknown): Record<string, unknown> {
@@ -69,7 +76,12 @@ export function immutableCannonfileUrl(commit: string): string {
   if (!COMMIT_PATTERN.test(commit)) {
     throw new Error('SOURCE_COMMIT_INVALID');
   }
-  return `https://github.com/Reya-Labs/reya-deployments/blob/${commit}/${CANNONFILE_PATH}`;
+  return `${SOURCE_REPOSITORY}/blob/${commit}/${CANNONFILE_PATH}`;
+}
+
+export function immutableCannonfileCommit(value: string): string | null {
+  if (typeof value !== 'string') return null;
+  return CANNONFILE_URL_PATTERN.exec(value)?.[1] ?? null;
 }
 
 export async function loadDeploymentDescriptor(
@@ -104,9 +116,25 @@ export async function loadDeploymentDescriptor(
   ) {
     throw new Error('ARTIFACT_SCHEMA_REJECTED');
   }
+  let sourceCommit: string | null = null;
+  let cannonfileUrl: string | null = null;
+  if (status === 'partial') {
+    const metadata = record(deployment.meta);
+    if (
+      metadata.gitUrl !== SOURCE_REPOSITORY ||
+      typeof metadata.commitHash !== 'string' ||
+      !COMMIT_PATTERN.test(metadata.commitHash)
+    ) {
+      throw new Error('ARTIFACT_PROVENANCE_REJECTED');
+    }
+    sourceCommit = metadata.commitHash;
+    cannonfileUrl = immutableCannonfileUrl(sourceCommit);
+  }
   return Object.freeze({
+    cannonfileUrl,
     cid,
     packageRef: `reya-omnibus:${version}@main`,
+    sourceCommit,
     status,
     version,
   });
@@ -177,10 +205,12 @@ export async function resolveArtifactInput({
  */
 export async function resolveDeploymentSourceInput({
   artifacts,
+  comparisonCannonfileUrl = '',
   expectedCommit,
   input,
 }: {
   artifacts: ArtifactClient;
+  comparisonCannonfileUrl?: string;
   expectedCommit: string;
   input: string;
 }): Promise<ResolvedDeploymentSource> {
@@ -191,6 +221,7 @@ export async function resolveDeploymentSourceInput({
       cid: null,
       descriptor: null,
       inputKind: 'cannonfile',
+      sourceCommit: expectedCommit,
     });
   }
   const cid = normalizeArtifactCid(input);
@@ -198,10 +229,21 @@ export async function resolveDeploymentSourceInput({
     throw new Error('DEPLOYMENT_SOURCE_INVALID');
   }
   const descriptor = await loadDeploymentDescriptor(artifacts, cid);
+  if (descriptor.status !== 'partial' || descriptor.sourceCommit === null || descriptor.cannonfileUrl === null) {
+    throw new Error('DEPLOYMENT_SOURCE_REQUIRES_PARTIAL_ARTIFACT');
+  }
+  if (
+    comparisonCannonfileUrl !== '' &&
+    (immutableCannonfileCommit(comparisonCannonfileUrl) !== descriptor.sourceCommit ||
+      comparisonCannonfileUrl !== descriptor.cannonfileUrl)
+  ) {
+    throw new Error('CANNONFILE_PROVENANCE_MISMATCH');
+  }
   return Object.freeze({
     cannonfileUrl: null,
     cid,
     descriptor,
     inputKind: 'cid',
+    sourceCommit: descriptor.sourceCommit,
   });
 }

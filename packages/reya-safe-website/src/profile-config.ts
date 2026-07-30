@@ -13,6 +13,7 @@ export type ReyaLocalProfileConfig = Readonly<{
   ingressOrigin: string;
   safeAddress: `0x${string}`;
   sourceCommit: string;
+  stagingEnabled: boolean;
 }>;
 
 function required(env: Record<string, string | undefined>, key: string): string {
@@ -46,6 +47,14 @@ function loopbackOrigin(value: string): string {
   return url.origin;
 }
 
+function stagingEnabled(value: string | undefined): boolean {
+  const normalized = value?.trim() || 'disabled';
+  if (normalized !== 'disabled' && normalized !== 'enabled') {
+    throw new Error('REYA_LOCAL_STAGING must be exactly "disabled" or "enabled"');
+  }
+  return normalized === 'enabled';
+}
+
 /**
  * Loads immutable build-time configuration for the constrained local profile.
  *
@@ -72,5 +81,6 @@ export function loadReyaLocalProfileConfig(env: Record<string, string | undefine
     ingressOrigin: loopbackOrigin(required(env, 'REYA_LOCAL_INGRESS_ORIGIN')),
     safeAddress: safeAddress as `0x${string}`,
     sourceCommit,
+    stagingEnabled: stagingEnabled(env.REYA_LOCAL_STAGING),
   });
 }

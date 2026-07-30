@@ -41,11 +41,12 @@ test('preview result binds ordered calls to the exact run profile', () => {
       commit: COMMIT,
       deployerAddress: DEPLOYER,
       deployerStartingNonce: '15',
-      previousDeployCid: CID,
+      partialDeployCid: null,
+      previousPackageCid: CID,
       safeAddress: SAFE,
     }),
     {
-      schemaVersion: 2,
+      schemaVersion: 3,
       type: 'reya-cannon-read-only-preview',
       commit: COMMIT,
       cannon: {
@@ -56,7 +57,8 @@ test('preview result binds ordered calls to the exact run profile', () => {
       safeAddress: SAFE,
       deployerAddress: DEPLOYER,
       deployerStartingNonce: '15',
-      previousDeployCid: CID,
+      partialDeployCid: null,
+      previousPackageCid: CID,
       deployerPrerequisites: [],
       safeProposalCalls: [
         {
@@ -96,7 +98,8 @@ test('preview result rejects creations, unknown senders, empty and duplicate cap
         commit: COMMIT,
         deployerAddress: DEPLOYER,
         deployerStartingNonce: '15',
-        previousDeployCid: CID,
+        partialDeployCid: null,
+        previousPackageCid: CID,
         safeAddress: SAFE,
       }),
     /framing is invalid/
@@ -104,11 +107,14 @@ test('preview result rejects creations, unknown senders, empty and duplicate cap
   assert.throws(
     () =>
       createPreviewResult({
-        calls: [captured({ transaction: { ...captured().transaction, to: null } })],
+        calls: [
+          captured({ transaction: { ...captured().transaction, to: null } }),
+        ],
         commit: COMMIT,
         deployerAddress: DEPLOYER,
         deployerStartingNonce: '15',
-        previousDeployCid: CID,
+        partialDeployCid: null,
+        previousPackageCid: CID,
         safeAddress: SAFE,
       }),
     /approved signer contract/
@@ -127,7 +133,8 @@ test('preview result rejects creations, unknown senders, empty and duplicate cap
         commit: COMMIT,
         deployerAddress: DEPLOYER,
         deployerStartingNonce: '15',
-        previousDeployCid: CID,
+        partialDeployCid: null,
+        previousPackageCid: CID,
         safeAddress: SAFE,
       }),
     /approved signer contract/
@@ -139,7 +146,8 @@ test('preview result rejects creations, unknown senders, empty and duplicate cap
         commit: COMMIT,
         deployerAddress: DEPLOYER,
         deployerStartingNonce: '15',
-        previousDeployCid: CID,
+        partialDeployCid: null,
+        previousPackageCid: CID,
         safeAddress: SAFE,
       }),
     /duplicate transaction/
@@ -177,7 +185,8 @@ test('preview result separates deployer prerequisites from Safe proposal calls',
     commit: COMMIT,
     deployerAddress: DEPLOYER,
     deployerStartingNonce: '15',
-    previousDeployCid: CID,
+    partialDeployCid: null,
+    previousPackageCid: CID,
     safeAddress: SAFE,
   });
   assert.equal(result.deployerPrerequisites.length, 1);
@@ -211,7 +220,8 @@ test('preview result rejects a deployer-only simulation as non-proposable', () =
         commit: COMMIT,
         deployerAddress: DEPLOYER,
         deployerStartingNonce: '15',
-        previousDeployCid: CID,
+        partialDeployCid: null,
+        previousPackageCid: CID,
         safeAddress: SAFE,
       }),
     /no Safe proposal calls/

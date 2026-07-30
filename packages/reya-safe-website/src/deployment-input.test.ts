@@ -20,6 +20,10 @@ async function artifact(status: 'complete' | 'partial' = 'complete') {
         preset: 'main',
         version: '1.2.3',
       },
+      meta: {
+        commitHash: COMMIT,
+        gitUrl: 'https://github.com/Reya-Labs/reya-deployments',
+      },
       status,
     })
   );
@@ -45,8 +49,10 @@ describe('queue deployment input', () => {
         requireComplete: true,
       })
     ).resolves.toEqual({
+      cannonfileUrl: null,
       cid: value.cid,
       packageRef: 'reya-omnibus:1.2.3@main',
+      sourceCommit: null,
       status: 'complete',
       version: '1.2.3',
     });
@@ -71,8 +77,10 @@ describe('queue deployment input', () => {
     expect(result).toEqual({
       cid: value.cid,
       descriptor: {
+        cannonfileUrl: null,
         cid: value.cid,
         packageRef: 'reya-omnibus:1.2.3@main',
+        sourceCommit: null,
         status: 'complete',
         version: '1.2.3',
       },
@@ -149,6 +157,7 @@ describe('queue deployment input', () => {
       cid: null,
       descriptor: null,
       inputKind: 'cannonfile',
+      sourceCommit: COMMIT,
     });
     expect(artifacts.cat).not.toHaveBeenCalled();
 
@@ -172,13 +181,76 @@ describe('queue deployment input', () => {
       cannonfileUrl: null,
       cid: value.cid,
       descriptor: {
+        cannonfileUrl: immutableCannonfileUrl(COMMIT),
         cid: value.cid,
         packageRef: 'reya-omnibus:1.2.3@main',
+        sourceCommit: COMMIT,
         status: 'partial',
         version: '1.2.3',
       },
       inputKind: 'cid',
+      sourceCommit: COMMIT,
     });
+  });
+
+  it('authenticates partial deployment provenance and optional Cannonfile comparison', async () => {
+    const value = await artifact('partial');
+    const cannonfileUrl = immutableCannonfileUrl(COMMIT);
+    await expect(
+      resolveDeploymentSourceInput({
+        artifacts: { cat: vi.fn(async () => value.bytes) },
+        comparisonCannonfileUrl: cannonfileUrl,
+        expectedCommit: 'fedcba9876543210fedcba9876543210fedcba98',
+        input: value.cid,
+      })
+    ).resolves.toMatchObject({
+      cid: value.cid,
+      inputKind: 'cid',
+      sourceCommit: COMMIT,
+    });
+    await expect(
+      resolveDeploymentSourceInput({
+        artifacts: { cat: vi.fn(async () => value.bytes) },
+        comparisonCannonfileUrl: immutableCannonfileUrl('fedcba9876543210fedcba9876543210fedcba98'),
+        expectedCommit: COMMIT,
+        input: value.cid,
+      })
+    ).rejects.toThrow('CANNONFILE_PROVENANCE_MISMATCH');
+  });
+
+  it('rejects a complete artifact or untrusted provenance as a deployment checkpoint', async () => {
+    const complete = await artifact('complete');
+    await expect(
+      resolveDeploymentSourceInput({
+        artifacts: { cat: vi.fn(async () => complete.bytes) },
+        expectedCommit: COMMIT,
+        input: complete.cid,
+      })
+    ).rejects.toThrow('DEPLOYMENT_SOURCE_REQUIRES_PARTIAL_ARTIFACT');
+
+    const encoded = deflateSync(
+      JSON.stringify({
+        chainId: 1729,
+        def: {
+          name: 'reya-omnibus',
+          preset: 'main',
+          version: '1.2.3',
+        },
+        meta: {
+          commitHash: COMMIT,
+          gitUrl: 'https://attacker.example/reya-deployments',
+        },
+        status: 'partial',
+      })
+    );
+    const cid = await getContentCID(encoded);
+    await expect(
+      resolveDeploymentSourceInput({
+        artifacts: { cat: vi.fn(async () => encoded) },
+        expectedCommit: COMMIT,
+        input: cid,
+      })
+    ).rejects.toThrow('ARTIFACT_PROVENANCE_REJECTED');
   });
 
   it('rejects incomplete previous packages, oversized versions and CID mismatches', async () => {

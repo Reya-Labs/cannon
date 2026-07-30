@@ -15,7 +15,23 @@ describe('Reya local website profile configuration', () => {
       ingressOrigin: 'http://127.0.0.1:8787',
       safeAddress: ENV.REYA_LOCAL_SAFE_ADDRESS,
       sourceCommit: ENV.REYA_LOCAL_SOURCE_COMMIT,
+      stagingEnabled: false,
     });
+  });
+
+  it('requires an explicit exact token before enabling local staging', () => {
+    expect(
+      loadReyaLocalProfileConfig({
+        ...ENV,
+        REYA_LOCAL_STAGING: 'enabled',
+      }).stagingEnabled
+    ).toBe(true);
+    expect(() =>
+      loadReyaLocalProfileConfig({
+        ...ENV,
+        REYA_LOCAL_STAGING: 'true',
+      })
+    ).toThrow(/exactly/);
   });
 
   it.each([
