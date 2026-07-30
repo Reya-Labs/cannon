@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  createInvokeDecoders,
   createOrderedRpcRequest,
   createPreviewResult,
+  decodeCapturedCall,
 } from '../src/runtime/preview-engine.mjs';
 
 const SAFE = '0x1111111111111111111111111111111111111111';
@@ -11,9 +13,27 @@ const DEPLOYER = '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266';
 const CID = 'QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn';
 const COMMIT = '0123456789abcdef0123456789abcdef01234567';
 const HASH = `0x${'12'.repeat(32)}`;
+const NEXT = '0x3333333333333333333333333333333333333333';
+const CALLDATA =
+  '0x3659cfe60000000000000000000000003333333333333333333333333333333333333333';
+const DECODED = {
+  arguments: [NEXT],
+  function: 'upgradeTo(address)',
+  selector: '0x3659cfe6',
+};
+const UPGRADE_ABI = [
+  {
+    inputs: [{ name: 'newImplementation', type: 'address' }],
+    name: 'upgradeTo',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+];
 
 function captured(overrides = {}) {
   return {
+    decoded: DECODED,
     hash: HASH,
     step: 'invoke.upgrade',
     receipt: {
@@ -26,7 +46,7 @@ function captured(overrides = {}) {
     transaction: {
       from: SAFE,
       hash: HASH,
-      input: '0x1234',
+      input: CALLDATA,
       to: TARGET,
       value: 0n,
     },
@@ -46,7 +66,7 @@ test('preview result binds ordered calls to the exact run profile', () => {
       safeAddress: SAFE,
     }),
     {
-      schemaVersion: 3,
+      schemaVersion: 4,
       type: 'reya-cannon-read-only-preview',
       commit: COMMIT,
       cannon: {
@@ -62,7 +82,8 @@ test('preview result binds ordered calls to the exact run profile', () => {
       deployerPrerequisites: [],
       safeProposalCalls: [
         {
-          data: '0x1234',
+          data: CALLDATA,
+          decoded: DECODED,
           from: SAFE,
           gasUsed: '100',
           sequence: 0,
@@ -75,7 +96,8 @@ test('preview result binds ordered calls to the exact run profile', () => {
       ],
       simulationTransactions: [
         {
-          data: '0x1234',
+          data: CALLDATA,
+          decoded: DECODED,
           from: SAFE,
           gasUsed: '100',
           sequence: 0,
@@ -154,8 +176,67 @@ test('preview result rejects creations, unknown senders, empty and duplicate cap
   );
 });
 
+test('decodes invoke calldata only through the target ABI and expected Cannon function', () => {
+  assert.deepEqual(
+    decodeCapturedCall({
+      decoders: [
+        {
+          abi: UPGRADE_ABI,
+          address: TARGET,
+          expectedFunction: 'upgradeTo',
+        },
+      ],
+      step: 'invoke.upgrade',
+      transaction: {
+        input: CALLDATA,
+        to: TARGET,
+      },
+    }),
+    DECODED
+  );
+  assert.throws(
+    () =>
+      decodeCapturedCall({
+        decoders: [
+          {
+            abi: UPGRADE_ABI,
+            address: TARGET,
+            expectedFunction: 'transfer',
+          },
+        ],
+        step: 'invoke.upgrade',
+        transaction: {
+          input: CALLDATA,
+          to: TARGET,
+        },
+      }),
+    /not uniquely decodable/
+  );
+});
+
+test('resolves a checksummed address target through the Cannon custom ABI', () => {
+  assert.deepEqual(
+    createInvokeDecoders(
+      {
+        abi: JSON.stringify(UPGRADE_ABI),
+        func: 'upgradeTo',
+        target: ['0x27E5cb712334e101B3c232eB0Be198baaa595F5F'],
+      },
+      {}
+    ),
+    [
+      {
+        abi: UPGRADE_ABI,
+        address: '0x27e5cb712334e101b3c232eb0be198baaa595f5f',
+        expectedFunction: 'upgradeTo',
+      },
+    ]
+  );
+});
+
 test('preview result separates deployer prerequisites from Safe proposal calls', () => {
   const creation = captured({
+    decoded: null,
     receipt: {
       ...captured().receipt,
       from: DEPLOYER,
@@ -166,6 +247,7 @@ test('preview result separates deployer prerequisites from Safe proposal calls',
       from: DEPLOYER,
       to: null,
     },
+    step: 'deploy.create',
   });
   const result = createPreviewResult({
     calls: [
@@ -202,6 +284,7 @@ test('preview result separates deployer prerequisites from Safe proposal calls',
 
 test('preview result rejects a deployer-only simulation as non-proposable', () => {
   const creation = captured({
+    decoded: null,
     receipt: {
       ...captured().receipt,
       from: DEPLOYER,
@@ -212,6 +295,7 @@ test('preview result rejects a deployer-only simulation as non-proposable', () =
       from: DEPLOYER,
       to: null,
     },
+    step: 'deploy.create',
   });
   assert.throws(
     () =>

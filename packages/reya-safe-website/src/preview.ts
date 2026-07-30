@@ -1,6 +1,6 @@
 import MulticallABI from '@cannon/abi/Multicall.json';
 import { SafeTransaction } from '@cannon/types/SafeTransaction';
-import { encodeFunctionData, zeroAddress } from 'viem';
+import { encodeFunctionData, toFunctionSelector, zeroAddress } from 'viem';
 
 const MULTICALL_ADDRESS = '0xe2c5658cc5c448b48141168f3e475df8f65a1e3e' as const;
 
@@ -13,8 +13,21 @@ const CID_PATTERN = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
 const MAX_CALLS = 4096;
 const MAX_CALLDATA_BYTES = 512 * 1024;
 
+export type ReyaDecodedValue =
+  | boolean
+  | string
+  | readonly ReyaDecodedValue[]
+  | Readonly<{ [key: string]: ReyaDecodedValue }>;
+
+export type ReyaDecodedCall = Readonly<{
+  arguments: readonly ReyaDecodedValue[];
+  function: string;
+  selector: `0x${string}`;
+}>;
+
 export type ReyaPreviewCall = Readonly<{
   data: `0x${string}`;
+  decoded: ReyaDecodedCall | null;
   from: `0x${string}`;
   gasUsed: string;
   senderRole: 'safe';
@@ -66,6 +79,79 @@ function uint(value: unknown): string {
   return value;
 }
 
+function decodedValue(value: unknown, depth = 0): ReyaDecodedValue {
+  if (depth > 16) throw new Error('PREVIEW_REJECTED');
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    if (value.length > 2 * MAX_CALLDATA_BYTES) {
+      throw new Error('PREVIEW_REJECTED');
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > 16_384) throw new Error('PREVIEW_REJECTED');
+    return Object.freeze(value.map((item) => decodedValue(item, depth + 1)));
+  }
+  const candidate = record(value);
+  const keys = Object.keys(candidate).sort();
+  if (
+    keys.length > 256 ||
+    keys.some(
+      (key) => !/^[A-Za-z_$][A-Za-z0-9_$]{0,127}$/.test(key) || ['__proto__', 'constructor', 'prototype'].includes(key)
+    )
+  ) {
+    throw new Error('PREVIEW_REJECTED');
+  }
+  return Object.freeze(Object.fromEntries(keys.map((key) => [key, decodedValue(candidate[key], depth + 1)])));
+}
+
+function hasUnsafeFunctionSignatureCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0);
+    return character.trim() === '' || codePoint === undefined || codePoint <= 0x1f || codePoint === 0x7f;
+  });
+}
+
+function decodedCall(value: unknown, data: string, step: string): ReyaDecodedCall | null {
+  if (value === null) {
+    if (step.startsWith('invoke.')) throw new Error('PREVIEW_REJECTED');
+    return null;
+  }
+  const candidate = record(value);
+  exactKeys(candidate, ['arguments', 'function', 'selector']);
+  if (
+    typeof candidate.function !== 'string' ||
+    candidate.function.length < 3 ||
+    candidate.function.length > 1024 ||
+    !/^[A-Za-z_$][A-Za-z0-9_$]*\(/.test(candidate.function) ||
+    !candidate.function.endsWith(')') ||
+    hasUnsafeFunctionSignatureCharacter(candidate.function) ||
+    typeof candidate.selector !== 'string' ||
+    !/^0x[0-9a-f]{8}$/.test(candidate.selector) ||
+    candidate.selector !== data.slice(0, 10) ||
+    !Array.isArray(candidate.arguments) ||
+    candidate.arguments.length > 256
+  ) {
+    throw new Error('PREVIEW_REJECTED');
+  }
+  let selector;
+  try {
+    selector = toFunctionSelector(candidate.function).toLowerCase();
+  } catch {
+    throw new Error('PREVIEW_REJECTED');
+  }
+  if (selector !== candidate.selector) throw new Error('PREVIEW_REJECTED');
+  const decoded = Object.freeze({
+    arguments: Object.freeze(candidate.arguments.map((item) => decodedValue(item))),
+    function: candidate.function,
+    selector: candidate.selector as `0x${string}`,
+  });
+  if (JSON.stringify(decoded).length > 2 * MAX_CALLDATA_BYTES) {
+    throw new Error('PREVIEW_REJECTED');
+  }
+  return decoded;
+}
+
 type SimulationCall = Omit<ReyaPreviewCall, 'senderRole' | 'to'> &
   Readonly<{
     senderRole: 'deployer' | 'safe';
@@ -79,7 +165,18 @@ function simulationCall(
   deployerAddress: string
 ): SimulationCall {
   const candidate = record(value);
-  exactKeys(candidate, ['data', 'from', 'gasUsed', 'senderRole', 'sequence', 'step', 'to', 'transactionHash', 'value']);
+  exactKeys(candidate, [
+    'data',
+    'decoded',
+    'from',
+    'gasUsed',
+    'senderRole',
+    'sequence',
+    'step',
+    'to',
+    'transactionHash',
+    'value',
+  ]);
   if (
     candidate.sequence !== expectedSequence ||
     (candidate.senderRole !== 'safe' && candidate.senderRole !== 'deployer') ||
@@ -101,6 +198,7 @@ function simulationCall(
   }
   return Object.freeze({
     data: candidate.data as `0x${string}`,
+    decoded: decodedCall(candidate.decoded, candidate.data, candidate.step),
     from: candidate.from as `0x${string}`,
     gasUsed: uint(candidate.gasUsed),
     sequence: candidate.sequence,
@@ -157,7 +255,7 @@ export function parseReyaPreview(
   const qaEvidence = record(value.qaEvidence);
   const deployerAddress = String(value.deployerAddress);
   if (
-    value.schemaVersion !== 3 ||
+    value.schemaVersion !== 4 ||
     value.type !== 'reya-cannon-read-only-preview' ||
     value.chainId !== 1729 ||
     value.commit !== expected.commit ||

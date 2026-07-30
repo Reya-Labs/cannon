@@ -691,6 +691,37 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
                           </code>
                         </dd>
                       </div>
+                      <div>
+                        <dt className="text-slate-500">Decoded calldata</dt>
+                        {call.decoded ? (
+                          <dd
+                            aria-label={`Decoded calldata for ${call.step}`}
+                            className="mt-1 space-y-2 rounded bg-slate-950 p-2"
+                          >
+                            <code className="break-all text-cyan-200">
+                              {call.decoded.function}
+                            </code>
+                            <ol className="space-y-2">
+                              {call.decoded.arguments.map((argument, index) => (
+                                <li key={index}>
+                                  <span className="text-slate-500">
+                                    Argument {index}
+                                  </span>
+                                  <pre className="mt-1 overflow-auto whitespace-pre-wrap break-words text-slate-200">
+                                    <code>
+                                      {JSON.stringify(argument, null, 2)}
+                                    </code>
+                                  </pre>
+                                </li>
+                              ))}
+                            </ol>
+                          </dd>
+                        ) : (
+                          <dd className="text-slate-500">
+                            No ABI decode is available for this action type.
+                          </dd>
+                        )}
+                      </div>
                       <details>
                         <summary className="cursor-pointer text-slate-500">
                           Calldata ({(call.data.length - 2) / 2} bytes)

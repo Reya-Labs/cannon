@@ -4,6 +4,8 @@ import {
   ChainDefinition,
   createInitialContext,
   Events,
+  getContractDefinitionFromPath,
+  getContractFromPath,
   loadPrecompiles,
 } from '@usecannon/builder';
 import {
@@ -11,8 +13,12 @@ import {
   createTestClient,
   createWalletClient,
   custom,
+  decodeFunctionData,
   getAddress,
+  isAddress,
   isAddressEqual,
+  toFunctionSelector,
+  toFunctionSignature,
 } from 'viem';
 
 const CHAIN_ID = 1729;
@@ -123,8 +129,186 @@ function validateStartingDeployment(
   return value;
 }
 
+function snapshotDecodedValue(value, depth = 0) {
+  if (depth > 16) {
+    throw new Error('preview decoded calldata is too deeply nested');
+  }
+  if (typeof value === 'bigint') return value.toString();
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    if (value.length > 2 * 512 * 1024) {
+      throw new Error('preview decoded calldata string is too large');
+    }
+    return /^0x[0-9a-fA-F]*$/.test(value) ? value.toLowerCase() : value;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > 16_384) {
+      throw new Error('preview decoded calldata array is too large');
+    }
+    return Object.freeze(
+      value.map((item) => snapshotDecodedValue(item, depth + 1))
+    );
+  }
+  if (isPlainObject(value)) {
+    const keys = Object.keys(value).sort();
+    if (
+      keys.length > 256 ||
+      keys.some(
+        (key) =>
+          !/^[A-Za-z_$][A-Za-z0-9_$]{0,127}$/.test(key) ||
+          ['__proto__', 'constructor', 'prototype'].includes(key)
+      )
+    ) {
+      throw new Error('preview decoded calldata object is invalid');
+    }
+    return Object.freeze(
+      Object.fromEntries(
+        keys.map((key) => [key, snapshotDecodedValue(value[key], depth + 1)])
+      )
+    );
+  }
+  throw new Error('preview decoded calldata value is invalid');
+}
+
+function hasUnsafeFunctionSignatureCharacter(value) {
+  return Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0);
+    return (
+      character.trim() === '' ||
+      codePoint === undefined ||
+      codePoint <= 0x1f ||
+      codePoint === 0x7f
+    );
+  });
+}
+
+function canonicalDecodedCall(value, data) {
+  if (value === null) return null;
+  if (
+    !exactKeys(value, ['arguments', 'function', 'selector']) ||
+    typeof value.function !== 'string' ||
+    value.function.length < 3 ||
+    value.function.length > 1024 ||
+    !/^[A-Za-z_$][A-Za-z0-9_$]*\(/.test(value.function) ||
+    !value.function.endsWith(')') ||
+    hasUnsafeFunctionSignatureCharacter(value.function) ||
+    typeof value.selector !== 'string' ||
+    !/^0x[0-9a-f]{8}$/.test(value.selector) ||
+    value.selector !== data.slice(0, 10) ||
+    !Array.isArray(value.arguments)
+  ) {
+    throw new Error('preview decoded calldata is invalid');
+  }
+  let expectedSelector;
+  try {
+    expectedSelector = toFunctionSelector(value.function).toLowerCase();
+  } catch {
+    throw new Error('preview decoded calldata is invalid');
+  }
+  if (expectedSelector !== value.selector || value.arguments.length > 256) {
+    throw new Error('preview decoded calldata is invalid');
+  }
+  const decoded = Object.freeze({
+    arguments: snapshotDecodedValue(value.arguments),
+    function: value.function,
+    selector: value.selector,
+  });
+  if (JSON.stringify(decoded).length > 2 * 512 * 1024) {
+    throw new Error('preview decoded calldata is too large');
+  }
+  return decoded;
+}
+
+export function createInvokeDecoders(config, context) {
+  if (!Array.isArray(config?.target) || config.target.length < 1) {
+    throw new Error('preview invoke metadata is invalid');
+  }
+  let customAbi = null;
+  if (typeof config.abi === 'string') {
+    customAbi = config.abi.startsWith('[')
+      ? JSON.parse(config.abi)
+      : getContractDefinitionFromPath(context, config.abi)?.abi ?? null;
+  }
+  return Object.freeze(
+    config.target.map((target) => {
+      const resolvedContract = isAddress(target)
+        ? customAbi
+          ? { abi: customAbi, address: target }
+          : null
+        : getContractFromPath(context, target);
+      const contract =
+        resolvedContract && customAbi
+          ? { ...resolvedContract, abi: customAbi }
+          : resolvedContract;
+      if (!contract || !Array.isArray(contract.abi)) {
+        throw new Error('preview invoke ABI is unavailable');
+      }
+      return Object.freeze({
+        abi: contract.abi,
+        address: getAddress(contract.address).toLowerCase(),
+        expectedFunction: config.func,
+      });
+    })
+  );
+}
+
+export function decodeCapturedCall({ decoders, step, transaction }) {
+  if (!step.startsWith('invoke.')) return null;
+  if (
+    !Array.isArray(decoders) ||
+    typeof transaction?.input !== 'string' ||
+    !HEX_PATTERN.test(transaction.input) ||
+    transaction.input.length < 10 ||
+    transaction.to === null ||
+    transaction.to === undefined
+  ) {
+    throw new Error('preview invoke decode context is invalid');
+  }
+  const selector = transaction.input.slice(0, 10);
+  const target = getAddress(transaction.to).toLowerCase();
+  const decodedCandidates = new Map();
+  for (const decoder of decoders) {
+    if (decoder.address !== target) continue;
+    const matches = decoder.abi.filter(
+      (item) =>
+        item?.type === 'function' &&
+        toFunctionSelector(item).toLowerCase() === selector
+    );
+    for (const item of matches) {
+      const signature = toFunctionSignature(item);
+      const cannonSignature = `${item.name}(${item.inputs
+        .map(({ type }) => type)
+        .join(',')})`;
+      if (
+        decoder.expectedFunction !== item.name &&
+        decoder.expectedFunction !== cannonSignature &&
+        decoder.expectedFunction !== signature
+      ) {
+        continue;
+      }
+      const decoded = decodeFunctionData({
+        abi: [item],
+        data: transaction.input,
+      });
+      const candidate = canonicalDecodedCall(
+        {
+          arguments: [...(decoded.args ?? [])],
+          function: signature,
+          selector,
+        },
+        transaction.input
+      );
+      decodedCandidates.set(JSON.stringify(candidate), candidate);
+    }
+  }
+  if (decodedCandidates.size !== 1) {
+    throw new Error('preview invoke calldata is not uniquely decodable');
+  }
+  return [...decodedCandidates.values()][0];
+}
+
 function canonicalCall(
-  { hash, receipt, step, transaction },
+  { decoded, hash, receipt, step, transaction },
   sequence,
   safeAddress,
   deployerAddress
@@ -169,8 +353,13 @@ function canonicalCall(
     transaction.to === null || transaction.to === undefined
       ? null
       : getAddress(transaction.to).toLowerCase();
+  const decodedCall = canonicalDecodedCall(decoded ?? null, transaction.input);
+  if (step.startsWith('invoke.') && decodedCall === null) {
+    throw new Error('preview invoke calldata is not decoded');
+  }
   return Object.freeze({
     data: transaction.input,
+    decoded: decodedCall,
     from: getAddress(transaction.from).toLowerCase(),
     gasUsed: receipt.gasUsed.toString(),
     sequence,
@@ -236,7 +425,7 @@ export function createPreviewResult({
   );
 
   return Object.freeze({
-    schemaVersion: 3,
+    schemaVersion: 4,
     type: 'reya-cannon-read-only-preview',
     commit,
     cannon: Object.freeze({
@@ -371,6 +560,7 @@ export async function runReadOnlyPreview(options) {
     throw new Error('preview requested an unapproved signer');
   };
   const skipped = [];
+  const decoderByStep = new Map();
   const runtime = new ChainBuilderRuntime(
     {
       allowPartialDeploy: false,
@@ -395,6 +585,17 @@ export async function runReadOnlyPreview(options) {
       }`
     );
   });
+  runtime.on(
+    Events.PostStepExecute,
+    (type, label, config, context, _result, depth) => {
+      if (type === 'invoke' && depth === 0) {
+        decoderByStep.set(
+          `${type}.${label}`,
+          createInvokeDecoders(config, context)
+        );
+      }
+    }
+  );
 
   await runtime.restoreMisc(startingDeployment.miscUrl);
   const chainDefinition = new ChainDefinition(definition);
@@ -432,6 +633,11 @@ export async function runReadOnlyPreview(options) {
     ]);
     calls.push({
       ...capturedTransaction,
+      decoded: decodeCapturedCall({
+        decoders: decoderByStep.get(capturedTransaction.step),
+        step: capturedTransaction.step,
+        transaction,
+      }),
       receipt,
       transaction,
     });

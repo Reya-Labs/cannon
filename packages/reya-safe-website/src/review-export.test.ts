@@ -31,7 +31,12 @@ function fixture() {
       safeAddress: SAFE,
       safeProposalCalls: [
         {
-          data: '0x1234' as const,
+          data: '0x3659cfe60000000000000000000000002222222222222222222222222222222222222222' as const,
+          decoded: {
+            arguments: ['0x2222222222222222222222222222222222222222'],
+            function: 'upgradeTo(address)',
+            selector: '0x3659cfe6' as const,
+          },
           from: SAFE,
           gasUsed: '42',
           senderRole: 'safe' as const,
@@ -87,11 +92,12 @@ describe('review snapshot export', () => {
         nonce: 7,
         transactionHash: HASH,
       },
-      schemaVersion: 1,
+      schemaVersion: 2,
       type: 'reya-cannon-safe-review',
     });
     expect(first.json).toContain('"partialDeploymentCid"');
     expect(first.json).toContain('"orderedCalls"');
+    expect(first.json).toContain('"decodedCalldata"');
     expect(first.json).not.toContain('"signature"');
     expect(first.json).not.toContain('"wallet"');
   });
