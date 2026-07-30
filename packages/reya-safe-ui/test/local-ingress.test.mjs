@@ -20,6 +20,7 @@ function config(overrides = {}) {
     port: 0,
     proxySecret: SECRET,
     rpcUrl: 'https://rpc.example.test/private',
+    safeAddress: SAFE,
     sourceCommit: COMMIT,
     sourceOrigin: 'http://127.0.0.1:8082',
     uiOrigin: UI_ORIGIN,
@@ -43,6 +44,17 @@ function rpcResponse(request, result) {
 
 test('local ingress exposes only bounded review reads and injects source identity', async (t) => {
   const observed = [];
+  const previewRequests = [];
+  const previewRunner = {
+    close() {},
+    async run(encoded) {
+      previewRequests.push(encoded);
+      return {
+        chainId: 1729,
+        type: 'reya-cannon-read-only-preview',
+      };
+    },
+  };
   const fetchImpl = async (url, init) => {
     if (url === 'https://rpc.example.test/private') {
       const request = JSON.parse(init.body);
@@ -86,7 +98,10 @@ test('local ingress exposes only bounded review reads and injects source identit
       status: 200,
     });
   };
-  const ingress = await createLocalIngress(config(), { fetchImpl });
+  const ingress = await createLocalIngress(config(), {
+    fetchImpl,
+    previewRunner,
+  });
   t.after(() => ingress.close());
   const address = ingress.server.address();
   assert.equal(typeof address, 'object');
@@ -137,6 +152,38 @@ test('local ingress exposes only bounded review reads and injects source identit
     jsonrpc: '2.0',
     result: '0x6c1',
   });
+
+  const previewRequest = {
+    chainId: 1729,
+    commit: COMMIT,
+    previousDeployCid: 'QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn',
+    safeAddress: SAFE,
+  };
+  const preview = await fetch(`${origin}/preview/1729`, {
+    body: JSON.stringify(previewRequest),
+    headers: {
+      'content-type': 'application/json',
+      origin: UI_ORIGIN,
+    },
+    method: 'POST',
+  });
+  assert.equal(preview.status, 200);
+  assert.deepEqual(await preview.json(), {
+    chainId: 1729,
+    type: 'reya-cannon-read-only-preview',
+  });
+  assert.deepEqual(previewRequests, [JSON.stringify(previewRequest)]);
+
+  const oversizedPreview = await fetch(`${origin}/preview/1729`, {
+    body: JSON.stringify({ padding: 'x'.repeat(1_024) }),
+    headers: {
+      'content-type': 'application/json',
+      origin: UI_ORIGIN,
+    },
+    method: 'POST',
+  });
+  assert.equal(oversizedPreview.status, 413);
+  assert.equal(previewRequests.length, 1);
 
   const registry = await fetch(`${origin}/registry/op/resolve`, {
     body: JSON.stringify({
@@ -436,6 +483,7 @@ test('local ingress configuration is fixed to loopback and does not expose RPC c
     REYA_LOCAL_UI_ORIGIN: UI_ORIGIN,
   };
   assert.equal(loadLocalIngressConfig(env).port, 8787);
+  assert.equal(loadLocalIngressConfig(env).safeAddress, SAFE);
   assert.throws(
     () =>
       loadLocalIngressConfig({
@@ -451,5 +499,13 @@ test('local ingress configuration is fixed to loopback and does not expose RPC c
         REYA_LOCAL_INGRESS_PORT: '8080',
       }),
     /must be 8787/
+  );
+  assert.throws(
+    () =>
+      loadLocalIngressConfig({
+        ...env,
+        REYA_LOCAL_SAFE_ADDRESS: '0x0000000000000000000000000000000000000000',
+      }),
+    /SAFE_ADDRESS is invalid/
   );
 });

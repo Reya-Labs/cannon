@@ -41,8 +41,8 @@ function preview(): {
     data: '0x1234',
     from: SAFE,
     gasUsed: '100',
-    senderRole: 'safe',
     sequence: 0,
+    senderRole: 'safe',
     step: 'invoke.upgrade',
     to: TARGET,
     transactionHash: HASH,
@@ -138,14 +138,33 @@ describe('Reya website preview admission', () => {
     ).toThrow('PREVIEW_REJECTED');
   });
 
+  it('admits the automatic current-state review mode but rejects other modes', () => {
+    const automatic = preview();
+    automatic.qaEvidence.mode = 'interactive-current-state';
+    expect(
+      parseReyaPreview(JSON.stringify(automatic), {
+        commit: COMMIT,
+        safeAddress: SAFE,
+      }).safeProposalCalls
+    ).toHaveLength(1);
+
+    automatic.qaEvidence.mode = 'production-authorized';
+    expect(() =>
+      parseReyaPreview(JSON.stringify(automatic), {
+        commit: COMMIT,
+        safeAddress: SAFE,
+      })
+    ).toThrow('PREVIEW_REJECTED');
+  });
+
   it('keeps deployer prerequisites visible and non-stageable', () => {
     const candidate = preview();
     const prerequisite: FixtureCall = {
       data: '0x',
       from: DEPLOYER,
       gasUsed: '50',
-      senderRole: 'deployer',
       sequence: 0,
+      senderRole: 'deployer',
       step: 'deploy.create',
       to: null,
       transactionHash: `0x${'ab'.repeat(32)}`,

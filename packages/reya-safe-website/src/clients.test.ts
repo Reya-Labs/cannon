@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createLoopbackFetch, verifyAbiSelector } from './clients';
+import { createLoopbackFetch, createReyaLocalClients, verifyAbiSelector } from './clients';
 
 const VIRTUAL_ORIGIN = 'https://cannon-api.reya-local.ts.net';
 const INGRESS_ORIGIN = 'http://127.0.0.1:8787';
@@ -28,6 +28,47 @@ describe('local client transport', () => {
     const [target, options] = fetchMock.mock.calls[0]!;
     expect(String(target)).toBe(`${INGRESS_ORIGIN}/artifacts/api/v0/cat?arg=${cid}`);
     expect(options).toBe(init);
+  });
+
+  it('generates one canonical preview request through the fixed ingress route', async () => {
+    const encoded = '{"schemaVersion":2}';
+    const fetchMock = vi.fn(async (...args: Parameters<typeof fetch>) => {
+      void args;
+      return new Response(encoded, {
+        headers: {
+          'content-length': String(encoded.length),
+          'content-type': 'application/json',
+        },
+        status: 200,
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const commit = '0123456789abcdef0123456789abcdef01234567';
+    const safeAddress = '0x1111111111111111111111111111111111111111' as const;
+    const previousDeployCid = 'QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn';
+    const clients = createReyaLocalClients({
+      chainId: 1729,
+      ingressOrigin: INGRESS_ORIGIN,
+      safeAddress,
+      sourceCommit: commit,
+    });
+
+    await expect(
+      clients.preview.generate({
+        previousDeployCid,
+      })
+    ).resolves.toBe(encoded);
+    const [target, options] = fetchMock.mock.calls[0]!;
+    expect(String(target)).toBe(`${INGRESS_ORIGIN}/preview/1729`);
+    expect(options?.method).toBe('POST');
+    expect(options?.body).toBe(
+      JSON.stringify({
+        chainId: 1729,
+        commit,
+        previousDeployCid,
+        safeAddress,
+      })
+    );
   });
 
   it.each([

@@ -19,6 +19,8 @@ export REYA_LOCAL_IDENTITY=<stable-local-qa-identity>
 export REYA_CANNON_QA_RPC_URL=<secret-reya-rpc-url>
 export REYA_LOCAL_UI_ORIGIN=http://127.0.0.1:3000
 export REYA_LOCAL_INGRESS_ORIGIN=http://127.0.0.1:8787
+export REYA_LOCAL_ARTIFACT_CACHE=/absolute/path/to/reya-cannon-artifacts
+export REYA_LOCAL_SOURCE_REPOSITORY=/absolute/path/to/reya-deployments
 ```
 
 Optional overrides:
@@ -54,7 +56,10 @@ size, and the browser independently recomputes the content CID.
 Start the loopback-only ingress. It probes the server-side RPC URL for chain
 `1729`, strips all browser-supplied identity headers, injects the local QA
 identity for the source gateway, and allows only the reviewed RPC, source,
-artifact and OP-registry reads. Staging routes are absent.
+artifact, OP-registry and interactive-preview routes. The preview route accepts
+one canonical request bound to the configured source commit, Safe, Cannonfile
+and previous CID. It controls no path, RPC URL, signer or package resolution.
+Staging routes are absent.
 `REYA_CANNON_OP_RPC_URL` is optional at process startup; when absent, package
 aliases fail closed while exact CID reads continue to work:
 
@@ -70,18 +75,24 @@ pnpm --filter @reya/cannon-safe-website scan
 pnpm --filter @reya/cannon-safe-website serve
 ```
 
-Open `http://127.0.0.1:3000`. The deployment source accepts only the approved
-immutable Cannonfile URL or an exact CIDv0. The previous-package input accepts
-an exact CID or `reya-omnibus:<version-or-latest>@main`; an OP Mainnet alias is
-resolved once and the exact resulting version and CID are displayed.
+Open `http://127.0.0.1:3000`. Automatic preview currently requires the approved
+immutable Cannonfile URL. The previous-package input accepts an exact CID or
+`reya-omnibus:<version-or-latest>@main`; an OP Mainnet alias is resolved once
+and the exact resulting version and CID are displayed.
 
-Import only a preview JSON created by `preview:local` from the same Safe and
-source commit. The browser checks its bounded schema and public provenance
-fields, including the source-bundle digest and previous CID, for review. The
-imported file is not authenticated or independently recomputed, so this slice
-never enables signing or staging from it. The production preview worker must
-recompute the calls and bind authenticated evidence to both the source and
-selected deployment CID before that capability can be activated.
+Selecting **Preview Transactions to Queue** automatically rebuilds the pinned
+Cannonfile against a fresh disposable Anvil fork of current Reya state. The
+loopback runner loads only the server-configured immutable source closure and
+CID-verified artifact cache, permits one build at a time, and returns the
+ordered calls directly to the browser. No preview file is uploaded.
+
+This interactive path deliberately uses current RPC state so it works with a
+latest-only Reya endpoint. It is useful for operator review but is not
+reproducible evidence: signing and staging remain disabled. The separate
+`preview:local` CLI continues to require an exact readable finalized block and
+remains the fail-closed reproducibility check. Production signing requires the
+reviewed preview service to bind authenticated evidence to the source, selected
+deployment CID, Safe and nonce.
 
 Connecting a wallet is optional and read-only: it verifies that the selected
 account is a current owner of the configured Safe. No typed-data signature,

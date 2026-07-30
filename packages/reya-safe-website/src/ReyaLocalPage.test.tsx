@@ -18,6 +18,7 @@ const CANNONFILE =
   'packages/tomls/src/omnibus/reya_network.toml';
 
 const mocks = vi.hoisted(() => ({
+  generatePreview: vi.fn(),
   loadDeployment: vi.fn(),
   loadPrevious: vi.fn(),
   parsePreview: vi.fn(),
@@ -25,6 +26,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('./clients', () => ({
   createReyaLocalClients: () => ({
+    preview: {
+      generate: mocks.generatePreview,
+    },
     read: {
       artifacts: {},
       registry: {},
@@ -89,6 +93,7 @@ describe('Reya Queue Deployment page', () => {
       },
       inputKind: 'op-registry',
     });
+    mocks.generatePreview.mockResolvedValue('{}');
     mocks.parsePreview.mockReturnValue({
       commit: COMMIT,
       deployerPrerequisiteCount: 0,
@@ -138,18 +143,7 @@ describe('Reya Queue Deployment page', () => {
     const previousInput = screen.getByLabelText(
       'Previous package'
     ) as HTMLInputElement;
-    const fileInput = screen.getByLabelText(
-      'Cannon preview evidence'
-    ) as HTMLInputElement;
-
     fireEvent.change(deploymentInput, { target: { value: CANNONFILE } });
-    const evidence = new File(['{}'], 'preview.json', {
-      type: 'application/json',
-    });
-    Object.defineProperty(evidence, 'text', {
-      value: async () => '{}',
-    });
-    fireEvent.change(fileInput, { target: { files: [evidence] } });
     fireEvent.click(
       screen.getByRole('button', { name: 'Preview Transactions to Queue' })
     );
@@ -157,7 +151,6 @@ describe('Reya Queue Deployment page', () => {
     await waitFor(() => {
       expect(deploymentInput.disabled).toBe(true);
       expect(previousInput.disabled).toBe(true);
-      expect(fileInput.disabled).toBe(true);
     });
 
     await act(async () => {
@@ -172,6 +165,10 @@ describe('Reya Queue Deployment page', () => {
     await screen.findByText(
       '1 ordered Safe call(s) · 0 deployer prerequisite(s)'
     );
+    expect(mocks.generatePreview).toHaveBeenCalledWith({
+      previousDeployCid: CID,
+    });
+    expect(screen.queryByLabelText('Cannon preview evidence')).toBeNull();
     expect(
       (
         screen.getByRole('button', {

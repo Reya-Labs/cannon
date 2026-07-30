@@ -7,6 +7,8 @@ const SOURCE_PATTERN =
   /^\/source\/reya-deployments\/([0-9a-f]{40})\/reya-network$/;
 const OP_REGISTRY_PATH = '/registry/op/resolve';
 const ARTIFACT_PATH = '/artifacts/api/v0/cat';
+const PREVIEW_PATH = '/preview/1729';
+const ADDRESS_PATTERN = /^0x[0-9a-f]{40}$/;
 const CID_PATTERN = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
 const MAX_REQUEST_BYTES = 1024 * 1024;
 const MAX_REQUEST_CHUNKS = 4096;
@@ -120,6 +122,13 @@ export function loadLocalIngressConfig(env = process.env) {
   if (!HEADER_VALUE_PATTERN.test(identity)) {
     throw new Error('REYA_LOCAL_IDENTITY is invalid');
   }
+  const safeAddress = required(env, 'REYA_LOCAL_SAFE_ADDRESS');
+  if (
+    !ADDRESS_PATTERN.test(safeAddress) ||
+    safeAddress === `0x${'0'.repeat(40)}`
+  ) {
+    throw new Error('REYA_LOCAL_SAFE_ADDRESS is invalid');
+  }
   if (
     env.REYA_LOCAL_INGRESS_PORT !== undefined &&
     env.REYA_LOCAL_INGRESS_PORT !== '8787'
@@ -140,6 +149,7 @@ export function loadLocalIngressConfig(env = process.env) {
     port: 8787,
     proxySecret,
     rpcUrl: canonicalRpcUrl(required(env, 'REYA_CANNON_QA_RPC_URL')),
+    safeAddress,
     sourceCommit,
     sourceOrigin: canonicalLoopbackOrigin(
       env.REYA_LOCAL_SOURCE_ORIGIN ?? defaultLoopbackOrigin(8082),
@@ -228,6 +238,7 @@ function reject(response, status, code) {
 
 function routeAllows(config, pathname, method) {
   if (pathname === '/rpc/1729') return method === 'POST';
+  if (pathname === PREVIEW_PATH) return method === 'POST';
   if (pathname === OP_REGISTRY_PATH) return method === 'POST';
   if (pathname === ARTIFACT_PATH) return method === 'POST';
   const source = SOURCE_PATTERN.exec(pathname);
@@ -362,10 +373,18 @@ async function readSource(config, path, fetchImpl) {
 
 export async function createLocalIngress(
   config,
-  { fetchImpl = globalThis.fetch } = {}
+  { fetchImpl = globalThis.fetch, previewRunner = null } = {}
 ) {
   if (typeof fetchImpl !== 'function') {
     throw new Error('local ingress fetch implementation is invalid');
+  }
+  if (
+    previewRunner !== null &&
+    (typeof previewRunner !== 'object' ||
+      typeof previewRunner.run !== 'function' ||
+      typeof previewRunner.close !== 'function')
+  ) {
+    throw new Error('local ingress preview runner is invalid');
   }
   const chainProbe = Buffer.from(
     JSON.stringify({
@@ -416,6 +435,30 @@ export async function createLocalIngress(
           await readRequest(request, 128 * 1024),
           fetchImpl
         );
+        response.writeHead(200, {
+          'content-length': String(body.byteLength),
+          'content-type': 'application/json',
+        });
+        response.end(body);
+        return;
+      }
+
+      if (
+        url.pathname === PREVIEW_PATH &&
+        request.method === 'POST' &&
+        url.search === ''
+      ) {
+        requireJsonRequest(request);
+        if (previewRunner === null) {
+          throw new Error('interactive preview runner is unavailable');
+        }
+        const encoded = (await readRequest(request, 1_024)).toString('utf8');
+        const body = Buffer.from(
+          JSON.stringify(await previewRunner.run(encoded))
+        );
+        if (body.byteLength > MAX_RESPONSE_BYTES) {
+          throw new Error('interactive preview response is too large');
+        }
         response.writeHead(200, {
           'content-length': String(body.byteLength),
           'content-type': 'application/json',
@@ -573,10 +616,12 @@ export async function createLocalIngress(
   });
 
   return Object.freeze({
-    close: () =>
-      new Promise((resolve, reject) => {
+    close: async () => {
+      previewRunner?.close();
+      await new Promise((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
-      }),
+      });
+    },
     server,
   });
 }

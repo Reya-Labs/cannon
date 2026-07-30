@@ -156,3 +156,19 @@ test('rejects an interrupted fork before starting Anvil', async () => {
     /local fork lifecycle is invalid/
   );
 });
+
+test('keeps latest-state interactive mode distinct from pinned replay', async () => {
+  await assert.rejects(
+    createLocalAnvilFork({
+      forkBlock: {
+        blockHash: HASH,
+        blockNumber: '42',
+      },
+      forkMode: 'interactive-latest',
+      safeAddress: SAFE,
+      signal: new AbortController().signal,
+      upstreamRpcUrl: 'https://rpc.example.invalid/token',
+    }),
+    /local fork mode is invalid/
+  );
+});

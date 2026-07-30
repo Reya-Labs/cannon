@@ -24,6 +24,36 @@ test('ephemeral overlay produces stable Cannon CIDs without external writes', as
   assert.deepEqual(reads, []);
 });
 
+test('ephemeral overlay matches Cannon bigint and date JSON semantics without invoking prototypes', async () => {
+  const overlay = createEphemeralArtifactOverlay({
+    allowedCids: new Set(),
+    baseLoader: {
+      async read() {
+        throw new Error('must not read');
+      },
+    },
+  });
+  const date = new Date('2026-07-29T00:00:00.000Z');
+  const url = await overlay.loader.put({
+    array: [undefined],
+    date,
+    integer: 1729n,
+    omitted: undefined,
+  });
+
+  assert.deepEqual(await overlay.loader.read(url), {
+    array: [null],
+    date: '2026-07-29T00:00:00.000Z',
+    integer: '1729',
+  });
+  Object.defineProperty(date, 'toJSON', {
+    value() {
+      throw new Error('must not invoke');
+    },
+  });
+  await assert.rejects(overlay.loader.put({ date }), /not JSON serializable/);
+});
+
 test('ephemeral overlay delegates immutable cache reads and rejects removal', async () => {
   const cid = 'QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn';
   const overlay = createEphemeralArtifactOverlay({
@@ -73,8 +103,5 @@ test('ephemeral overlay bounds JSON before cloning or compression', async () => 
       throw new Error('must not invoke');
     },
   });
-  await assert.rejects(
-    overlay.loader.put(accessor),
-    /not JSON serializable/
-  );
+  await assert.rejects(overlay.loader.put(accessor), /not JSON serializable/);
 });

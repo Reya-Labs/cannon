@@ -1,7 +1,4 @@
-import {
-  compress,
-  getContentCID,
-} from '@usecannon/artifact-codec';
+import { compress, getContentCID } from '@usecannon/artifact-codec';
 
 const CID_URL_PATTERN = /^ipfs:\/\/(Qm[1-9A-HJ-NP-Za-km-z]{44})$/;
 const MAX_EPHEMERAL_ARTIFACTS = 256;
@@ -10,6 +7,31 @@ const MAX_EPHEMERAL_TOTAL_BYTES = 128 * 1024 * 1024;
 const MAX_JSON_DEPTH = 64;
 const MAX_JSON_NODES = 1_000_000;
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function unsupportedJsonObject(candidate) {
+  const prototype = Object.getPrototypeOf(candidate);
+  const constructor = Object.getOwnPropertyDescriptor(
+    prototype,
+    'constructor'
+  )?.value;
+  const constructorName =
+    typeof constructor === 'function'
+      ? Object.getOwnPropertyDescriptor(constructor, 'name')?.value
+      : undefined;
+  const kind = Buffer.isBuffer(candidate)
+    ? 'Buffer'
+    : ArrayBuffer.isView(candidate)
+    ? 'typed array'
+    : candidate instanceof Map
+    ? 'Map'
+    : candidate instanceof Set
+    ? 'Set'
+    : typeof constructorName === 'string' &&
+      /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(constructorName)
+    ? constructorName
+    : 'object';
+  return new Error(`ephemeral artifact is not JSON serializable: ${kind}`);
+}
 
 function boundedJson(value, maximumBytes) {
   let nodes = 0;
@@ -34,15 +56,8 @@ function boundedJson(value, maximumBytes) {
         code === 0x0d
       ) {
         addBytes(2);
-      } else if (
-        code < 0x20 ||
-        (code >= 0xd800 && code <= 0xdfff)
-      ) {
-        if (
-          code >= 0xd800 &&
-          code <= 0xdbff &&
-          index + 1 < text.length
-        ) {
+      } else if (code < 0x20 || (code >= 0xd800 && code <= 0xdfff)) {
+        if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.length) {
           const low = text.charCodeAt(index + 1);
           if (low >= 0xdc00 && low <= 0xdfff) {
             addBytes(4);
@@ -60,28 +75,38 @@ function boundedJson(value, maximumBytes) {
       }
     }
   };
-  const visit = (candidate, depth) => {
+  const visit = (candidate, depth, container) => {
     nodes += 1;
     if (nodes > MAX_JSON_NODES || depth > MAX_JSON_DEPTH) {
       throw new Error('ephemeral artifact JSON exceeds structural limits');
     }
-    if (
-      candidate === null ||
-      typeof candidate === 'boolean'
-    ) {
+    if (candidate === undefined && container === 'array') {
+      addBytes(4);
+      return null;
+    }
+    if (candidate === undefined) {
+      throw new Error('ephemeral artifact is not JSON serializable');
+    }
+    if (candidate === null || typeof candidate === 'boolean') {
       addBytes(candidate === null || candidate === true ? 4 : 5);
-      return;
+      return candidate;
     }
     if (typeof candidate === 'number') {
       if (!Number.isFinite(candidate)) {
         throw new Error('ephemeral artifact is not JSON serializable');
       }
-      addBytes(String(Object.is(candidate, -0) ? 0 : candidate).length);
-      return;
+      const normalized = Object.is(candidate, -0) ? 0 : candidate;
+      addBytes(String(normalized).length);
+      return normalized;
+    }
+    if (typeof candidate === 'bigint') {
+      const normalized = candidate.toString();
+      addJsonString(normalized);
+      return normalized;
     }
     if (typeof candidate === 'string') {
       addJsonString(candidate);
-      return;
+      return candidate;
     }
     if (Array.isArray(candidate)) {
       const keys = Reflect.ownKeys(candidate);
@@ -98,16 +123,32 @@ function boundedJson(value, maximumBytes) {
         throw new Error('ephemeral artifact is not JSON serializable');
       }
       addBytes(2 + Math.max(0, candidate.length - 1));
-      for (const child of candidate) visit(child, depth + 1);
-      return;
+      return candidate.map((child) => visit(child, depth + 1, 'array'));
+    }
+    if (
+      typeof candidate === 'object' &&
+      Object.getPrototypeOf(candidate) === Date.prototype
+    ) {
+      if (Reflect.ownKeys(candidate).length !== 0) {
+        throw new Error('ephemeral artifact is not JSON serializable');
+      }
+      let normalized;
+      try {
+        normalized = Date.prototype.toISOString.call(candidate);
+      } catch {
+        throw new Error('ephemeral artifact is not JSON serializable');
+      }
+      addJsonString(normalized);
+      return normalized;
     }
     if (
       candidate === null ||
       typeof candidate !== 'object' ||
       ![Object.prototype, null].includes(Object.getPrototypeOf(candidate))
     ) {
-      throw new Error('ephemeral artifact is not JSON serializable');
+      throw unsupportedJsonObject(candidate);
     }
+    const normalized = Object.create(null);
     let observedKeys = 0;
     for (const key of Reflect.ownKeys(candidate)) {
       if (typeof key !== 'string' || FORBIDDEN_KEYS.has(key)) {
@@ -121,19 +162,26 @@ function boundedJson(value, maximumBytes) {
       ) {
         throw new Error('ephemeral artifact is not JSON serializable');
       }
+      if (descriptor.value === undefined) continue;
       if (observedKeys > 0) addBytes(1);
       observedKeys += 1;
       addJsonString(key);
       addBytes(1);
-      visit(descriptor.value, depth + 1);
+      Object.defineProperty(normalized, key, {
+        configurable: true,
+        enumerable: true,
+        value: visit(descriptor.value, depth + 1, 'object'),
+        writable: true,
+      });
     }
     addBytes(2);
+    return normalized;
   };
-  visit(value, 0);
+  const normalized = visit(value, 0, 'root');
 
   let serialized;
   try {
-    serialized = JSON.stringify(value);
+    serialized = JSON.stringify(normalized);
   } catch {
     throw new Error('ephemeral artifact is not JSON serializable');
   }
@@ -205,9 +253,7 @@ export function createEphemeralArtifactOverlay({
       return `ipfs://${cid}`;
     },
     async list() {
-      return [...values.keys()]
-        .sort()
-        .map((cid) => `ipfs://${cid}`);
+      return [...values.keys()].sort().map((cid) => `ipfs://${cid}`);
     },
     remove() {
       throw new Error('ephemeral artifacts cannot be removed during a run');

@@ -2,6 +2,10 @@ import {
   createLocalIngress,
   loadLocalIngressConfig,
 } from '../src/local-ingress.mjs';
+import {
+  createInteractiveLocalPreviewRunner,
+  loadInteractiveLocalPreviewConfig,
+} from '../src/interactive-local-preview.mjs';
 
 function safeStartupReason(error) {
   const message = error instanceof Error ? error.message : '';
@@ -20,7 +24,14 @@ function safeStartupReason(error) {
 
 try {
   const config = loadLocalIngressConfig();
-  const ingress = await createLocalIngress(config);
+  const previewConfig = loadInteractiveLocalPreviewConfig();
+  const previewRunner = createInteractiveLocalPreviewRunner({
+    ...previewConfig,
+    rpcUrl: config.rpcUrl,
+    safeAddress: config.safeAddress,
+    sourceCommit: config.sourceCommit,
+  });
+  const ingress = await createLocalIngress(config, { previewRunner });
   process.stdout.write(
     `Reya local ingress listening on http://127.0.0.1:${config.port}; chain=1729; safe=${config.safeAddress}\n`
   );

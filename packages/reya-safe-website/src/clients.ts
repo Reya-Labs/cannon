@@ -13,7 +13,9 @@ const VIRTUAL_SERVICE_ORIGIN = 'https://cannon-api.reya-local.ts.net';
 const CID_PATTERN = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 const SOURCE_ROUTE_SUFFIX = '/reya-network';
-const EXACT_READ_PATHS: ReadonlySet<string> = new Set([OP_REGISTRY_RESOLVE_PATH, RPC_ROUTE_PATH]);
+const PREVIEW_PATH = '/preview/1729';
+const MAX_PREVIEW_BYTES = 16 * 1024 * 1024;
+const EXACT_READ_PATHS: ReadonlySet<string> = new Set([OP_REGISTRY_RESOLVE_PATH, PREVIEW_PATH, RPC_ROUTE_PATH]);
 
 function allowedSourcePath(pathname: string): boolean {
   if (!pathname.startsWith(SOURCE_ROUTE_PREFIX) || !pathname.endsWith(SOURCE_ROUTE_SUFFIX)) {
@@ -33,6 +35,39 @@ function allowedVirtualUrl(url: URL): boolean {
     return keys.length === 1 && keys[0] === 'arg' && cid !== null && CID_PATTERN.test(cid) && url.search === `?arg=${cid}`;
   }
   return url.search === '' && (EXACT_READ_PATHS.has(url.pathname) || allowedSourcePath(url.pathname));
+}
+
+async function boundedResponseText(response: Response, declaredBytes: number): Promise<string> {
+  if (response.body === null) {
+    throw new Error('AUTOMATIC_PREVIEW_FAILED');
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  for (;;) {
+    const part = await reader.read();
+    if (part.done) break;
+    length += part.value.byteLength;
+    if (length > declaredBytes || length > MAX_PREVIEW_BYTES) {
+      await reader.cancel();
+      throw new Error('AUTOMATIC_PREVIEW_FAILED');
+    }
+    chunks.push(part.value);
+  }
+  if (length !== declaredBytes) {
+    throw new Error('AUTOMATIC_PREVIEW_FAILED');
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error('AUTOMATIC_PREVIEW_FAILED');
+  }
 }
 
 /**
@@ -83,6 +118,39 @@ export function createReyaLocalClients(config: ReyaLocalProfileConfig) {
     verifyArtifactCid: (bytes: Uint8Array) => getContentCID(bytes),
   });
   return Object.freeze({
+    preview: Object.freeze({
+      async generate(input: { previousDeployCid: string }): Promise<string> {
+        const response = await fetchImpl(`${VIRTUAL_SERVICE_ORIGIN}${PREVIEW_PATH}`, {
+          body: JSON.stringify({
+            chainId: 1729,
+            commit: config.sourceCommit,
+            previousDeployCid: input.previousDeployCid,
+            safeAddress: config.safeAddress,
+          }),
+          headers: {
+            accept: 'application/json',
+            'content-type': 'application/json',
+          },
+          method: 'POST',
+          redirect: 'error',
+          signal: AbortSignal.timeout(10 * 60_000),
+        });
+        const declared = response.headers.get('content-length');
+        if (
+          response.status !== 200 ||
+          response.redirected ||
+          response.headers.get('content-type')?.split(';', 1)[0].trim() !== 'application/json' ||
+          declared === null ||
+          !/^(?:0|[1-9][0-9]*)$/.test(declared) ||
+          Number(declared) < 2 ||
+          Number(declared) > MAX_PREVIEW_BYTES
+        ) {
+          await response.body?.cancel();
+          throw new Error(response.status === 409 ? 'PREVIEW_ALREADY_RUNNING' : 'AUTOMATIC_PREVIEW_FAILED');
+        }
+        return boundedResponseText(response, Number(declared));
+      },
+    }),
     read,
   });
 }
