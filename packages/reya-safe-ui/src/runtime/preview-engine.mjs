@@ -170,6 +170,18 @@ function snapshotDecodedValue(value, depth = 0) {
   throw new Error('preview decoded calldata value is invalid');
 }
 
+function hasUnsafeFunctionSignatureCharacter(value) {
+  return Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0);
+    return (
+      character.trim() === '' ||
+      codePoint === undefined ||
+      codePoint <= 0x1f ||
+      codePoint === 0x7f
+    );
+  });
+}
+
 function canonicalDecodedCall(value, data) {
   if (value === null) return null;
   if (
@@ -179,7 +191,7 @@ function canonicalDecodedCall(value, data) {
     value.function.length > 1024 ||
     !/^[A-Za-z_$][A-Za-z0-9_$]*\(/.test(value.function) ||
     !value.function.endsWith(')') ||
-    /[\s\u0000-\u001f\u007f]/.test(value.function) ||
+    hasUnsafeFunctionSignatureCharacter(value.function) ||
     typeof value.selector !== 'string' ||
     !/^0x[0-9a-f]{8}$/.test(value.selector) ||
     value.selector !== data.slice(0, 10) ||

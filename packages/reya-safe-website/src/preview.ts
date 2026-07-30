@@ -105,6 +105,13 @@ function decodedValue(value: unknown, depth = 0): ReyaDecodedValue {
   return Object.freeze(Object.fromEntries(keys.map((key) => [key, decodedValue(candidate[key], depth + 1)])));
 }
 
+function hasUnsafeFunctionSignatureCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0);
+    return character.trim() === '' || codePoint === undefined || codePoint <= 0x1f || codePoint === 0x7f;
+  });
+}
+
 function decodedCall(value: unknown, data: string, step: string): ReyaDecodedCall | null {
   if (value === null) {
     if (step.startsWith('invoke.')) throw new Error('PREVIEW_REJECTED');
@@ -118,7 +125,7 @@ function decodedCall(value: unknown, data: string, step: string): ReyaDecodedCal
     candidate.function.length > 1024 ||
     !/^[A-Za-z_$][A-Za-z0-9_$]*\(/.test(candidate.function) ||
     !candidate.function.endsWith(')') ||
-    /[\s\u0000-\u001f\u007f]/.test(candidate.function) ||
+    hasUnsafeFunctionSignatureCharacter(candidate.function) ||
     typeof candidate.selector !== 'string' ||
     !/^0x[0-9a-f]{8}$/.test(candidate.selector) ||
     candidate.selector !== data.slice(0, 10) ||
