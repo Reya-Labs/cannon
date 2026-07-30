@@ -2,6 +2,7 @@
 module.exports = {
   content: [
     './src/**/*.{ts,tsx}',
+    './scripts/build-reya-local-profile.mjs',
     '../website/src/components/ui/{alert,button}.tsx',
     '../website/src/lib/utils.ts',
   ],
