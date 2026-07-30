@@ -174,6 +174,13 @@ review acknowledgement. The signer permits only `eth_signTypedData_v4` for the
 exact displayed payload. The staging client submits once and never
 automatically retries an ambiguous mutation.
 
+The page also reads the one active proposal at the current Safe nonce. It
+independently recovers each current-owner signature, shows owner and threshold
+progress, and permits another owner to sign only after their locally generated
+review matches the shared transaction exactly. Reaching threshold does not add
+an execution method: execution and broadcast remain excluded pending a
+separate security review and activation decision.
+
 The ingress permits only `GET` and `POST` on the configured
 `/staging/1729/<safe>` route. It supplies the local identity and proposer role
 server-side and rejects alternate Safes, supersession and browser-supplied

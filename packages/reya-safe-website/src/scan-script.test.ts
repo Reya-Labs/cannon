@@ -20,7 +20,7 @@ async function validFixture() {
     writeFile(root + '/app.css', 'body{}'),
     writeFile(
       root + '/app.js',
-      'Local canary only; Sign and stage local proposal; PREVIEW_CHANGED_REVIEW_REQUIRED; eth_signTypedData_v4; Execution and broadcast remain unavailable'
+      'Shared Safe proposal; Sign and stage proposal; PREVIEW_CHANGED_REVIEW_REQUIRED; SHARED_PROPOSAL_REVIEW_MISMATCH; eth_signTypedData_v4; Execution and broadcast remain unavailable; Execution pending security review'
     ),
     writeFile(
       root + '/index.html',

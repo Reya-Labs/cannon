@@ -98,7 +98,7 @@ export async function readReyaSafeState(rpc: RpcClient, safeAddress: `0x${string
 
   return Object.freeze({
     nonce: Number(nonce),
-    owners: Object.freeze(owners.map((owner) => getAddress(owner).toLowerCase()).sort()),
+    owners: Object.freeze(owners.map((owner) => getAddress(owner).toLowerCase() as `0x${string}`).sort()),
     threshold: Number(threshold),
   });
 }

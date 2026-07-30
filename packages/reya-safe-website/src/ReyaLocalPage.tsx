@@ -24,6 +24,11 @@ import {
 import { ReyaLocalProfileConfig } from './profile-config';
 import { createReviewExport } from './review-export';
 import { readReyaSafeState } from './safe-state';
+import {
+  inspectSharedProposal,
+  sharedProposalMatchesReview,
+  type SharedProposalStatus,
+} from './shared-proposal';
 import { walletTypedData } from './wallet-request';
 import { getAddress, isAddress } from 'viem';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -94,10 +99,44 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
   const [stagedProposal, setStagedProposal] = useState<StagedProposal | null>(
     null
   );
+  const [sharedProposal, setSharedProposal] =
+    useState<SharedProposalStatus | null>(null);
+  const [sharedProposalLoaded, setSharedProposalLoaded] = useState(false);
+  const [proposalRefreshing, setProposalRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Loading Reya state…');
   const [error, setError] = useState<string | null>(null);
   const formRevision = useRef(0);
+
+  const refreshSharedProposal = useCallback(
+    async (state: SafeState) => {
+      const activation = clients.activation;
+      if (!activation) {
+        setSharedProposal(null);
+        setSharedProposalLoaded(true);
+        return null;
+      }
+
+      setProposalRefreshing(true);
+      setSharedProposalLoaded(false);
+      try {
+        const current = await activation.staging.current();
+        const inspected = current
+          ? await inspectSharedProposal({
+              proposal: current,
+              safeAddress: config.safeAddress,
+              safeState: state,
+            })
+          : null;
+        setSharedProposal(inspected);
+        setSharedProposalLoaded(true);
+        return inspected;
+      } finally {
+        setProposalRefreshing(false);
+      }
+    },
+    [clients, config.safeAddress]
+  );
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -106,9 +145,14 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
       readReyaSafeState(clients.read.rpc, config.safeAddress),
     ]);
     setSafeState(state);
-    setStatus('Source, Reya RPC and Safe reads are ready.');
+    await refreshSharedProposal(state);
+    setStatus(
+      clients.activation
+        ? 'Source, Reya RPC, Safe and shared proposal reads are ready.'
+        : 'Source, Reya RPC and Safe reads are ready.'
+    );
     return { source, state };
-  }, [clients, config]);
+  }, [clients, config, refreshSharedProposal]);
 
   useEffect(() => {
     void refresh().catch((cause) => {
@@ -155,6 +199,15 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
       return null;
     }
   }, [config.safeAddress, transaction]);
+
+  const reviewMatchesSharedProposal = useMemo(() => {
+    if (!sharedProposal || !transaction || !safeTxHash) return false;
+    return sharedProposalMatchesReview(sharedProposal, transaction, safeTxHash);
+  }, [safeTxHash, sharedProposal, transaction]);
+
+  const connectedOwnerAlreadySigned =
+    walletAddress !== null &&
+    sharedProposal?.signedOwners.includes(walletAddress) === true;
 
   const reviewExport = useMemo(() => {
     if (
@@ -329,6 +382,31 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
     }
   };
 
+  const refreshProposalStatus = async () => {
+    setError(null);
+    setStagedProposal(null);
+    if (!clients.activation) {
+      setError('SHARED_PROPOSAL_UNAVAILABLE');
+      return;
+    }
+    try {
+      const state = await readReyaSafeState(
+        clients.read.rpc,
+        config.safeAddress
+      );
+      setSafeState(state);
+      const current = await refreshSharedProposal(state);
+      setStatus(
+        current
+          ? 'Refreshed the active shared Safe proposal.'
+          : 'No active shared Safe proposal exists at the current nonce.'
+      );
+    } catch (cause) {
+      setSharedProposalLoaded(false);
+      setError(displayError(cause));
+    }
+  };
+
   const downloadReview = () => {
     if (!reviewExport) {
       setError('REVIEW_EXPORT_UNAVAILABLE');
@@ -378,6 +456,18 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
         setReviewAcknowledged(false);
         throw new Error('PREVIEW_CHANGED_REVIEW_REQUIRED');
       }
+      const currentShared = await refreshSharedProposal(regenerated.safeState);
+      if (
+        currentShared &&
+        !sharedProposalMatchesReview(
+          currentShared,
+          regenerated.transaction,
+          regenerated.review.value.safe.transactionHash
+        )
+      ) {
+        setReviewAcknowledged(false);
+        throw new Error('SHARED_PROPOSAL_REVIEW_MISMATCH');
+      }
       const ownerAddress = await currentWallet(
         provider,
         regenerated.safeState,
@@ -387,6 +477,9 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
         setWalletAddress(null);
         setReviewAcknowledged(false);
         throw new Error('WALLET_CONTEXT_REJECTED');
+      }
+      if (currentShared?.signedOwners.includes(ownerAddress)) {
+        throw new Error('OWNER_SIGNATURE_ALREADY_RECORDED');
       }
       const signing = activation.createSigningClient(async (request) => {
         const encoded = walletTypedData(
@@ -419,6 +512,13 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
         signature: signed.signature,
         txn: regenerated.transaction,
       });
+      const updatedShared = await inspectSharedProposal({
+        proposal: result.proposal,
+        safeAddress: config.safeAddress,
+        safeState: regenerated.safeState,
+      });
+      setSharedProposal(updatedShared);
+      setSharedProposalLoaded(true);
       setStagedProposal(
         Object.freeze({
           created: result.created,
@@ -428,8 +528,8 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
       );
       setStatus(
         result.created
-          ? 'Created the local canary Safe proposal.'
-          : 'Added this owner signature to the local canary Safe proposal.'
+          ? 'Created the shared Safe proposal.'
+          : 'Added this owner signature to the shared Safe proposal.'
       );
     } catch (cause) {
       setError(displayError(cause));
@@ -449,14 +549,14 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
             <h1 className="text-2xl font-semibold">Queue Deployment</h1>
             <p className="mt-2 text-xs text-slate-500">
               {config.stagingEnabled
-                ? 'Local canary signing and proposal staging are enabled. Execution and broadcast remain unavailable.'
+                ? 'Shared proposal discovery and owner signing are enabled. Execution and broadcast remain unavailable.'
                 : 'This review-only profile has no signing, staging, execution or broadcast method.'}
             </p>
           </div>
           <div className="text-xs text-slate-500 md:text-right">
             <p>
               {config.stagingEnabled
-                ? 'Local canary · staging enabled · execution disabled'
+                ? 'Shared staging enabled · execution disabled'
                 : 'Review only · signing disabled · publishing disabled'}
             </p>
             <p className="mt-1">
@@ -738,11 +838,124 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
           )}
         </section>
 
+        {config.stagingEnabled && (
+          <section
+            aria-label="Shared Safe proposal"
+            className="mb-6 rounded-lg border border-slate-800 bg-slate-950 p-5"
+          >
+            <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+              <div>
+                <h2 className="text-lg font-medium">2. Shared Safe proposal</h2>
+                <p className="mt-1 text-sm text-slate-400">
+                  Authenticated signers see the same active proposal and
+                  current-owner signature status.
+                </p>
+              </div>
+              <Button
+                disabled={proposalRefreshing || !safeState}
+                onClick={() => void refreshProposalStatus()}
+                type="button"
+                variant="outline"
+              >
+                {proposalRefreshing ? 'Refreshing…' : 'Refresh proposal'}
+              </Button>
+            </div>
+
+            {!sharedProposalLoaded ? (
+              <p className="text-sm text-slate-400">
+                Shared proposal status is unavailable. Signing remains
+                fail-closed.
+              </p>
+            ) : sharedProposal === null ? (
+              <p className="rounded border border-slate-800 bg-[#090b0f] p-3 text-sm text-slate-300">
+                No active proposal exists for Safe nonce {safeState?.nonce}. The
+                first reviewed owner signature may create one.
+              </p>
+            ) : (
+              <div className="space-y-4">
+                <dl className="grid gap-3 rounded border border-slate-800 bg-[#090b0f] p-4 text-sm md:grid-cols-2">
+                  <div>
+                    <dt className="text-slate-500">Safe transaction hash</dt>
+                    <dd>
+                      <code className="break-all text-xs">
+                        {sharedProposal.safeTxHash}
+                      </code>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-500">Nonce</dt>
+                    <dd>{sharedProposal.txn._nonce}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-500">Signature status</dt>
+                    <dd>
+                      {sharedProposal.signedOwners.length} of{' '}
+                      {sharedProposal.threshold} required
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-500">Threshold</dt>
+                    <dd
+                      className={
+                        sharedProposal.thresholdReached
+                          ? 'text-emerald-300'
+                          : 'text-amber-300'
+                      }
+                    >
+                      {sharedProposal.thresholdReached
+                        ? 'Reached'
+                        : 'Awaiting signatures'}
+                    </dd>
+                  </div>
+                </dl>
+
+                <ul
+                  aria-label="Safe owner signing status"
+                  className="grid gap-2 text-xs md:grid-cols-2"
+                >
+                  {safeState?.owners.map((owner) => {
+                    const signed = sharedProposal.signedOwners.includes(owner);
+                    return (
+                      <li
+                        className="flex items-center justify-between gap-3 rounded border border-slate-800 px-3 py-2"
+                        key={owner}
+                      >
+                        <code className="break-all">{owner}</code>
+                        <span
+                          className={
+                            signed ? 'text-emerald-300' : 'text-slate-500'
+                          }
+                        >
+                          {signed ? 'signed' : 'awaiting'}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+
+                {transaction && safeTxHash && (
+                  <p
+                    className={
+                      reviewMatchesSharedProposal
+                        ? 'text-sm text-emerald-300'
+                        : 'text-sm text-amber-300'
+                    }
+                  >
+                    {reviewMatchesSharedProposal
+                      ? 'The current reviewed transaction exactly matches this shared proposal.'
+                      : 'The current reviewed transaction does not match this shared proposal. Signing is disabled.'}
+                  </p>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
         {preview && (
           <>
             <section className="mb-6 rounded-lg border border-slate-800 bg-slate-950 p-5">
               <h2 className="mb-2 text-lg font-medium">
-                2. Safe transaction to sign
+                3. Safe transaction to sign
               </h2>
               <p className="mb-4 text-sm text-slate-400">
                 The calls above are wrapped into this single Safe transaction.
@@ -797,15 +1010,15 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
             </section>
 
             <section className="rounded-lg border border-amber-900/70 bg-amber-950/20 p-5">
-              <h2 className="mb-2 text-lg font-medium">3. Sign and stage</h2>
+              <h2 className="mb-2 text-lg font-medium">4. Sign and stage</h2>
               {config.stagingEnabled ? (
                 <>
                   <p className="mb-4 text-sm text-amber-200">
-                    Local canary only. Before the wallet opens, the source,
-                    artifacts, ordered calls, Safe state and transaction hash
-                    are regenerated and must exactly match this review. Staging
-                    stores a proposal signature; it cannot execute or broadcast
-                    the Safe transaction.
+                    Before the wallet opens, the source, artifacts, ordered
+                    calls, Safe state and transaction hash are regenerated and
+                    must exactly match this review. Staging refreshes the shared
+                    proposal and stores one current-owner signature; it cannot
+                    execute or broadcast the Safe transaction.
                   </p>
                   <label className="mb-4 flex items-start gap-3 text-sm">
                     <input
@@ -831,17 +1044,27 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
                       !reviewAcknowledged ||
                       !walletAddress ||
                       !transaction ||
-                      !reviewExport
+                      !reviewExport ||
+                      !sharedProposalLoaded ||
+                      (sharedProposal !== null &&
+                        !reviewMatchesSharedProposal) ||
+                      connectedOwnerAlreadySigned
                     }
                     onClick={() => void signAndStage()}
                     type="button"
                   >
-                    {busy ? 'Revalidating…' : 'Sign and stage local proposal'}
+                    {busy
+                      ? 'Revalidating…'
+                      : connectedOwnerAlreadySigned
+                      ? 'Owner signature already recorded'
+                      : sharedProposal && reviewMatchesSharedProposal
+                      ? 'Sign shared proposal'
+                      : 'Sign and stage proposal'}
                   </Button>
                   {stagedProposal && (
                     <div className="mt-4 rounded border border-emerald-900 bg-emerald-950/30 p-3 text-sm text-emerald-200">
                       {stagedProposal.created
-                        ? 'Local proposal created'
+                        ? 'Shared proposal created'
                         : 'Signature added'}{' '}
                       · {stagedProposal.signatureCount} signature(s) ·{' '}
                       <code className="break-all text-xs">
@@ -861,6 +1084,20 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
                   </Button>
                 </>
               )}
+            </section>
+
+            <section className="mt-6 rounded-lg border border-slate-800 bg-slate-950 p-5">
+              <h2 className="mb-2 text-lg font-medium">5. Safe execution</h2>
+              <p className="mb-4 text-sm text-slate-400">
+                Even after the threshold is reached, this browser build has no
+                execution or broadcast method. Enabling execution requires a
+                separate security review of nonce revalidation, final
+                simulation, signature packing and the explicit confirmation
+                boundary.
+              </p>
+              <Button disabled type="button">
+                Execution pending security review
+              </Button>
             </section>
           </>
         )}

@@ -90,11 +90,13 @@ for (const expected of [
 }
 const application = await readFile(path.join(root, 'app.js'), 'utf8');
 for (const expected of [
-  'Local canary only',
-  'Sign and stage local proposal',
+  'Shared Safe proposal',
+  'Sign and stage proposal',
   'PREVIEW_CHANGED_REVIEW_REQUIRED',
+  'SHARED_PROPOSAL_REVIEW_MISMATCH',
   'eth_signTypedData_v4',
   'Execution and broadcast remain unavailable',
+  'Execution pending security review',
 ]) {
   if (!application.includes(expected)) {
     throw new Error(`Reya profile application is missing ${expected}`);
@@ -102,5 +104,5 @@ for (const expected of [
 }
 
 process.stdout.write(
-  `Validated Reya local profile export: ${files.length} files; fixed Safe signing and local staging only; no hosted Cannon, telemetry, broadcast or execution capability.\n`
+  `Validated Reya local profile export: ${files.length} files; fixed Safe proposal discovery and signing only; no hosted Cannon, telemetry, broadcast or execution capability.\n`
 );
