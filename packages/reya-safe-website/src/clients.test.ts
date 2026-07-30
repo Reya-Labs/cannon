@@ -77,7 +77,7 @@ describe('local client transport', () => {
   });
 
   it('exposes only the configured Safe staging route when activation is explicit', async () => {
-    const fetchMock = vi.fn(
+    const fetchMock = vi.fn<typeof fetch>(
       async () =>
         new Response('[]', {
           headers: {
