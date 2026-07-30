@@ -17,6 +17,13 @@ const CID = 'QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn';
 const CANNONFILE =
   `https://github.com/Reya-Labs/reya-deployments/blob/${COMMIT}/` +
   'packages/tomls/src/omnibus/reya_network.toml';
+const CALLDATA =
+  '0x3659cfe60000000000000000000000003333333333333333333333333333333333333333';
+const DECODED_CALL = {
+  arguments: ['0x3333333333333333333333333333333333333333'],
+  function: 'upgradeTo(address)',
+  selector: '0x3659cfe6',
+} as const;
 
 const mocks = vi.hoisted(() => ({
   generatePreview: vi.fn(),
@@ -151,7 +158,8 @@ describe('Reya Queue Deployment page', () => {
       safeAddress: SAFE,
       safeProposalCalls: [
         {
-          data: '0x1234',
+          data: CALLDATA,
+          decoded: DECODED_CALL,
           from: SAFE,
           gasUsed: '42',
           senderRole: 'safe',
@@ -217,6 +225,10 @@ describe('Reya Queue Deployment page', () => {
     await screen.findByText(
       '1 ordered Safe call(s) · 0 deployer prerequisite(s)'
     );
+    expect(screen.getByText('upgradeTo(address)')).toBeTruthy();
+    expect(
+      screen.getByLabelText('Decoded calldata for Review one call')
+    ).toBeTruthy();
     expect(mocks.generatePreview).toHaveBeenCalledWith({
       commit: COMMIT,
       partialDeployCid: null,
@@ -266,7 +278,8 @@ describe('Reya Queue Deployment page', () => {
       safeAddress: SAFE,
       safeProposalCalls: [
         {
-          data: '0x1234',
+          data: CALLDATA,
+          decoded: DECODED_CALL,
           from: SAFE,
           gasUsed: '42',
           senderRole: 'safe',

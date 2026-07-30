@@ -9,9 +9,15 @@ const COMMIT = '0123456789abcdef0123456789abcdef01234567';
 const CID = 'QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn';
 const HASH = `0x${'12'.repeat(32)}`;
 const BUNDLE = '34'.repeat(32);
+const CALLDATA = '0x3659cfe60000000000000000000000003333333333333333333333333333333333333333';
 
 type FixtureCall = {
   data: string;
+  decoded: {
+    arguments: unknown[];
+    function: string;
+    selector: string;
+  } | null;
   from: string;
   gasUsed: string;
   senderRole: 'deployer' | 'safe';
@@ -39,7 +45,12 @@ function preview(): {
   type: string;
 } {
   const safeCall: FixtureCall = {
-    data: '0x1234',
+    data: CALLDATA,
+    decoded: {
+      arguments: [TARGET],
+      function: 'upgradeTo(address)',
+      selector: '0x3659cfe6',
+    },
     from: SAFE,
     gasUsed: '100',
     sequence: 0,
@@ -73,7 +84,7 @@ function preview(): {
     },
     safeAddress: SAFE,
     safeProposalCalls: [safeCall],
-    schemaVersion: 3,
+    schemaVersion: 4,
     simulationTransactions: [safeCall],
     type: 'reya-cannon-read-only-preview',
   };
@@ -92,6 +103,11 @@ describe('Reya website preview admission', () => {
 
     expect(parsed.sourceBundleSha256).toBe(BUNDLE);
     expect(parsed.safeProposalCalls).toHaveLength(1);
+    expect(parsed.safeProposalCalls[0].decoded).toEqual({
+      arguments: [TARGET],
+      function: 'upgradeTo(address)',
+      selector: '0x3659cfe6',
+    });
     expect(txn._nonce).toBe(9);
     expect(txn.operation).toBe('1');
     expect(txn.safeTxGas).toBe('100');
@@ -128,6 +144,25 @@ describe('Reya website preview admission', () => {
       ...candidate.safeProposalCalls[0],
       data: '0xabcd',
     };
+    expect(() =>
+      parseReyaPreview(JSON.stringify(candidate), {
+        commit: COMMIT,
+        partialDeployCid: null,
+        previousPackageCid: CID,
+        safeAddress: SAFE,
+        sourceBundleSha256: BUNDLE,
+      })
+    ).toThrow('PREVIEW_REJECTED');
+  });
+
+  it('rejects decoded calldata that is not bound to the raw selector', () => {
+    const candidate = preview();
+    candidate.safeProposalCalls[0].decoded = {
+      arguments: [TARGET],
+      function: 'transfer(address,uint256)',
+      selector: '0xa9059cbb',
+    };
+    candidate.simulationTransactions = candidate.safeProposalCalls;
     expect(() =>
       parseReyaPreview(JSON.stringify(candidate), {
         commit: COMMIT,
@@ -198,6 +233,7 @@ describe('Reya website preview admission', () => {
     const candidate = preview();
     const prerequisite: FixtureCall = {
       data: '0x',
+      decoded: null,
       from: DEPLOYER,
       gasUsed: '50',
       sequence: 0,

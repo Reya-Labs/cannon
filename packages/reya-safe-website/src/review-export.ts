@@ -1,6 +1,6 @@
 import { SafeTransaction } from '@cannon/types/SafeTransaction';
 import { ResolvedArtifactInput, ResolvedDeploymentSource } from './deployment-input';
-import { ReyaPreview } from './preview';
+import { ReyaDecodedCall, ReyaPreview } from './preview';
 
 const HASH_PATTERN = /^0x[0-9a-f]{64}$/;
 
@@ -22,12 +22,13 @@ export type ReyaReviewExport = Readonly<{
     transaction: SafeTransaction;
     transactionHash: `0x${string}`;
   }>;
-  schemaVersion: 1;
+  schemaVersion: 2;
   simulation: Readonly<{
     deployerPrerequisiteCount: number;
     mode: 'automatic-current-state-local-build';
     orderedCalls: readonly Readonly<{
       calldata: `0x${string}`;
+      decodedCalldata: ReyaDecodedCall | null;
       gasUsed: string;
       sequence: number;
       simulationTransactionHash: `0x${string}`;
@@ -83,7 +84,7 @@ export function createReviewExport(input: {
       transaction: input.transaction,
       transactionHash: input.safeTxHash,
     }),
-    schemaVersion: 1,
+    schemaVersion: 2,
     simulation: Object.freeze({
       deployerPrerequisiteCount: input.preview.deployerPrerequisiteCount,
       mode: 'automatic-current-state-local-build',
@@ -91,6 +92,7 @@ export function createReviewExport(input: {
         input.preview.safeProposalCalls.map((call) =>
           Object.freeze({
             calldata: call.data,
+            decodedCalldata: call.decoded,
             gasUsed: call.gasUsed,
             sequence: call.sequence,
             simulationTransactionHash: call.transactionHash,
