@@ -157,3 +157,47 @@ jobs:
           compression-level: 9
           overwrite: false
           include-hidden-files: false
+
+  reya-production-website:
+    name: Build and scan production signer profile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: reya-production-website-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile --ignore-scripts --filter @reya/cannon-safe-website... --filter @reya/cannon-safe-ui... --filter @usecannon/website...
+      - name: Build the content-address codec used by the browser profile
+        run: pnpm --filter @usecannon/artifact-codec build
+      - run: pnpm --filter @reya/cannon-safe-website typecheck
+      - run: pnpm --filter @reya/cannon-safe-website test
+      - name: Build the exact production signer profile
+        run: pnpm --filter @reya/cannon-safe-website build:production
+        env:
+          REYA_PRODUCTION_BUILD_COMMIT: ${{ github.sha }}
+          REYA_PRODUCTION_INGRESS_ORIGIN: https://cannon-safe-staging.tailf2022c.ts.net
+          REYA_PRODUCTION_SAFE_ADDRESS: '0x1fe50318e5e3165742edc9c4a15d997bdb935eb9'
+          REYA_PRODUCTION_SITE_ORIGIN: https://cannon.reya.xyz
+          REYA_PRODUCTION_SOURCE_COMMIT: 2b10669075b91eb8db781d199292f30c52f8e994
+          REYA_PRODUCTION_STAGING: enabled
+      - name: Reject hosted dependencies, mutable configuration and execution capability
+        run: pnpm --filter @reya/cannon-safe-website scan:production
+      - name: Upload the exact tested production candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: reya-safe-website-production-${{ github.sha }}
+          path: packages/reya-safe-website/out
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
+          overwrite: false
+          include-hidden-files: true

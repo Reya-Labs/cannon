@@ -440,6 +440,28 @@ assertRejected(
 );
 
 assertRejected(
+  'Pages publisher secret substitution',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/publish-reya-safe-website.yml'),
+      'secrets.CLOUDFLARE_PAGES_PUBLISH_TOKEN',
+      'secrets.CLOUDFLARE_ACCOUNT_ADMIN_TOKEN'
+    ),
+  'source must exactly match the reviewed workflow digest'
+);
+
+assertRejected(
+  'Pages publisher source branch substitution',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/publish-reya-safe-website.yml'),
+      'refs/heads/dev',
+      'refs/heads/main'
+    ),
+  'source must exactly match the reviewed workflow digest'
+);
+
+assertRejected(
   'unpinned service image',
   (root) =>
     replace(

@@ -156,7 +156,7 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
 
   useEffect(() => {
     void refresh().catch((cause) => {
-      setStatus('Local profile is not ready.');
+      setStatus('Cannon signer profile is not ready.');
       setError(displayError(cause));
     });
   }, [refresh]);
@@ -331,7 +331,7 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
     try {
       const generated = await generateCurrentPreview(revision);
       applyGeneratedPreview(generated);
-      setStatus('Generated a current-state local Cannon preview for review.');
+      setStatus('Generated a current-state Cannon preview for review.');
     } catch (cause) {
       setError(displayError(cause));
     } finally {
@@ -751,7 +751,7 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
                 <div>
                   <dt className="text-slate-500">Simulation</dt>
                   <dd className="text-amber-300">
-                    automatic current-state local build
+                    automatic current-state Cannon build
                   </dd>
                 </div>
                 <div>
@@ -1076,8 +1076,8 @@ export function ReyaLocalPage({ config }: { config: ReyaLocalProfileConfig }) {
               ) : (
                 <>
                   <p className="mb-4 text-sm text-amber-200">
-                    Disabled in this profile. Enable the explicit local canary
-                    only with the fixed staging backend and trusted ingress.
+                    Disabled in this profile. Enable staging only with the fixed
+                    backend and trusted ingress.
                   </p>
                   <Button disabled type="button">
                     Sign and stage unavailable

@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, open, rm, symlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdtemp, open, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,9 +31,10 @@ async function validFixture() {
   return root;
 }
 
-function scan(root: string) {
+function scan(root: string, profile = 'local') {
   return spawnSync(process.execPath, [scanner, root], {
     encoding: 'utf8',
+    env: { REYA_EXPORT_PROFILE: profile },
   });
 }
 
@@ -109,5 +111,54 @@ describe('local profile export scanner', () => {
     const result = scan(root);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('index is missing');
+  });
+
+  it('requires Cloudflare headers and matching production asset digests', async () => {
+    const root = await validFixture();
+    const ingress = 'https://cannon-safe-staging.tailf2022c.ts.net';
+    await writeFile(root + '/index.html', `Reya Cannon Safe staging Content-Security-Policy ${ingress} script-src 'self'`);
+    const headers = `/*
+  Cache-Control: no-store
+  Content-Security-Policy: connect-src ${ingress}
+  Cross-Origin-Opener-Policy: same-origin
+  Permissions-Policy: camera=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+`;
+    await writeFile(root + '/_headers', headers);
+    const assets = Object.fromEntries(
+      await Promise.all(
+        ['_headers', 'app.css', 'app.js', 'index.html'].map(async (name) => [
+          name,
+          createHash('sha256')
+            .update(await readFile(`${root}/${name}`))
+            .digest('hex'),
+        ])
+      )
+    );
+    await writeFile(
+      root + '/release.json',
+      JSON.stringify({
+        assets,
+        buildCommit: '89abcdef0123456789abcdef0123456789abcdef',
+        config: {
+          ingressOrigin: ingress,
+          profile: 'production',
+          siteOrigin: 'https://cannon.reya.xyz',
+          stagingEnabled: true,
+        },
+        configDigest: 'a'.repeat(64),
+        schema: 'reya-cannon-safe-website-release/v1',
+      })
+    );
+
+    const accepted = scan(root, 'production');
+    expect(accepted.status, accepted.stderr).toBe(0);
+
+    await writeFile(root + '/app.js', 'tampered');
+    const rejected = scan(root, 'production');
+    expect(rejected.status).not.toBe(0);
+    expect(rejected.stderr).toContain('release digest is invalid');
   });
 });
