@@ -133,11 +133,13 @@ export function deriveSafeTransaction(preview, nonce) {
     safeCall(call, preview.safeAddress),
   );
   const totalValue = calls.reduce((total, call) => total + call.value, 0n);
-  const safeTxGas = preview.safeProposalCalls.reduce(
+  // Still validated, but reported as evidence rather than signed into the
+  // transaction — see the safeTxGas note below.
+  const simulatedGasUsed = preview.safeProposalCalls.reduce(
     (total, call) => total + uint(call.gasUsed),
     0n,
   );
-  if (totalValue > MAX_UINT256 || safeTxGas > MAX_UINT256) reject();
+  if (totalValue > MAX_UINT256 || simulatedGasUsed > MAX_UINT256) reject();
 
   let data;
   try {
@@ -150,6 +152,19 @@ export function deriveSafeTransaction(preview, nonce) {
     reject();
   }
 
+  // `safeTxGas` and `gasPrice` are both zero deliberately.
+  //
+  // Safe only reverts the whole call when `success || safeTxGas != 0 ||
+  // gasPrice != 0` is false. A non-zero `safeTxGas` therefore turns a failed
+  // batch into a *successful* `execTransaction` that emits `ExecutionFailure`
+  // and consumes the Safe nonce — every collected signature is then void and
+  // the batch looks executed on-chain. With both at zero the transaction
+  // reverts and the nonce survives, so the proposal can be retried once the
+  // cause is fixed.
+  //
+  // Zeroing `safeTxGas` costs no gas for the batch: when `gasPrice` is zero
+  // Safe forwards `gasleft() - 2500` to the inner call and ignores
+  // `safeTxGas`, which only feeds the GS010 pre-check and the revert rule.
   const txn = Object.freeze({
     _nonce: nonce,
     baseGas: '0',
@@ -158,7 +173,7 @@ export function deriveSafeTransaction(preview, nonce) {
     gasToken: zeroAddress,
     operation: '1',
     refundReceiver: preview.safeAddress,
-    safeTxGas: safeTxGas.toString(),
+    safeTxGas: '0',
     to: MULTICALL_ADDRESS,
     value: totalValue.toString(),
   });
@@ -191,5 +206,9 @@ export function deriveSafeTransaction(preview, nonce) {
     reject();
   }
 
-  return Object.freeze({ safeTxHash, txn });
+  return Object.freeze({
+    safeTxHash,
+    simulatedGasUsed: simulatedGasUsed.toString(),
+    txn,
+  });
 }

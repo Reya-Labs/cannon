@@ -38,6 +38,32 @@ test('rejects a short proxy secret', () => {
   assert.ok(loadConfig({ ...ENV, AUTH_PROXY_SECRET: 'a'.repeat(32) }));
 });
 
+test('treats a blank optional variable as absent, like the required ones', () => {
+  // A secret file read with its trailing newline, or an explicitly empty
+  // variable, must fall back rather than fail with a misleading message.
+  for (const overrides of [
+    { AUTH_IDENTITY_HEADER: '' },
+    { AUTH_IDENTITY_HEADER: '   ' },
+    { AUTH_IDENTITY_HEADER: 'x-reya-user\n' },
+  ]) {
+    assert.equal(
+      loadConfig({ ...ENV, ...overrides }).auth.identityHeader,
+      'x-reya-user',
+      JSON.stringify(overrides),
+    );
+  }
+  for (const value of ['', '  ', '8080\n']) {
+    assert.equal(
+      loadConfig({ ...ENV, PORT: value }).port,
+      8080,
+      `PORT=${value}`,
+    );
+  }
+  // A non-empty invalid value must still fail.
+  rejects({ AUTH_IDENTITY_HEADER: 'not a header' });
+  rejects({ PORT: '0' });
+});
+
 test('requires the three authentication headers to be distinct', () => {
   rejects({ AUTH_IDENTITY_HEADER: 'x-reya-roles' });
   rejects({ AUTH_PROXY_SECRET_HEADER: 'x-reya-user' });

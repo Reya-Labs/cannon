@@ -24,8 +24,11 @@ function positiveInteger(value, key, maximum) {
   return parsed;
 }
 
+// Optional values follow `required()`: an empty or whitespace-only variable —
+// including a secret file read with its trailing newline — counts as absent and
+// falls back, rather than failing validation with a misleading message.
 function header(value, fallback, key) {
-  const parsed = (value ?? fallback).toLowerCase();
+  const parsed = (value?.trim() || fallback).toLowerCase();
   if (!HEADER_PATTERN.test(parsed)) {
     throw new Error(`${key} is not a valid HTTP header name`);
   }
@@ -174,7 +177,7 @@ export function loadConfig(env = process.env) {
       required(env, 'PREVIEW_OP_RPC_URL'),
       'PREVIEW_OP_RPC_URL',
     ),
-    port: positiveInteger(env.PORT ?? '8080', 'PORT', 65_535),
+    port: positiveInteger(env.PORT?.trim() || '8080', 'PORT', 65_535),
     rpcUrl: upstreamUrl(required(env, 'PREVIEW_RPC_URL'), 'PREVIEW_RPC_URL'),
     safeAddress: safeAddress(required(env, 'PREVIEW_SAFE_ADDRESS')),
     sourceOrigin: internalOrigin(

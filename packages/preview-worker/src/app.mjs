@@ -10,7 +10,6 @@ import {
 const PREVIEW_PATH = '/preview/1729';
 const REGISTRY_PATH = '/registry/op/resolve';
 const HEALTH_PATHS = Object.freeze(['/livez', '/readyz']);
-const MAX_REQUEST_CHUNKS = 64;
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const ALLOWED_METHODS = 'POST,OPTIONS';
 
@@ -91,12 +90,12 @@ async function readBody(request, maximumBytes) {
   ) {
     throw new PreviewError(413, 'BODY_TOO_LARGE');
   }
+  // The byte cap already bounds both memory and iteration count, so there is
+  // no separate chunk cap: one would only add a way to reject a valid small
+  // body that a proxy or TLS layer happened to fragment.
   const chunks = [];
   let length = 0;
   for await (const chunk of request) {
-    if (chunks.length >= MAX_REQUEST_CHUNKS) {
-      throw new PreviewError(413, 'BODY_TOO_LARGE');
-    }
     length += chunk.byteLength;
     if (length > maximumBytes) {
       throw new PreviewError(413, 'BODY_TOO_LARGE');
@@ -195,11 +194,22 @@ export function createApp(config, { previewRunner, registryResolver }) {
       );
       sendJson(response, 200, await previewRunner.run(parsed, { actor }));
     })().catch((error) => {
-      if (response.headersSent) {
-        response.destroy();
-        return;
+      // This is the last handler on the request. A throw here would become an
+      // unhandled rejection and take the process down, so an aborted client —
+      // whose socket may already be gone — must never be able to reach that.
+      try {
+        if (response.headersSent || response.writableEnded) {
+          response.destroy();
+          return;
+        }
+        sendError(response, error);
+      } catch {
+        try {
+          response.destroy();
+        } catch {
+          // The socket is already gone; there is nothing left to release.
+        }
       }
-      sendError(response, error);
     });
   };
 }
