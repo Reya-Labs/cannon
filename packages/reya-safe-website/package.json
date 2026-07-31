@@ -2,15 +2,17 @@
   "name": "@reya/cannon-safe-website",
   "version": "0.0.0",
   "private": true,
-  "description": "Constrained local Cannon website profile for Reya Safe staging",
+  "description": "Constrained local and production Cannon website profiles for Reya Safe staging",
   "packageManager": "pnpm@10.11.0",
   "engines": {
     "node": "22.23.1"
   },
   "scripts": {
-    "build": "REYA_LOCAL_PROFILE=enabled node scripts/build-reya-local-profile.mjs",
+    "build": "REYA_WEBSITE_PROFILE=local REYA_LOCAL_PROFILE=enabled node scripts/build-reya-local-profile.mjs",
+    "build:production": "REYA_WEBSITE_PROFILE=production REYA_PRODUCTION_PROFILE=enabled node scripts/build-reya-local-profile.mjs",
     "e2e:shared-proposal": "node scripts/run-shared-proposal-e2e.mjs",
-    "scan": "node scripts/scan-reya-local-profile.mjs out",
+    "scan": "REYA_EXPORT_PROFILE=local node scripts/scan-reya-local-profile.mjs out",
+    "scan:production": "REYA_EXPORT_PROFILE=production node scripts/scan-reya-local-profile.mjs out",
     "serve": "serve out -c ../serve.json -l tcp://127.0.0.1:3000 --no-port-switching --no-clipboard --no-request-logging",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

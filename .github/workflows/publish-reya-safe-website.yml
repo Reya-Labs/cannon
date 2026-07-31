@@ -1,0 +1,104 @@
+name: Publish Reya Cannon signer UI
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-reya-cannon-signer-ui
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Verify and publish exact dev head
+    environment:
+      name: cannon-ui-production
+      url: https://cannon.reya.xyz
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Require explicit activation and protected source branch
+        env:
+          PUBLISH_ENABLED: ${{ vars.CANNON_UI_PUBLISH_ENABLED }}
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REF" = "refs/heads/dev" ] || {
+            echo "::error::Production publication is restricted to refs/heads/dev"
+            exit 1
+          }
+          [ "$PUBLISH_ENABLED" = "true" ] || {
+            echo "::error::Set CANNON_UI_PUBLISH_ENABLED=true in the protected cannon-ui-production environment"
+            exit 1
+          }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Refuse a stale or synthetic source revision
+        run: |
+          set -euo pipefail
+          remote_head=$(git ls-remote https://github.com/Reya-Labs/cannon.git refs/heads/dev | cut -f1)
+          [ -n "$remote_head" ] || {
+            echo "::error::Could not resolve the current dev head"
+            exit 1
+          }
+          [ "$GITHUB_SHA" = "$remote_head" ] || {
+            echo "::error::Workflow revision $GITHUB_SHA is not current dev head $remote_head"
+            exit 1
+          }
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile --ignore-scripts --filter @reya/cannon-safe-website... --filter @reya/cannon-safe-ui... --filter @usecannon/website...
+      - name: Build the content-address codec used by the browser profile
+        run: pnpm --filter @usecannon/artifact-codec build
+      - run: pnpm --filter @reya/cannon-safe-website typecheck
+      - run: pnpm --filter @reya/cannon-safe-website test
+      - name: Build the exact production signer profile
+        run: pnpm --filter @reya/cannon-safe-website build:production
+        env:
+          REYA_PRODUCTION_BUILD_COMMIT: ${{ github.sha }}
+          REYA_PRODUCTION_INGRESS_ORIGIN: https://cannon-safe-staging.tailf2022c.ts.net
+          REYA_PRODUCTION_SAFE_ADDRESS: '0x1fe50318e5e3165742edc9c4a15d997bdb935eb9'
+          REYA_PRODUCTION_SITE_ORIGIN: https://cannon.reya.xyz
+          REYA_PRODUCTION_SOURCE_COMMIT: 2b10669075b91eb8db781d199292f30c52f8e994
+          REYA_PRODUCTION_STAGING: enabled
+      - name: Verify the exact publishable bytes
+        run: pnpm --filter @reya/cannon-safe-website scan:production
+
+      - name: Publish the verified direct-upload deployment
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_PUBLISH_TOKEN }}
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          set -euo pipefail
+          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] && [ -n "$CLOUDFLARE_API_TOKEN" ] || {
+            echo "::error::Cloudflare publisher credentials are not configured"
+            exit 1
+          }
+          pnpm exec wrangler pages deploy packages/reya-safe-website/out \
+            --project-name cannon-reya-xyz-ui \
+            --branch dev \
+            --commit-hash "$GITHUB_SHA" \
+            --commit-dirty=false
+
+      - name: Verify the custom-domain release evidence
+        run: |
+          set -euo pipefail
+          release=$(curl --fail --silent --show-error --retry 6 --retry-all-errors \
+            --max-time 15 https://cannon.reya.xyz/release.json)
+          published=$(printf '%s' "$release" | jq -r '.buildCommit')
+          [ "$published" = "$GITHUB_SHA" ] || {
+            echo "::error::Published build $published does not match $GITHUB_SHA"
+            exit 1
+          }
+          echo "Published and verified Reya Cannon signer UI at $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"

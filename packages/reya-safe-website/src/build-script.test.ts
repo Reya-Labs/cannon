@@ -23,6 +23,7 @@ describe('local profile build', () => {
         REYA_LOCAL_SAFE_ADDRESS: '0x1111111111111111111111111111111111111111',
         REYA_LOCAL_SOURCE_COMMIT: '0123456789abcdef0123456789abcdef01234567',
         REYA_LOCAL_STAGING: 'enabled',
+        REYA_WEBSITE_PROFILE: 'local',
       },
     });
 
@@ -45,12 +46,50 @@ describe('local profile build', () => {
 
     const result = spawnSync(process.execPath, [path.join(packageRoot, 'scripts/build-reya-local-profile.mjs')], {
       encoding: 'utf8',
-      env: { REYA_LOCAL_PROFILE: 'enabled' },
+      env: {
+        REYA_LOCAL_PROFILE: 'enabled',
+        REYA_WEBSITE_PROFILE: 'local',
+      },
     });
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('REYA_LOCAL_SAFE_ADDRESS is required');
     expect(existsSync(output)).toBe(false);
     expect(existsSync(workingOutput)).toBe(false);
+  });
+
+  it('emits a production Pages export with immutable release evidence', async () => {
+    const result = spawnSync(process.execPath, [path.join(packageRoot, 'scripts/build-reya-local-profile.mjs')], {
+      encoding: 'utf8',
+      env: {
+        REYA_PRODUCTION_BUILD_COMMIT: '89abcdef0123456789abcdef0123456789abcdef',
+        REYA_PRODUCTION_INGRESS_ORIGIN: 'https://cannon-safe-staging.tailf2022c.ts.net',
+        REYA_PRODUCTION_PROFILE: 'enabled',
+        REYA_PRODUCTION_SAFE_ADDRESS: '0x1fe50318e5e3165742edc9c4a15d997bdb935eb9',
+        REYA_PRODUCTION_SITE_ORIGIN: 'https://cannon.reya.xyz',
+        REYA_PRODUCTION_SOURCE_COMMIT: '2b10669075b91eb8db781d199292f30c52f8e994',
+        REYA_PRODUCTION_STAGING: 'enabled',
+        REYA_WEBSITE_PROFILE: 'production',
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const [headers, html, releaseText] = await Promise.all([
+      readFile(path.join(output, '_headers'), 'utf8'),
+      readFile(path.join(output, 'index.html'), 'utf8'),
+      readFile(path.join(output, 'release.json'), 'utf8'),
+    ]);
+    expect(headers).toContain('connect-src https://cannon-safe-staging.tailf2022c.ts.net');
+    expect(headers).toContain('X-Frame-Options: DENY');
+    expect(html).toContain('connect-src https://cannon-safe-staging.tailf2022c.ts.net');
+    expect(JSON.parse(releaseText)).toMatchObject({
+      buildCommit: '89abcdef0123456789abcdef0123456789abcdef',
+      config: {
+        profile: 'production',
+        siteOrigin: 'https://cannon.reya.xyz',
+        stagingEnabled: true,
+      },
+      schema: 'reya-cannon-safe-website-release/v1',
+    });
   });
 });
