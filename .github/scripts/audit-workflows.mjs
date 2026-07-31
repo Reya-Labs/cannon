@@ -102,6 +102,12 @@ const workflowPolicies = new Map([
     },
   ],
   [
+    'publish-reya-safe-website.yml',
+    {
+      workflow_dispatch: null,
+    },
+  ],
+  [
     'runtime-image-security.yml',
     {
       pull_request: {
@@ -183,6 +189,10 @@ const workflowPolicies = new Map([
 // Keep its complete reviewed source fail-closed: any legitimate edit must update
 // this policy digest in the same review.
 const exactWorkflowDigests = new Map([
+  [
+    'publish-reya-safe-website.yml',
+    'e73e32bcbe1104a7aafce1038eec824c518227a66d3a11cb3db3e38e9fb91a8e',
+  ],
   [
     'runtime-image-security.yml',
     '384ce590cdfb365f589fde7e2f3742e7190245db1eb455119c4a5ac3c9c91a70',
@@ -278,6 +288,7 @@ const allowedContainerImages = new Set([
 const allowedRunners = new Set(['ubuntu-24.04', 'ubuntu-24.04-arm']);
 
 const allowedGitHubContexts = new Map([
+  ['.github/workflows/publish-reya-safe-website.yml', new Set(['github.sha'])],
   [
     '.github/workflows/rpc-gateway.yml',
     new Set([
@@ -324,6 +335,16 @@ const allowedGitHubContexts = new Map([
       'github.event_name',
       'github.run_id',
       'github.sha',
+    ]),
+  ],
+]);
+
+const allowedSecretReferences = new Map([
+  [
+    '.github/workflows/publish-reya-safe-website.yml',
+    new Set([
+      'secrets.CLOUDFLARE_ACCOUNT_ID',
+      'secrets.CLOUDFLARE_PAGES_PUBLISH_TOKEN',
     ]),
   ],
 ]);
@@ -585,7 +606,19 @@ const auditNode = (
   path = []
 ) => {
   if (typeof value === 'string') {
-    if (/\bsecrets\s*(?:\.|\[|\b)/iu.test(value)) {
+    const allowedSecrets =
+      allowedSecretReferences.get(displayPath) ?? new Set();
+    const secretReferences = [
+      ...value.matchAll(/\bsecrets(?:\s*\.\s*[A-Za-z0-9_]+)+/giu),
+    ].map((match) => match[0].replace(/\s+/gu, ''));
+    const withoutNamedSecrets = secretReferences.reduce(
+      (remaining, reference) => remaining.replace(reference, ''),
+      value
+    );
+    if (
+      secretReferences.some((reference) => !allowedSecrets.has(reference)) ||
+      /\bsecrets\s*(?:\[|\b)/iu.test(withoutNamedSecrets)
+    ) {
       errors.push(
         `${displayPath}: repository secret reference is forbidden at ${path.join(
           '.'
