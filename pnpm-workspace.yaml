@@ -1,5 +1,6 @@
 packages:
   - 'packages/*'
+  - '!packages/preview-worker'
   - '!packages/rpc-gateway'
   - '!packages/source-gateway'
   - 'examples/*'

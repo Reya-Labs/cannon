@@ -71,6 +71,13 @@ const workflowPolicies = new Map([
     },
   ],
   [
+    'preview-worker.yml',
+    {
+      pull_request: ['dev', 'main'],
+      push: ['dev', 'main'],
+    },
+  ],
+  [
     'rpc-gateway.yml',
     {
       pull_request: ['dev', 'main'],
@@ -289,6 +296,14 @@ const allowedRunners = new Set(['ubuntu-24.04', 'ubuntu-24.04-arm']);
 
 const allowedGitHubContexts = new Map([
   ['.github/workflows/publish-reya-safe-website.yml', new Set(['github.sha'])],
+  [
+    '.github/workflows/preview-worker.yml',
+    new Set([
+      'github.event.pull_request.number',
+      'github.event_name',
+      'github.run_id',
+    ]),
+  ],
   [
     '.github/workflows/rpc-gateway.yml',
     new Set([
