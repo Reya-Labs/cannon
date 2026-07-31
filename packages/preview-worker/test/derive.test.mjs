@@ -44,9 +44,24 @@ test('derives one multicall delegatecall at the observed nonce', () => {
   assert.equal(txn.gasPrice, '0');
   assert.equal(txn.gasToken, zeroAddress);
   assert.equal(txn.refundReceiver, SAFE_ADDRESS);
-  assert.equal(txn.safeTxGas, '21000');
   assert.equal(txn.value, '0');
   assert.match(safeTxHash, /^0x[0-9a-f]{64}$/);
+});
+
+test('zeroes safeTxGas and gasPrice so a failed batch preserves the nonce', () => {
+  // Safe only reverts when `success || safeTxGas != 0 || gasPrice != 0` is
+  // false. Any non-zero value here would turn a reverted batch into a
+  // successful execTransaction that emits ExecutionFailure and burns the
+  // nonce, voiding every signature already collected.
+  const { txn } = deriveSafeTransaction(simulation(), 42);
+  assert.equal(txn.safeTxGas, '0');
+  assert.equal(txn.gasPrice, '0');
+});
+
+test('reports simulated gas as evidence instead of signing it', () => {
+  const derived = deriveSafeTransaction(simulation(), 0);
+  assert.equal(derived.simulatedGasUsed, '21000');
+  assert.equal(derived.txn.safeTxGas, '0');
 });
 
 test('the digest is the Safe EIP-712 hash of the derived transaction', () => {
@@ -63,7 +78,7 @@ test('the digest is the Safe EIP-712 hash of the derived transaction', () => {
         nonce: 7n,
         operation: 1,
         refundReceiver: SAFE_ADDRESS,
-        safeTxGas: 21000n,
+        safeTxGas: 0n,
         to: MULTICALL_ADDRESS,
         value: 0n,
       },
@@ -89,7 +104,7 @@ test('the call set changes the digest', () => {
 });
 
 test('sums value and gas across every Safe call', () => {
-  const { txn } = deriveSafeTransaction(
+  const derived = deriveSafeTransaction(
     simulation({
       safeProposalCalls: [
         call({ gasUsed: '1000', value: '5' }),
@@ -98,8 +113,9 @@ test('sums value and gas across every Safe call', () => {
     }),
     0,
   );
-  assert.equal(txn.value, '12');
-  assert.equal(txn.safeTxGas, '3000');
+  assert.equal(derived.txn.value, '12');
+  assert.equal(derived.simulatedGasUsed, '3000');
+  assert.equal(derived.txn.safeTxGas, '0');
 });
 
 test('refuses to stage a preview that still needs deployer prerequisites', () => {

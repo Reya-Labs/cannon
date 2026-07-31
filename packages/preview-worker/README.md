@@ -72,6 +72,30 @@ its own alongside a shared secret. The worker:
 - holds every upstream credential server-side, and returns a fixed set of error
   codes so no upstream URL, token or message can reach the browser.
 
+## Why `safeTxGas` and `gasPrice` are both zero
+
+Safe reverts `execTransaction` only when `success || safeTxGas != 0 || gasPrice
+!= 0` is false. Since the batch sets `requireSuccess` on every call, any failure
+reverts the inner multicall — and with a non-zero `safeTxGas` that becomes a
+_successful_ `execTransaction` emitting `ExecutionFailure`: the Safe nonce is
+consumed, every signature already collected is void, and the batch looks
+executed on-chain. With both fields zero the whole transaction reverts and the
+nonce survives, so the proposal can be retried once the cause is fixed.
+
+Zeroing `safeTxGas` does not starve the batch. When `gasPrice` is zero Safe
+forwards `gasleft() - 2500` to the inner call and ignores `safeTxGas`, which
+then only feeds the GS010 pre-check and the revert rule above.
+
+The simulated total is still validated and returned as `simulatedGasUsed`
+evidence — it is just not a field anyone signs.
+
+Note this diverges from the browser-side `makeStageableSafeTransaction` in
+`reya-safe-website`, which still sets `safeTxGas` to the summed `gasUsed`. The
+two therefore derive different digests for the same batch. That is safe while
+the local profile is QA-only and this worker is the production authority, but
+the browser path should be brought in line before any shared proposal is
+produced by both.
+
 ## Non-archival RPC
 
 The available Reya RPC is not archival. Interactive current-state preview is

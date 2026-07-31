@@ -126,6 +126,7 @@ export function createPreviewRunner({ fetchImpl, rpcUrl, simulator }) {
           safeProposalCalls: simulation.safeProposalCalls,
           safeTxHash: derived.safeTxHash,
           schemaVersion: 1,
+          simulatedGasUsed: derived.simulatedGasUsed,
           txn: derived.txn,
           type: 'reya-cannon-server-preview',
         });

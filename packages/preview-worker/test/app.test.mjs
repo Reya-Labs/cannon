@@ -265,6 +265,64 @@ test('never leaks upstream detail in an error body', async () => {
   );
 });
 
+test('an aborted client cannot crash the worker', async () => {
+  // The terminal `.catch` is the last handler on the request: a throw there
+  // becomes an unhandled rejection and takes the process down. Simulate a
+  // response whose socket is already gone.
+  const { createApp } = await import('../src/app.mjs');
+  const { loadConfig } = await import('../src/config.mjs');
+  const app = createApp(loadConfig({ ...ENV }), {
+    previewRunner: {
+      run: async () => {
+        throw new Error('upstream died');
+      },
+    },
+    registryResolver: { resolve: async () => ({}) },
+  });
+
+  let destroyed = false;
+  const response = {
+    destroy: () => {
+      destroyed = true;
+    },
+    end: () => {
+      throw new Error('socket is closed');
+    },
+    headersSent: false,
+    setHeader: () => {},
+    writableEnded: false,
+    writeHead: () => {
+      throw new Error('socket is closed');
+    },
+  };
+  const request = {
+    headers: {
+      'content-length': '2',
+      'content-type': 'application/json',
+      origin: UI_ORIGIN,
+    },
+    method: 'POST',
+    rawHeaders: [],
+    url: '/preview/1729',
+    async *[Symbol.asyncIterator]() {
+      yield Buffer.from('{}');
+    },
+  };
+
+  const rejections = [];
+  const onRejection = (reason) => rejections.push(reason);
+  process.on('unhandledRejection', onRejection);
+  try {
+    app(request, response);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    process.off('unhandledRejection', onRejection);
+  }
+  assert.deepEqual(rejections, []);
+  assert.equal(destroyed, true);
+});
+
 test('passes only the validated immutable request to the runner', async () => {
   let seen;
   await withServer(
