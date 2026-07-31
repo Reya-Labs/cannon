@@ -13,6 +13,7 @@ import { ReyaLocalPage } from './ReyaLocalPage';
 
 const COMMIT = '0123456789abcdef0123456789abcdef01234567';
 const SAFE = '0x1111111111111111111111111111111111111111' as const;
+const OTHER_OWNER = '0x4444444444444444444444444444444444444444' as const;
 const CID = 'QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn';
 const CANNONFILE =
   `https://github.com/Reya-Labs/reya-deployments/blob/${COMMIT}/` +
@@ -26,10 +27,13 @@ const DECODED_CALL = {
 } as const;
 
 const mocks = vi.hoisted(() => ({
+  currentProposal: vi.fn(),
   generatePreview: vi.fn(),
+  inspectProposal: vi.fn(),
   loadDeployment: vi.fn(),
   loadPrevious: vi.fn(),
   parsePreview: vi.fn(),
+  readSafeState: vi.fn(),
   stage: vi.fn(),
 }));
 
@@ -72,6 +76,7 @@ vi.mock('./clients', () => ({
             }),
           }),
           staging: {
+            current: mocks.currentProposal,
             submitSignature: mocks.stage,
           },
         }
@@ -101,11 +106,18 @@ vi.mock('@reya/cannon-safe-ui/safe-review', () => ({
 }));
 
 vi.mock('./safe-state', () => ({
-  readReyaSafeState: vi.fn(async () => ({
-    nonce: 7,
-    owners: [SAFE],
-    threshold: 1,
-  })),
+  readReyaSafeState: mocks.readSafeState,
+}));
+
+vi.mock('./shared-proposal', () => ({
+  inspectSharedProposal: mocks.inspectProposal,
+  sharedProposalMatchesReview: (
+    proposal: { safeTxHash: string; txn: { data: string } },
+    transaction: { data: string },
+    safeTxHash: string
+  ) =>
+    proposal.safeTxHash === safeTxHash &&
+    proposal.txn.data === transaction.data,
 }));
 
 vi.mock('./deployment-input', () => ({
@@ -137,6 +149,49 @@ afterEach(cleanup);
 describe('Reya Queue Deployment page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.currentProposal.mockResolvedValue(null);
+    mocks.readSafeState.mockResolvedValue({
+      nonce: 7,
+      owners: [SAFE],
+      threshold: 1,
+    });
+    mocks.inspectProposal.mockImplementation(
+      async ({
+        proposal,
+        safeState,
+      }: {
+        proposal: {
+          createdAt: number;
+          sigs: readonly string[];
+          txn: Record<string, unknown>;
+          updatedAt: number;
+        };
+        safeState: {
+          owners: readonly `0x${string}`[];
+          threshold: number;
+        };
+      }) => ({
+        createdAt: proposal.createdAt,
+        safeTxHash: `0x${'b'.repeat(64)}`,
+        signedOwners: proposal.sigs.length > 0 ? [safeState.owners[0]] : [],
+        threshold: safeState.threshold,
+        thresholdReached: proposal.sigs.length >= safeState.threshold,
+        txn: {
+          _nonce: 7,
+          baseGas: '0',
+          data: '0x1234',
+          gasPrice: '0',
+          gasToken: '0x0000000000000000000000000000000000000000',
+          operation: '1',
+          refundReceiver: SAFE,
+          safeTxGas: '42',
+          to: '0x2222222222222222222222222222222222222222',
+          value: '0',
+        },
+        unsignedOwners: proposal.sigs.length > 0 ? [] : [...safeState.owners],
+        updatedAt: proposal.updatedAt,
+      })
+    );
     mocks.loadPrevious.mockResolvedValue({
       cid: CID,
       descriptor: {
@@ -328,6 +383,39 @@ describe('Reya Queue Deployment page', () => {
     });
   });
 
+  it('discovers the shared proposal and renders current signer threshold status', async () => {
+    const signature = `0x${'11'.repeat(64)}1b`;
+    mocks.currentProposal.mockResolvedValue({
+      createdAt: 1,
+      sigs: [signature],
+      txn: {},
+      updatedAt: 2,
+    });
+
+    render(
+      <ReyaLocalPage
+        config={{
+          chainId: 1729,
+          ingressOrigin: 'http://127.0.0.1:8787',
+          safeAddress: SAFE,
+          sourceCommit: COMMIT,
+          stagingEnabled: true,
+        }}
+      />
+    );
+
+    await screen.findByText(
+      'Source, Reya RPC, Safe and shared proposal reads are ready.'
+    );
+    expect(screen.getByText('1 of 1 required')).toBeTruthy();
+    expect(screen.getByText('Reached')).toBeTruthy();
+    const signerStatus = screen.getByRole('list', {
+      name: 'Safe owner signing status',
+    });
+    expect(signerStatus.textContent).toContain(SAFE);
+    expect(signerStatus.textContent).toContain('signed');
+  });
+
   it('recomputes the reviewed transaction before one typed-data signature and staging write', async () => {
     const signature = `0x${'11'.repeat(64)}1b`;
     mocks.loadDeployment.mockResolvedValue({
@@ -372,14 +460,16 @@ describe('Reya Queue Deployment page', () => {
         }}
       />
     );
-    await screen.findByText('Source, Reya RPC and Safe reads are ready.');
+    await screen.findByText(
+      'Source, Reya RPC, Safe and shared proposal reads are ready.'
+    );
     fireEvent.change(screen.getByLabelText('Deployment data'), {
       target: { value: CANNONFILE },
     });
     fireEvent.click(
       screen.getByRole('button', { name: 'Preview Transactions to Queue' })
     );
-    await screen.findByText('2. Safe transaction to sign');
+    await screen.findByText('3. Safe transaction to sign');
     fireEvent.click(screen.getByRole('button', { name: 'Connect wallet' }));
     await screen.findByText('A current Safe owner wallet is connected.');
     fireEvent.click(
@@ -388,10 +478,10 @@ describe('Reya Queue Deployment page', () => {
       })
     );
     fireEvent.click(
-      screen.getByRole('button', { name: 'Sign and stage local proposal' })
+      screen.getByRole('button', { name: 'Sign and stage proposal' })
     );
 
-    await screen.findByText(/Local proposal created/);
+    await screen.findByText(/Shared proposal created/);
     expect(mocks.generatePreview).toHaveBeenCalledTimes(2);
     expect(provider.request).toHaveBeenCalledWith({
       method: 'eth_signTypedData_v4',
@@ -405,6 +495,131 @@ describe('Reya Queue Deployment page', () => {
         operation: '1',
       }),
     });
+    expect(
+      (
+        screen.getByRole('button', {
+          name: 'Execution pending security review',
+        }) as HTMLButtonElement
+      ).disabled
+    ).toBe(true);
+  });
+
+  it('adds another current-owner signature to the exact shared proposal', async () => {
+    const existingSignature = `0x${'22'.repeat(64)}1b`;
+    const walletSignature = `0x${'11'.repeat(64)}1b`;
+    const sharedTransaction = {
+      _nonce: 7,
+      baseGas: '0',
+      data: '0x1234',
+      gasPrice: '0',
+      gasToken: '0x0000000000000000000000000000000000000000',
+      operation: '1',
+      refundReceiver: SAFE,
+      safeTxGas: '42',
+      to: '0x2222222222222222222222222222222222222222',
+      value: '0',
+    };
+    const currentProposal = {
+      createdAt: 1,
+      sigs: [existingSignature],
+      txn: sharedTransaction,
+      updatedAt: 2,
+    };
+    const pendingStatus = {
+      createdAt: 1,
+      safeTxHash: `0x${'b'.repeat(64)}`,
+      signedOwners: [OTHER_OWNER],
+      threshold: 2,
+      thresholdReached: false,
+      txn: sharedTransaction,
+      unsignedOwners: [SAFE],
+      updatedAt: 2,
+    };
+    mocks.readSafeState.mockResolvedValue({
+      nonce: 7,
+      owners: [SAFE, OTHER_OWNER],
+      threshold: 2,
+    });
+    mocks.currentProposal.mockResolvedValue(currentProposal);
+    mocks.inspectProposal
+      .mockResolvedValueOnce(pendingStatus)
+      .mockResolvedValueOnce(pendingStatus)
+      .mockResolvedValueOnce({
+        ...pendingStatus,
+        signedOwners: [SAFE, OTHER_OWNER],
+        thresholdReached: true,
+        unsignedOwners: [],
+        updatedAt: 3,
+      });
+    mocks.loadDeployment.mockResolvedValue({
+      cannonfileUrl: CANNONFILE,
+      cid: null,
+      descriptor: null,
+      inputKind: 'cannonfile',
+      sourceCommit: COMMIT,
+    });
+    mocks.stage.mockResolvedValue({
+      created: false,
+      proposal: {
+        ...currentProposal,
+        sigs: [existingSignature, walletSignature],
+        updatedAt: 3,
+      },
+    });
+    const provider = {
+      request: vi.fn(async ({ method }: { method: string }) => {
+        if (method === 'eth_chainId') return '0x6c1';
+        if (method === 'eth_requestAccounts' || method === 'eth_accounts') {
+          return [SAFE];
+        }
+        if (method === 'eth_signTypedData_v4') return walletSignature;
+        throw new Error(`unexpected wallet method ${method}`);
+      }),
+    };
+    Object.defineProperty(window, 'ethereum', {
+      configurable: true,
+      value: provider,
+    });
+
+    render(
+      <ReyaLocalPage
+        config={{
+          chainId: 1729,
+          ingressOrigin: 'http://127.0.0.1:8787',
+          safeAddress: SAFE,
+          sourceCommit: COMMIT,
+          stagingEnabled: true,
+        }}
+      />
+    );
+    await screen.findByText('1 of 2 required');
+    fireEvent.change(screen.getByLabelText('Deployment data'), {
+      target: { value: CANNONFILE },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Preview Transactions to Queue' })
+    );
+    await screen.findByText(
+      'The current reviewed transaction exactly matches this shared proposal.'
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Connect wallet' }));
+    await screen.findByText('A current Safe owner wallet is connected.');
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: /I reviewed the ordered calls and Safe transaction hash/,
+      })
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Sign shared proposal' })
+    );
+
+    await screen.findByText(/Signature added/);
+    expect(mocks.stage).toHaveBeenCalledWith({
+      signature: walletSignature,
+      txn: expect.objectContaining(sharedTransaction),
+    });
+    expect(screen.getByText('2 of 2 required')).toBeTruthy();
+    expect(screen.getByText('Reached')).toBeTruthy();
   });
 
   it('never opens the wallet or stages when recomputation changes the reviewed calls', async () => {
@@ -460,14 +675,16 @@ describe('Reya Queue Deployment page', () => {
         }}
       />
     );
-    await screen.findByText('Source, Reya RPC and Safe reads are ready.');
+    await screen.findByText(
+      'Source, Reya RPC, Safe and shared proposal reads are ready.'
+    );
     fireEvent.change(screen.getByLabelText('Deployment data'), {
       target: { value: CANNONFILE },
     });
     fireEvent.click(
       screen.getByRole('button', { name: 'Preview Transactions to Queue' })
     );
-    await screen.findByText('2. Safe transaction to sign');
+    await screen.findByText('3. Safe transaction to sign');
     fireEvent.click(screen.getByRole('button', { name: 'Connect wallet' }));
     await screen.findByText('A current Safe owner wallet is connected.');
     fireEvent.click(
@@ -476,7 +693,7 @@ describe('Reya Queue Deployment page', () => {
       })
     );
     fireEvent.click(
-      screen.getByRole('button', { name: 'Sign and stage local proposal' })
+      screen.getByRole('button', { name: 'Sign and stage proposal' })
     );
 
     await screen.findByText('PREVIEW_CHANGED_REVIEW_REQUIRED');

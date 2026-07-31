@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "REYA_LOCAL_PROFILE=enabled node scripts/build-reya-local-profile.mjs",
+    "e2e:shared-proposal": "node scripts/run-shared-proposal-e2e.mjs",
     "scan": "node scripts/scan-reya-local-profile.mjs out",
     "serve": "serve out -c ../serve.json -l tcp://127.0.0.1:3000 --no-port-switching --no-clipboard --no-request-logging",
     "test": "vitest run",

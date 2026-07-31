@@ -240,6 +240,7 @@ function cors(response, config) {
   response.setHeader('Access-Control-Allow-Origin', config.uiOrigin);
   response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   response.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  response.setHeader('Access-Control-Expose-Headers', 'X-Reya-Content-Length');
   response.setHeader('Cache-Control', 'no-store');
   response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   response.setHeader('Cross-Origin-Resource-Policy', 'same-site');
@@ -534,6 +535,7 @@ export async function createLocalIngress(
         response.writeHead(200, {
           'content-length': String(body.byteLength),
           'content-type': 'application/json',
+          'x-reya-content-length': String(body.byteLength),
         });
         response.end(body);
         return;

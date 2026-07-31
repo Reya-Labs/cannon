@@ -179,7 +179,7 @@ export function createReyaLocalClients(config: ReyaLocalProfileConfig) {
           redirect: 'error',
           signal: AbortSignal.timeout(10 * 60_000),
         });
-        const declared = response.headers.get('content-length');
+        const declared = response.headers.get('x-reya-content-length');
         if (
           response.status !== 200 ||
           response.redirected ||
