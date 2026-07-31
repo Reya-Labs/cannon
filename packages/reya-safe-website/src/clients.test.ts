@@ -36,7 +36,7 @@ describe('local client transport', () => {
       void args;
       return new Response(encoded, {
         headers: {
-          'content-length': String(encoded.length),
+          'x-reya-content-length': String(encoded.length),
           'content-type': 'application/json',
         },
         status: 200,
@@ -74,6 +74,42 @@ describe('local client transport', () => {
         safeAddress,
       })
     );
+  });
+
+  it.each([
+    ['missing', { 'content-length': '2' }],
+    ['non-canonical', { 'x-reya-content-length': '02' }],
+    ['mismatched', { 'x-reya-content-length': '3' }],
+    ['oversized', { 'x-reya-content-length': String(16 * 1024 * 1024 + 1) }],
+  ])('rejects a %s preview integrity length', async (_name, headers) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('{}', {
+            headers: {
+              ...headers,
+              'content-type': 'application/json',
+            },
+            status: 200,
+          })
+      )
+    );
+    const clients = createReyaLocalClients({
+      chainId: 1729,
+      ingressOrigin: INGRESS_ORIGIN,
+      safeAddress: '0x1111111111111111111111111111111111111111',
+      sourceCommit: '0123456789abcdef0123456789abcdef01234567',
+      stagingEnabled: false,
+    });
+
+    await expect(
+      clients.preview.generate({
+        commit: '0123456789abcdef0123456789abcdef01234567',
+        partialDeployCid: null,
+        previousPackageCid: 'QmUNLLsPACCz1vLxQVkXqqLX5R1X345qqfHbsf67hvA3Nn',
+      })
+    ).rejects.toThrow('AUTOMATIC_PREVIEW_FAILED');
   });
 
   it('exposes only the configured Safe staging route when activation is explicit', async () => {

@@ -1,4 +1,6 @@
 .next/
 out/
 .out-build/
+cypress/screenshots/
+cypress/videos/
 *.tsbuildinfo

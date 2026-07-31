@@ -92,10 +92,20 @@ jobs:
   reya-local-website:
     name: Build and scan local signer profile
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     concurrency:
       group: reya-safe-website-${{ github.event.pull_request.number || github.run_id }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    services:
+      redis:
+        image: redis:7.4.2-alpine@sha256:02419de7eddf55aa5bcf49efb74e88fa8d931b4d77c07eff8a6b2144472b6952
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -126,6 +136,23 @@ jobs:
           name: reya-safe-website-${{ github.sha }}
           path: packages/reya-safe-website/out
           if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
+          overwrite: false
+          include-hidden-files: false
+      - name: Install the pinned Cypress browser runtime
+        run: pnpm --filter @usecannon/website exec cypress verify || pnpm --filter @usecannon/website exec cypress install --force
+      - name: Prove shared 3-of-5 signer coordination through the browser
+        run: pnpm --filter @reya/cannon-safe-website e2e:shared-proposal
+        env:
+          REYA_E2E_REDIS_URL: redis://127.0.0.1:16379/0
+      - name: Upload deterministic signer-state screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: reya-safe-signer-e2e-${{ github.sha }}
+          path: packages/reya-safe-website/cypress/screenshots
+          if-no-files-found: warn
           retention-days: 14
           compression-level: 9
           overwrite: false

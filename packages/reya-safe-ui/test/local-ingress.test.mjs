@@ -174,6 +174,21 @@ test('local ingress exposes only bounded review reads and injects source identit
     method: 'POST',
   });
   assert.equal(preview.status, 200);
+  assert.equal(
+    preview.headers.get('access-control-expose-headers'),
+    'X-Reya-Content-Length'
+  );
+  assert.equal(
+    preview.headers.get('x-reya-content-length'),
+    String(
+      Buffer.byteLength(
+        JSON.stringify({
+          chainId: 1729,
+          type: 'reya-cannon-read-only-preview',
+        })
+      )
+    )
+  );
   assert.deepEqual(await preview.json(), {
     chainId: 1729,
     type: 'reya-cannon-read-only-preview',
