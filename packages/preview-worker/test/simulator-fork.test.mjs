@@ -342,3 +342,15 @@ test('the fork surfaces a missing Foundry runtime as a preview failure', async (
     'PREVIEW_FAILED',
   );
 });
+
+test('the pruned-state detector parses the original bytes, not a folded copy', () => {
+  // The marker match is case-insensitive; the JSON it then parses is not
+  // case-folded, so a mixed-case payload is still read as it was sent.
+  const body = encode({
+    error: { code: -32000, message: 'Missing Trie Node 0xABC' },
+    id: 1,
+    jsonrpc: '2.0',
+  });
+
+  assert.equal(detectPrunedState(body), true);
+});

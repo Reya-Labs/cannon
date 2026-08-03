@@ -3,7 +3,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { REYA_CHAIN_ID } from '../config.mjs';
 import { PreviewError } from '../errors.mjs';
-import { isPrunedStateError } from '../rpc.mjs';
+import { isPrunedStateError, PRUNED_STATE_MARKERS } from '../rpc.mjs';
 
 // Pinned so the container image and this check cannot drift apart: the
 // Dockerfile installs exactly this Foundry build and the fork refuses to start
@@ -27,18 +27,6 @@ const HEX_QUANTITY_PATTERN = /^0x(?:0|[1-9a-f][0-9a-f]*)$/;
 const HASH_PATTERN = /^0x[0-9a-f]{64}$/;
 const REYA_CHAIN_ID_HEX = `0x${REYA_CHAIN_ID.toString(16)}`;
 const SAFE_FORK_BALANCE = '0x21e19e0c9bab2400000';
-
-// Copied from `rpc.mjs`, which uses them to classify a decoded JSON-RPC error.
-// Here they are only a pre-filter: a body that contains none of them cannot
-// satisfy `isPrunedStateError`, so it never needs parsing.
-const PRUNED_STATE_MARKERS = Object.freeze([
-  'missing trie node',
-  'no historical state',
-  'not available historically',
-  'state at block',
-  'state is not available',
-  'pruned',
-]);
 
 function forkFailure() {
   throw new PreviewError(502, 'PREVIEW_FAILED');
@@ -115,13 +103,14 @@ export function detectPrunedState(bytes) {
   }
   let text;
   try {
-    text = new TextDecoder('utf-8', { fatal: false })
-      .decode(bytes)
-      .toLowerCase();
+    text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
   } catch {
     return false;
   }
-  if (!PRUNED_STATE_MARKERS.some((marker) => text.includes(marker))) {
+  // The markers gate the parse; the parse itself sees the original bytes, so a
+  // JSON-RPC member is never altered by the case-folding done to match them.
+  const folded = text.toLowerCase();
+  if (!PRUNED_STATE_MARKERS.some((marker) => folded.includes(marker))) {
     return false;
   }
   let body;

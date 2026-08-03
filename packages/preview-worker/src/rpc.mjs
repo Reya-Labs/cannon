@@ -12,7 +12,13 @@ const REQUEST_TIMEOUT_MS = 15_000;
  * retried against `latest`.
  */
 const PRUNED_STATE_CODES = Object.freeze([-32000, -32001, -32002]);
-const PRUNED_STATE_MARKERS = Object.freeze([
+
+/**
+ * Exported so the fork's upstream proxy can use them as a cheap pre-filter
+ * over raw response bytes without keeping a second copy that could drift:
+ * a body containing none of these cannot satisfy `isPrunedStateError`.
+ */
+export const PRUNED_STATE_MARKERS = Object.freeze([
   'missing trie node',
   'no historical state',
   'not available historically',
