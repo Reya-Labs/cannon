@@ -168,6 +168,20 @@ test('treats a redirected response as an upstream failure', async () => {
   );
 });
 
+test('treats a response that hides its redirect state as an upstream failure', async () => {
+  const bundle = sourceBundle();
+  const { reader: client } = reader(() => {
+    const response = jsonResponse(bundle);
+    delete response.redirected;
+    return response;
+  });
+
+  assert.equal(
+    await code(client.bundle({ commit: COMMIT })),
+    'UPSTREAM_UNAVAILABLE',
+  );
+});
+
 test('refuses a body larger than the source budget', async () => {
   const { reader: client } = reader(() => ({
     body: streamOf(new Uint8Array(16)),
