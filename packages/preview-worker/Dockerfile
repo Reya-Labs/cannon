@@ -31,6 +31,14 @@ WORKDIR /usr/app
 COPY ./package.json ./pnpm-lock.yaml ./
 RUN pnpm install --prod --frozen-lockfile --ignore-scripts --no-optional
 
+# This image runs the worker with PREVIEW_SIMULATOR_MODE=disabled only.
+#
+# The `fork` simulator additionally needs the pinned Foundry runtime and the
+# Cannon engine, and neither is installed here: Foundry publishes no musl
+# binary, so a final stage that can run Anvil has to be glibc-based, and the
+# engine is built from the monorepo, so the build context has to widen past
+# this package. See "Runtime the image must provide" in README.md. A worker
+# started with PREVIEW_SIMULATOR_MODE=fork on this image fails to start.
 FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 WORKDIR /usr/app
