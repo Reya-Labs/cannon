@@ -7,7 +7,6 @@ import {
   createUpstreamProxy,
   detectPrunedState,
   EXPECTED_ANVIL_VERSION,
-  PRUNED_STATE_SCAN_BYTES,
   verifyAnvilRuntime,
 } from '../src/simulator/fork.mjs';
 import { RPC_URL, SAFE_ADDRESS } from './simulator-support.mjs';
@@ -87,15 +86,27 @@ test('does not mistake an ordinary rejection for pruned state', () => {
   assert.equal(detectPrunedState(new Uint8Array(0)), false);
 });
 
-test('bounds the pruned-state scan so a large result is not re-decoded', () => {
-  const padded = {
-    error: PRUNED_ERROR,
+test('detects a rejection batched alongside a multi-megabyte result', () => {
+  // The reason a size gate cannot live here: this is exactly the shape a long
+  // build produces, and the fail-closed pinned-state guarantee reads this flag.
+  const batched = encode([
+    { id: 1, jsonrpc: '2.0', result: `0x${'ab'.repeat(3 * 1024 * 1024)}` },
+    { error: PRUNED_ERROR, id: 2, jsonrpc: '2.0' },
+  ]);
+
+  assert.ok(batched.byteLength > 4 * 1024 * 1024);
+  assert.equal(detectPrunedState(batched), true);
+});
+
+test('a large body carrying no rejection is discarded without parsing', () => {
+  const large = encode({
     id: 1,
     jsonrpc: '2.0',
-    result: 'x'.repeat(PRUNED_STATE_SCAN_BYTES),
-  };
+    result: `0x${'ab'.repeat(3 * 1024 * 1024)}`,
+  });
 
-  assert.equal(detectPrunedState(encode(padded)), false);
+  assert.ok(large.byteLength > 4 * 1024 * 1024);
+  assert.equal(detectPrunedState(large), false);
 });
 
 test('refuses any Anvil but the pinned build', async () => {

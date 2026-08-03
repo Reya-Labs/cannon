@@ -228,14 +228,21 @@ export function createForkSimulator({
             }),
             { commit, partialDeployCid, previousPackageCid, safeAddress },
           );
-        } finally {
-          // Checked on both paths, and before the result is looked at. A build
-          // that read partly-pruned state can still "succeed"; that answer
-          // would be a reproducibility claim the chain cannot support, so the
-          // whole request fails rather than being returned with a caveat.
+        } catch (error) {
+          // A build failure must never hide a pinned-state failure: the build
+          // failed *because* the chain could not serve what it pinned, and that
+          // is the fact the caller needs.
           if (fork.prunedState) {
             throw new PreviewError(503, 'RPC_PINNED_STATE_UNAVAILABLE');
           }
+          throw error;
+        }
+        // Checked on the success path too. A build that read partly-pruned
+        // state can still "succeed"; that answer would be a reproducibility
+        // claim the chain cannot support, so the whole request fails rather
+        // than being returned with a caveat.
+        if (fork.prunedState) {
+          throw new PreviewError(503, 'RPC_PINNED_STATE_UNAVAILABLE');
         }
 
         return Object.freeze({
@@ -268,7 +275,11 @@ export function createForkSimulator({
         if (isPreviewError(error)) throw error;
         reject();
       } finally {
-        await fork?.stop();
+        // Disposal must not replace the failure being reported: `stop()` kills
+        // a child process and closes a server, either of which can reject, and
+        // that rejection would reach the caller as an unmapped error in place
+        // of RPC_PINNED_STATE_UNAVAILABLE or PREVIEW_FAILED.
+        await fork?.stop().catch(() => undefined);
       }
     },
   });

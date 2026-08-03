@@ -1,6 +1,32 @@
 import { PreviewError } from '../errors.mjs';
 
-const MAX_RESPONSE_CHUNKS = 8_192;
+const MIN_RESPONSE_CHUNKS = 8_192;
+const CHUNK_BUDGET_BYTES = 1_024;
+
+/**
+ * The chunk cap bounds iteration, not size — size is already capped by
+ * `maximumBytes`. A fixed cap would therefore reject a *valid* response that
+ * merely arrived in small pieces: at 8,192 chunks a 50 MiB artifact would have
+ * to average 6,400 bytes per chunk, which is a property of the transport, not
+ * of the artifact. Deriving the cap from the byte budget keeps the iteration
+ * bound without making the transport's framing part of the contract.
+ */
+function chunkBudget(maximumBytes) {
+  return Math.max(
+    MIN_RESPONSE_CHUNKS,
+    Math.ceil(maximumBytes / CHUNK_BUDGET_BYTES),
+  );
+}
+
+/**
+ * Distinguishes the caller running out of time from the upstream being
+ * unusable. Both abort the same fetch, but they are different operational
+ * facts: reporting them as one inflates upstream failure counts and hides
+ * deadline exhaustion.
+ */
+function deadlineExceeded() {
+  throw new PreviewError(504, 'PREVIEW_FAILED');
+}
 
 /**
  * Every cluster-internal upstream failure collapses to one opaque code. The
@@ -19,6 +45,7 @@ function boundedSignal(signal, timeoutMs) {
 }
 
 async function boundedBody(response, maximumBytes) {
+  const maximumChunks = chunkBudget(maximumBytes);
   if (response.body === null) unavailable();
   const declared = response.headers.get('content-length');
   if (
@@ -33,7 +60,7 @@ async function boundedBody(response, maximumBytes) {
   let chunkCount = 0;
   for await (const chunk of response.body) {
     chunkCount += 1;
-    if (chunkCount > MAX_RESPONSE_CHUNKS) unavailable();
+    if (chunkCount > maximumChunks) unavailable();
     if (!(chunk instanceof Uint8Array)) unavailable();
     length += chunk.byteLength;
     if (length > maximumBytes) unavailable();
@@ -97,6 +124,7 @@ export async function boundedUpstreamRequest({
       signal: boundedSignal(signal, timeoutMs),
     });
   } catch {
+    if (signal?.aborted) deadlineExceeded();
     unavailable();
   }
   if (

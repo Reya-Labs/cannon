@@ -5,6 +5,7 @@ import { createPreviewRunner } from './preview-runner.mjs';
 import { createRegistryResolver } from './registry.mjs';
 import { createSimulator } from './simulator.mjs';
 import { loadPreviewEngine } from './simulator/engine.mjs';
+import { verifyAnvilRuntime } from './simulator/fork.mjs';
 
 /**
  * Builds a listening preview worker.
@@ -13,21 +14,31 @@ import { loadPreviewEngine } from './simulator/engine.mjs';
  * bounded request lifetime, and an immediate socket teardown on malformed
  * framing so a stalled or oversized client cannot hold a slot.
  *
- * The Cannon engine is resolved before the socket is opened. A `fork` worker
- * whose image lacks it never becomes ready, which is the difference between a
- * deployment that fails and one that answers previews from a degraded path.
+ * Both runtime prerequisites of a `fork` worker — the Cannon engine and the
+ * pinned Foundry build — are checked before the socket is opened. Checking them
+ * lazily would let the worker pass its readiness probe and then fail every
+ * preview, which is the failure mode a probe exists to prevent: a deployment
+ * that cannot work should fail to deploy, not report itself healthy.
+ *
+ * `loadEngine` and `verifyRuntime` are seams for those checks so the startup
+ * failure path is testable without a Foundry install. They are arguments of
+ * this process, never configuration, and production always uses the defaults.
  */
-export async function startServer(env = process.env) {
+export async function startServer(
+  env = process.env,
+  { loadEngine = loadPreviewEngine, verifyRuntime = verifyAnvilRuntime } = {},
+) {
   const config = loadConfig(env);
+  if (config.simulatorMode !== 'disabled') {
+    await verifyRuntime();
+  }
   const app = createApp(config, {
     previewRunner: createPreviewRunner({
       rpcUrl: config.rpcUrl,
       simulator: createSimulator({
         artifactOrigin: config.artifactOrigin,
         engine:
-          config.simulatorMode === 'disabled'
-            ? undefined
-            : await loadPreviewEngine(),
+          config.simulatorMode === 'disabled' ? undefined : await loadEngine(),
         mainnetRpcUrl: config.mainnetRpcUrl,
         mode: config.simulatorMode,
         opRpcUrl: config.opRpcUrl,

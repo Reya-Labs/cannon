@@ -134,3 +134,31 @@ test('bounds how many artifacts one preview may read', async () => {
 
   assert.equal(await code(reader.read(PREVIOUS_CID)), 'PREVIEW_FAILED');
 });
+
+test('accepts a valid artifact that arrives in many small chunks', async () => {
+  // The chunk cap bounds iteration, not size. An artifact that stays inside
+  // its byte budget must not be rejected because the transport framed it
+  // finely — that would make the upstream's chunking part of the contract.
+  const payload = new TextEncoder().encode('a'.repeat(20_000));
+  const { reader } = build({
+    getContentCid: async () => PREVIOUS_CID,
+    handler: () => ({
+      body: new ReadableStream({
+        start(controller) {
+          for (const byte of payload)
+            controller.enqueue(new Uint8Array([byte]));
+          controller.close();
+        },
+      }),
+      headers: new Headers({ 'content-type': 'application/octet-stream' }),
+      ok: true,
+      redirected: false,
+      status: 200,
+    }),
+  });
+
+  assert.equal(
+    (await reader.read(PREVIOUS_CID)).byteLength,
+    payload.byteLength,
+  );
+});

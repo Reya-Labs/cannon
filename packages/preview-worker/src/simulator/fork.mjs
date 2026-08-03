@@ -17,10 +17,10 @@ export const FORK_REQUEST_TIMEOUT_MS = 180_000;
 export const MAX_FORK_RESPONSE_BYTES = 16 * 1024 * 1024;
 export const MAX_FORK_REQUEST_BYTES = 4 * 1024 * 1024;
 
-// A JSON-RPC rejection is small. Bounding the pruned-state scan keeps a large
-// successful body — a block with every transaction, say — from being decoded a
-// second time just to look for an error that cannot be in it.
-export const PRUNED_STATE_SCAN_BYTES = 1024 * 1024;
+// JSON-RPC 2.0 spells the rejection member `error`, lowercase. Scanning the
+// raw bytes for it costs no allocation and lets a large successful body skip
+// the decode entirely — without ever skipping a body that could carry one.
+const ERROR_MEMBER = Buffer.from('"error"', 'utf8');
 
 const ADDRESS_PATTERN = /^0x[0-9a-f]{40}$/;
 const HEX_QUANTITY_PATTERN = /^0x(?:0|[1-9a-f][0-9a-f]*)$/;
@@ -95,12 +95,15 @@ export async function verifyAnvilRuntime(execFileImpl = execFile) {
  * to the upstream.
  */
 export function detectPrunedState(bytes) {
-  if (
-    !(bytes instanceof Uint8Array) ||
-    bytes.byteLength > PRUNED_STATE_SCAN_BYTES
-  ) {
-    return false;
-  }
+  if (!(bytes instanceof Uint8Array)) return false;
+  // Deliberately not bounded by size. A batched response mixes large results
+  // with individual rejections, so a size gate here would silently exempt
+  // exactly the responses that most need checking — and the fail-closed
+  // pinned-state guarantee is derived from this flag. The body is already
+  // capped at MAX_FORK_RESPONSE_BYTES, and the two filters below mean a large
+  // body carrying no rejection costs one scan of the raw bytes.
+  const raw = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (!raw.includes(ERROR_MEMBER)) return false;
   let text;
   try {
     text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);

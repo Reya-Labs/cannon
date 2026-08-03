@@ -281,9 +281,11 @@ test('an expired run deadline stops the work before it starts', async () => {
   const controller = new AbortController();
   controller.abort(new Error('deadline exceeded'));
 
+  // A spent deadline is reported as a failed preview, not as an unusable
+  // upstream: the gateway was reachable, the request simply ran out of budget.
   assert.equal(
     await code(simulator.simulate(request({ signal: controller.signal }))),
-    'UPSTREAM_UNAVAILABLE',
+    'PREVIEW_FAILED',
   );
   assert.equal(fetchImpl.calls.length, 1, 'only the first read is attempted');
   assert.equal(startedFork, false, 'no Anvil process is started');
@@ -419,4 +421,37 @@ test('the engine is resolved only from fixed specifiers', async () => {
     '@reya/cannon-safe-ui/preview-engine',
     '@usecannon/artifact-codec',
   ]);
+});
+
+test('a failing fork disposal does not replace the reported failure', async () => {
+  const fork = stubFork({
+    stop: async () => {
+      throw new Error('anvil refused to die');
+    },
+  });
+  const { simulator } = build({
+    fork,
+    engine: {
+      runReadOnlyPreview: async () => {
+        throw new Error('preview build failed at invoke.something');
+      },
+    },
+  });
+
+  assert.equal(await code(simulator.simulate(request())), 'PREVIEW_FAILED');
+});
+
+test('a failing fork disposal does not mask a pinned-state failure', async () => {
+  const fork = stubFork({
+    prunedState: true,
+    stop: async () => {
+      throw new Error('anvil refused to die');
+    },
+  });
+  const { simulator } = build({ fork });
+
+  assert.equal(
+    await code(simulator.simulate(request())),
+    'RPC_PINNED_STATE_UNAVAILABLE',
+  );
 });
