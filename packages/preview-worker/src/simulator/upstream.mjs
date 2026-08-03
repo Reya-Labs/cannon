@@ -103,7 +103,9 @@ export async function boundedUpstreamRequest({
     response === null ||
     typeof response !== 'object' ||
     response.status !== 200 ||
-    response.redirected === true ||
+    // `!== false`, not `=== true`: a response object that does not report
+    // whether it was redirected is not one this process should read.
+    response.redirected !== false ||
     typeof response.headers?.get !== 'function' ||
     response.headers
       .get('content-type')
