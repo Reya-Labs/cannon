@@ -6,7 +6,10 @@
   "type": "module",
   "exports": {
     "./artifact-loader": "./src/runtime/artifact-loader.mjs",
+    "./assemble-definition": "./src/runtime/assemble-definition.mjs",
     "./clients": "./src/clients/index.mjs",
+    "./ephemeral-artifact-overlay": "./src/runtime/ephemeral-artifact-overlay.mjs",
+    "./preview-engine": "./src/runtime/preview-engine.mjs",
     "./read-only": "./src/clients/read-only.mjs",
     "./safe-review": "./src/clients/safe-review.mjs"
   },

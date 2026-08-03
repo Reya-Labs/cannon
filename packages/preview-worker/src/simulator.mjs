@@ -1,29 +1,43 @@
+import { SIMULATOR_MODES } from './config.mjs';
 import { PreviewError } from './errors.mjs';
+import { createForkSimulator } from './simulator/fork-simulator.mjs';
 
-export const SIMULATOR_MODES = Object.freeze(['disabled']);
+export { SIMULATOR_MODES };
 
 /**
  * Selects the preview simulator for this process.
  *
- * The worker ships dormant, matching the rest of the Reya Cannon signer plane:
- * the route exists, is authenticated, bounded and fail-closed, but no
- * simulation runs until a simulator mode is implemented and explicitly
- * selected. A disabled worker still resolves OP package aliases, which needs no
- * fork.
+ * `disabled` keeps the worker dormant: the route stays authenticated, bounded
+ * and fail-closed, and OP alias resolution — which needs no fork — still
+ * serves. It remains the default, so activating the fork simulator is an
+ * explicit deployment decision rather than a consequence of upgrading.
  *
- * The fork-backed simulator — a disposable Anvil fork of Reya Network running
- * the Cannon build against the source gateway and the GCS-backed artifact
- * facade — lands as its own change so that the derivation boundary above can be
- * reviewed on its own terms.
+ * `fork` runs the reviewed read-only Cannon build against a disposable Anvil
+ * fork of Reya Network, reading source from the cluster-internal gateway and
+ * artifacts from the CID-verified facade. It requires the Cannon engine to be
+ * present in the image and the Foundry runtime to be installed; both fail
+ * closed rather than degrading.
  *
- * @param {{mode: string}} options
+ * @param {{
+ *   artifactOrigin?: string,
+ *   engine?: object,
+ *   fetchImpl?: typeof fetch,
+ *   mainnetRpcUrl?: string,
+ *   mode: string,
+ *   opRpcUrl?: string,
+ *   rpcUrl?: string,
+ *   sourceOrigin?: string,
+ * }} options
  * @returns {import('./preview-runner.mjs').PreviewSimulator}
  */
-export function createSimulator({ mode }) {
+export function createSimulator({ mode, ...options }) {
   if (!SIMULATOR_MODES.includes(mode)) {
     throw new Error(
       `PREVIEW_SIMULATOR_MODE must be one of: ${SIMULATOR_MODES.join(', ')}`,
     );
+  }
+  if (mode === 'fork') {
+    return createForkSimulator(options);
   }
   return Object.freeze({
     async simulate() {

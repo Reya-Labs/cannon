@@ -106,33 +106,104 @@ than no answer.
 
 ## Simulator activation
 
-The worker ships dormant, matching the rest of the signer plane. The route
-exists, is authenticated, bounded and fail-closed, but `PREVIEW_SIMULATOR_MODE`
-currently supports only `disabled`, under which `/preview/1729` fails closed and
-`/registry/op/resolve` still serves.
+`PREVIEW_SIMULATOR_MODE` selects the simulator and still defaults to
+`disabled`, under which `/preview/1729` fails closed and `/registry/op/resolve`
+serves. Activating `fork` is a deployment decision, not a consequence of
+upgrading.
 
-The fork-backed simulator — a disposable Anvil fork of Reya Network running the
-Cannon build against the source gateway and the GCS-backed artifact facade —
-lands as its own change, so that the derivation boundary above can be reviewed
-on its own terms.
+### `fork`
+
+A disposable Anvil fork of Reya Network running the reviewed read-only Cannon
+build. One preview does, in order:
+
+1. read the pinned `Reya-Labs/reya-deployments` bundle from the source gateway
+   and re-hash every file and the canonical bundle;
+2. assemble the Cannon definition from exactly those bytes;
+3. read the previous package artifact from the facade, CID-verified, and take
+   the package reference **from the artifact** rather than from the request;
+4. start a disposable Anvil fork pinned to one block, with the credentialed
+   upstream behind a loopback proxy;
+5. run the build and return the ordered Safe calls.
+
+Every one of those failing is a rejected request. There is no partial answer.
+
+### What the simulator is not given
+
+It never receives the Safe nonce, never derives a transaction and never
+computes a digest — steps 2 to 5 of the sequence at the top of this file happen
+after it returns, from chain state. A subverted simulator can therefore cause a
+_failed_ preview; it cannot choose what an owner is asked to sign. The tests
+assert this by rejecting a simulation whose Safe address, commit or package CIDs
+do not match the request, and by checking that no nonce, transaction or digest
+ever appears in what the simulator produces.
+
+### Where trust actually sits
+
+| Input                | Trusted? | What replaces trust                                                        |
+| -------------------- | -------- | -------------------------------------------------------------------------- |
+| source gateway       | no       | per-file and canonical SHA-256 re-hash against the requested commit        |
+| artifact facade      | no       | every response re-hashed to the CID that was asked for                     |
+| previous package     | pinned   | the request names the CID; the registry cannot answer a different one      |
+| other package refs   | no       | `eth_call` to the Cannon registry on OP Mainnet, then Ethereum Mainnet     |
+| build-time publishes | no       | process-local overlay, only for CIDs this run produced, never a pinned key |
+| Reya RPC             | bounded  | one pinned block, probed before use; a pruned read fails the whole request |
+| Anvil                | pinned   | exact version and commit SHA, or the fork refuses to start                 |
+
+An unresolved package reference returns `null` and the build fails. No hosted
+Cannon, Pinata or public IPFS path exists to fall back to.
+
+### Bounds
+
+8 MiB per source bundle and 50 MiB per artifact, at most 2048 artifact reads
+and 256 distinct registry lookups per preview, a 30 s source deadline, a 60 s
+artifact deadline, and the runner's own 240 s preview deadline threaded into
+every upstream read so a sequence of individually quick calls cannot outlive the
+request. Single-flight is already enforced by the runner.
+
+### Runtime the image must provide
+
+A `fork` worker needs two things the published image does not have yet, and
+refuses to start without either:
+
+- **Foundry**, exactly `anvil 1.2.3-v1.2.3` /
+  `a813a2cee7dd4926e7c56fd8a785b54f32e0d10f`. Any other build is refused, so a
+  preview is always produced by the reviewed EVM. Note this needs a glibc final
+  stage: Foundry publishes no musl binary, and the image is Alpine today.
+- **The Cannon engine**, resolved from the fixed specifiers
+  `@reya/cannon-safe-ui/{assemble-definition,artifact-loader,ephemeral-artifact-overlay,preview-engine}`
+  and `@usecannon/artifact-codec`. Those are workspace packages, so the image
+  has to build them from the monorepo — which means widening the Docker build
+  context beyond `packages/preview-worker`.
+
+Neither specifier is configurable: no environment variable or request field
+selects what gets imported, so an operator cannot substitute an engine. If the
+image lacks it, `startServer` throws before the socket is opened rather than
+serving previews from a degraded path.
+
+Those image changes are deliberately not part of the change that added this
+simulator: they alter the base image and the build context, and no workflow
+builds this image today, so they cannot be verified alongside it. Until they
+land, `PREVIEW_SIMULATOR_MODE` must stay `disabled` in every deployed profile —
+and a profile that sets `fork` anyway will fail to start rather than serve.
 
 ## Configuration
 
-| Variable                       | Notes                                          |
-| ------------------------------ | ---------------------------------------------- |
-| `AUTH_PROXY_SECRET`            | ≥32 bytes, shared with the identity proxy      |
-| `AUTH_IDENTITY_HEADER`         | default `x-reya-user`                          |
-| `AUTH_PROXY_SECRET_HEADER`     | default `x-reya-proxy-secret`                  |
-| `AUTH_ROLES_HEADER`            | default `x-reya-roles`                         |
-| `PREVIEW_UI_ORIGIN`            | exactly one canonical HTTPS origin, no port    |
-| `PREVIEW_SAFE_ADDRESS`         | non-zero lowercase address                     |
-| `PREVIEW_SOURCE_COMMIT`        | pinned default `reya-deployments` commit       |
-| `PREVIEW_PREVIOUS_PACKAGE_CID` | pinned default previous-package CIDv0          |
-| `PREVIEW_RPC_URL`              | server-held; may carry a token, never logged   |
-| `PREVIEW_OP_RPC_URL`           | server-held; OP Mainnet, alias resolution only |
-| `PREVIEW_SOURCE_ORIGIN`        | cluster-internal source gateway origin         |
-| `PREVIEW_ARTIFACT_ORIGIN`      | cluster-internal artifact facade origin        |
-| `PREVIEW_SIMULATOR_MODE`       | `disabled`                                     |
+| Variable                       | Notes                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------ |
+| `AUTH_PROXY_SECRET`            | ≥32 bytes, shared with the identity proxy                                                  |
+| `AUTH_IDENTITY_HEADER`         | default `x-reya-user`                                                                      |
+| `AUTH_PROXY_SECRET_HEADER`     | default `x-reya-proxy-secret`                                                              |
+| `AUTH_ROLES_HEADER`            | default `x-reya-roles`                                                                     |
+| `PREVIEW_UI_ORIGIN`            | exactly one canonical HTTPS origin, no port                                                |
+| `PREVIEW_SAFE_ADDRESS`         | non-zero lowercase address                                                                 |
+| `PREVIEW_SOURCE_COMMIT`        | pinned default `reya-deployments` commit                                                   |
+| `PREVIEW_PREVIOUS_PACKAGE_CID` | pinned default previous-package CIDv0                                                      |
+| `PREVIEW_RPC_URL`              | server-held; may carry a token, never logged                                               |
+| `PREVIEW_OP_RPC_URL`           | server-held; OP Mainnet, alias resolution only                                             |
+| `PREVIEW_SOURCE_ORIGIN`        | cluster-internal source gateway origin                                                     |
+| `PREVIEW_ARTIFACT_ORIGIN`      | cluster-internal artifact facade origin                                                    |
+| `PREVIEW_SIMULATOR_MODE`       | `disabled` (default) or `fork`                                                             |
+| `PREVIEW_MAINNET_RPC_URL`      | server-held; Ethereum Mainnet, registry reads only — required only when the mode is `fork` |
 
 `describeConfig` is the only thing start-up logs, and it reports credential
 presence rather than any URL.

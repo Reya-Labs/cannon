@@ -4,6 +4,7 @@ import { describeConfig, loadConfig } from './config.mjs';
 import { createPreviewRunner } from './preview-runner.mjs';
 import { createRegistryResolver } from './registry.mjs';
 import { createSimulator } from './simulator.mjs';
+import { loadPreviewEngine } from './simulator/engine.mjs';
 
 /**
  * Builds a listening preview worker.
@@ -11,6 +12,10 @@ import { createSimulator } from './simulator.mjs';
  * Server hardening mirrors the rest of the signer plane: bounded headers,
  * bounded request lifetime, and an immediate socket teardown on malformed
  * framing so a stalled or oversized client cannot hold a slot.
+ *
+ * The Cannon engine is resolved before the socket is opened. A `fork` worker
+ * whose image lacks it never becomes ready, which is the difference between a
+ * deployment that fails and one that answers previews from a degraded path.
  */
 export async function startServer(env = process.env) {
   const config = loadConfig(env);
@@ -18,7 +23,16 @@ export async function startServer(env = process.env) {
     previewRunner: createPreviewRunner({
       rpcUrl: config.rpcUrl,
       simulator: createSimulator({
-        mode: env.PREVIEW_SIMULATOR_MODE?.trim() || 'disabled',
+        artifactOrigin: config.artifactOrigin,
+        engine:
+          config.simulatorMode === 'disabled'
+            ? undefined
+            : await loadPreviewEngine(),
+        mainnetRpcUrl: config.mainnetRpcUrl,
+        mode: config.simulatorMode,
+        opRpcUrl: config.opRpcUrl,
+        rpcUrl: config.rpcUrl,
+        sourceOrigin: config.sourceOrigin,
       }),
     }),
     registryResolver: createRegistryResolver({ opRpcUrl: config.opRpcUrl }),

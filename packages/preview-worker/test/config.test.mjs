@@ -136,3 +136,42 @@ test('the registry resolver collapses an OP outage into REGISTRY_UNAVAILABLE', a
     },
   );
 });
+
+test('defaults to the dormant simulator and needs no extra endpoint for it', () => {
+  const config = loadConfig({ ...ENV });
+  assert.equal(config.simulatorMode, 'disabled');
+  assert.equal(config.mainnetRpcUrl, null);
+  assert.equal(describeConfig(config).mainnetRpcConfigured, false);
+});
+
+test('a fork worker cannot start without the Ethereum Mainnet registry endpoint', () => {
+  rejects({ PREVIEW_SIMULATOR_MODE: 'fork' }, 'PREVIEW_MAINNET_RPC_URL');
+  const config = loadConfig({
+    ...ENV,
+    PREVIEW_MAINNET_RPC_URL: 'https://eth.example.invalid/v1/token',
+    PREVIEW_SIMULATOR_MODE: 'fork',
+  });
+  assert.equal(config.simulatorMode, 'fork');
+  assert.equal(config.mainnetRpcUrl, 'https://eth.example.invalid/v1/token');
+});
+
+test('rejects an unknown simulator mode at start-up', () => {
+  rejects({ PREVIEW_SIMULATOR_MODE: 'live' });
+  rejects({ PREVIEW_SIMULATOR_MODE: 'FORK' });
+});
+
+test('start-up logging reports endpoint presence, never an endpoint', () => {
+  const described = describeConfig(
+    loadConfig({
+      ...ENV,
+      PREVIEW_MAINNET_RPC_URL: 'https://eth.example.invalid/v1/token',
+      PREVIEW_SIMULATOR_MODE: 'fork',
+    }),
+  );
+  const serialized = JSON.stringify(described);
+
+  assert.equal(described.mainnetRpcConfigured, true);
+  assert.equal(described.simulatorMode, 'fork');
+  assert.equal(serialized.includes('eth.example.invalid'), false);
+  assert.equal(serialized.includes('token'), false);
+});

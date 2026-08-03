@@ -80,14 +80,20 @@ export function isPrunedStateError(error) {
  * The URL and any credential it carries stay in this process: the browser never
  * chooses the endpoint, and no upstream error text is propagated outward.
  *
- * @param {{fetchImpl?: typeof fetch, method: string, params: unknown[], url: string}} options
+ * An optional `signal` lets a caller that owns a deadline — a preview run, for
+ * instance — bound this call by it as well as by the per-request timeout, so a
+ * sequence of individually quick calls still cannot outlive the request.
+ *
+ * @param {{fetchImpl?: typeof fetch, method: string, params: unknown[], signal?: AbortSignal, url: string}} options
  */
 export async function jsonRpcCall({
   fetchImpl = globalThis.fetch,
   method,
   params,
+  signal,
   url,
 }) {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   let response;
   try {
     response = await fetchImpl(url, {
@@ -98,7 +104,10 @@ export async function jsonRpcCall({
       },
       method: 'POST',
       redirect: 'error',
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal:
+        signal instanceof AbortSignal
+          ? AbortSignal.any([signal, timeout])
+          : timeout,
     });
   } catch {
     throw new PreviewError(502, 'UPSTREAM_UNAVAILABLE');
@@ -141,6 +150,7 @@ export async function ethCall({
   blockTag = 'latest',
   data,
   fetchImpl,
+  signal,
   to,
   url,
 }) {
@@ -148,6 +158,7 @@ export async function ethCall({
     fetchImpl,
     method: 'eth_call',
     params: [{ data, to }, blockTag],
+    signal,
     url,
   });
   if (typeof result !== 'string' || !HEX_PATTERN.test(result)) {

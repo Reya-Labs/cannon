@@ -7,6 +7,14 @@ const ZERO_ADDRESS = `0x${'0'.repeat(40)}`;
 export const REYA_CHAIN_ID = 1729;
 export const OP_CHAIN_ID = 10;
 
+/**
+ * `disabled` remains first and remains the default. Activating `fork` is an
+ * explicit deployment decision: it additionally requires the Ethereum Mainnet
+ * registry endpoint, the Cannon engine in the image and the pinned Foundry
+ * runtime, and each of those is checked before the worker accepts traffic.
+ */
+export const SIMULATOR_MODES = Object.freeze(['disabled', 'fork']);
+
 function required(env, key) {
   const value = env[key]?.trim();
   if (!value) throw new Error(`${key} is required`);
@@ -159,6 +167,24 @@ export function loadConfig(env = process.env) {
     throw new Error('PREVIEW_PREVIOUS_PACKAGE_CID must be one CIDv0');
   }
 
+  const simulatorMode = env.PREVIEW_SIMULATOR_MODE?.trim() || 'disabled';
+  if (!SIMULATOR_MODES.includes(simulatorMode)) {
+    throw new Error(
+      `PREVIEW_SIMULATOR_MODE must be one of: ${SIMULATOR_MODES.join(', ')}`,
+    );
+  }
+  // Cannon resolves package references against OP Mainnet and then Ethereum
+  // Mainnet. A worker that could only read one of them would silently resolve
+  // a different package set than `cannon build` does, so the second endpoint
+  // is required exactly when a build can actually run.
+  const mainnetRpcUrl =
+    simulatorMode === 'disabled'
+      ? null
+      : upstreamUrl(
+          required(env, 'PREVIEW_MAINNET_RPC_URL'),
+          'PREVIEW_MAINNET_RPC_URL',
+        );
+
   return Object.freeze({
     artifactOrigin: internalOrigin(
       required(env, 'PREVIEW_ARTIFACT_ORIGIN'),
@@ -173,6 +199,7 @@ export function loadConfig(env = process.env) {
     chainId: REYA_CHAIN_ID,
     defaultCommit,
     defaultPreviousPackageCid,
+    mainnetRpcUrl,
     opRpcUrl: upstreamUrl(
       required(env, 'PREVIEW_OP_RPC_URL'),
       'PREVIEW_OP_RPC_URL',
@@ -180,6 +207,7 @@ export function loadConfig(env = process.env) {
     port: positiveInteger(env.PORT?.trim() || '8080', 'PORT', 65_535),
     rpcUrl: upstreamUrl(required(env, 'PREVIEW_RPC_URL'), 'PREVIEW_RPC_URL'),
     safeAddress: safeAddress(required(env, 'PREVIEW_SAFE_ADDRESS')),
+    simulatorMode,
     sourceOrigin: internalOrigin(
       required(env, 'PREVIEW_SOURCE_ORIGIN'),
       'PREVIEW_SOURCE_ORIGIN',
@@ -198,10 +226,12 @@ export function describeConfig(config) {
     chainId: config.chainId,
     defaultCommit: config.defaultCommit,
     defaultPreviousPackageCid: config.defaultPreviousPackageCid,
+    mainnetRpcConfigured: (config.mainnetRpcUrl ?? '').length > 0,
     opRpcConfigured: config.opRpcUrl.length > 0,
     port: config.port,
     rpcConfigured: config.rpcUrl.length > 0,
     safeAddress: config.safeAddress,
+    simulatorMode: config.simulatorMode,
     sourceOrigin: config.sourceOrigin,
     uiOrigin: config.uiOrigin,
   });
