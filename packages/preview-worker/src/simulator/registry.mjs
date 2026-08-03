@@ -4,22 +4,14 @@ import {
   hexToString,
   stringToHex,
 } from 'viem';
-import { OP_CHAIN_ID, REYA_CHAIN_ID } from '../config.mjs';
+import { REYA_CHAIN_ID } from '../config.mjs';
 import { PreviewError } from '../errors.mjs';
 import { OP_REGISTRY_ABI, OP_REGISTRY_ADDRESS } from '../registry.mjs';
 import { ethCall } from '../rpc.mjs';
 
-export const ETHEREUM_CHAIN_ID = 1;
-
 // The Cannon registry is deployed at the same address on OP Mainnet and
-// Ethereum Mainnet, and is read in that order — the same fallback order the
-// Cannon CLI uses, so a preview resolves the package a `cannon build` would.
+// Ethereum Mainnet, so one address serves both reads.
 export const CANNON_REGISTRY_ADDRESS = OP_REGISTRY_ADDRESS;
-
-export const REGISTRY_RPC_ORDER = Object.freeze([
-  OP_CHAIN_ID,
-  ETHEREUM_CHAIN_ID,
-]);
 
 export const MAX_REGISTRY_LOOKUPS = 256;
 
@@ -158,6 +150,9 @@ export function createPreviewRegistry({
   ) {
     throw new Error('preview registry configuration is invalid');
   }
+  // OP Mainnet first, then Ethereum Mainnet: the Cannon CLI's own order, so a
+  // preview resolves the package set a `cannon build` would.
+  const registryEndpoints = Object.freeze([opRpcUrl, mainnetRpcUrl]);
   const pinned = new Map();
   const overlay = new Map();
   const resolved = new Map();
@@ -246,9 +241,7 @@ export function createPreviewRegistry({
       if (lookups > MAX_REGISTRY_LOOKUPS) reject();
 
       let answer = Object.freeze({ mutability: '', url: null });
-      for (const url of REGISTRY_RPC_ORDER.map((registryChainId) =>
-        registryChainId === OP_CHAIN_ID ? opRpcUrl : mainnetRpcUrl,
-      )) {
+      for (const url of registryEndpoints) {
         const candidate = await readOnChain(url, parsed, chainId);
         if (candidate.url !== null) {
           answer = candidate;
