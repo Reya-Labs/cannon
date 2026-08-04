@@ -11,6 +11,19 @@ import {
   validateRuntimeImageInventory,
 } from './validate-runtime-image-inventory.mjs';
 import { verifySafeAppBackendWorkflows } from './verify-safe-app-backend-workflows.mjs';
+import {
+  SERVICE_PUBLISHERS,
+  ciPathFor,
+  publishPathFor,
+  verifyServicePublisherWorkflow,
+} from './verify-service-publisher-workflows.mjs';
+
+const servicePublishers = new Map(
+  SERVICE_PUBLISHERS.map((descriptor) => [
+    publishPathFor(descriptor.service).split('/').at(-1),
+    descriptor,
+  ])
+);
 
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultRepositoryRoot = resolve(dirname(scriptPath), '../..');
@@ -70,18 +83,23 @@ const workflowPolicies = new Map([
       push: ['alpha', 'dev', 'main'],
     },
   ],
+  // The three service CI workflows are gates for their publishers, so each is
+  // reachable as a trusted reusable call and no longer runs on a dev push of
+  // its own: the publisher runs it, and publishes only if it succeeded.
   [
     'preview-worker.yml',
     {
       pull_request: ['dev', 'main'],
-      push: ['dev', 'main'],
+      push: ['main'],
+      workflow_call: null,
     },
   ],
   [
     'rpc-gateway.yml',
     {
       pull_request: ['dev', 'main'],
-      push: ['dev', 'main'],
+      push: ['main'],
+      workflow_call: null,
     },
   ],
   [
@@ -96,10 +114,14 @@ const workflowPolicies = new Map([
     'source-gateway.yml',
     {
       pull_request: ['dev', 'main'],
-      push: ['dev', 'main'],
+      push: ['main'],
+      workflow_call: null,
     },
   ],
   ['safe-app-backend-publish.yml', null],
+  ['preview-worker-publish.yml', null],
+  ['rpc-gateway-publish.yml', null],
+  ['source-gateway-publish.yml', null],
   [
     'reya-safe-ui.yml',
     {
@@ -302,6 +324,7 @@ const allowedGitHubContexts = new Map([
       'github.event.pull_request.number',
       'github.event_name',
       'github.run_id',
+      'github.sha',
     ]),
   ],
   [
@@ -883,6 +906,121 @@ const auditSafeAppBackendPublisher = (repositoryRoot, workflowPath, errors) => {
   }
 };
 
+// One auditor for the three Reya Cannon service publishers. They carry package,
+// OIDC and attestation write authority, so the generic workflow audit — which
+// forbids job-level permissions outright — cannot be used. Everything the
+// generic path would have enforced is enforced here explicitly, and the exact
+// reviewed shape lives in verify-service-publisher-workflows.mjs.
+const auditServicePublisher = (
+  descriptor,
+  repositoryRoot,
+  workflowPath,
+  errors,
+  visitedActions
+) => {
+  const displayPath = relative(repositoryRoot, workflowPath);
+  const { text, value } = readYaml(workflowPath, displayPath, errors);
+  auditRawText(text, displayPath, errors);
+  if (!isRecord(value)) {
+    if (value !== undefined)
+      errors.push(`${displayPath}: workflow must be a mapping`);
+    return;
+  }
+
+  const { service } = descriptor;
+  const publisherJobName = `publish-${service}`;
+
+  auditEvents(value.on, { push: ['dev'] }, displayPath, errors);
+  auditPermissions(value.permissions, displayPath, errors);
+
+  if (
+    !isRecord(value.jobs) ||
+    !sameStrings(Object.keys(value.jobs), [service, publisherJobName])
+  ) {
+    errors.push(
+      `${displayPath}: jobs must be exactly ${service} and ${publisherJobName}`
+    );
+  } else {
+    const reusableJob = value.jobs[service];
+    if (
+      !isRecord(reusableJob) ||
+      !sameStrings(Object.keys(reusableJob), ['permissions', 'uses']) ||
+      reusableJob.uses !== `./.github/workflows/${service}.yml` ||
+      !isRecord(reusableJob.permissions) ||
+      !sameStrings(Object.keys(reusableJob.permissions), ['contents']) ||
+      reusableJob.permissions.contents !== 'read'
+    ) {
+      errors.push(
+        `${displayPath}: ${service} must be an exact read-only call to the reviewed reusable workflow`
+      );
+    }
+
+    const publisherJob = value.jobs[publisherJobName];
+    const expectedPermissions = {
+      'artifact-metadata': 'write',
+      attestations: 'write',
+      contents: 'read',
+      'id-token': 'write',
+      packages: 'write',
+    };
+    if (
+      !isRecord(publisherJob) ||
+      !isRecord(publisherJob.permissions) ||
+      !sameStrings(
+        Object.keys(publisherJob.permissions),
+        Object.keys(expectedPermissions)
+      ) ||
+      Object.entries(expectedPermissions).some(
+        ([key, expected]) => publisherJob.permissions[key] !== expected
+      )
+    ) {
+      errors.push(
+        `${displayPath}: publisher job permissions must match the reviewed GHCR and attestation set`
+      );
+    }
+    if (
+      !isRecord(publisherJob) ||
+      publisherJob.environment !== 'cannon-image-publish' ||
+      publisherJob['runs-on'] !== 'ubuntu-24.04' ||
+      publisherJob['timeout-minutes'] !== 30
+    ) {
+      errors.push(
+        `${displayPath}: publisher environment, runner and timeout must remain cannon-image-publish, ubuntu-24.04 and 30 minutes`
+      );
+    }
+
+    // The reviewed action allowlist is not consulted by the exact-schema
+    // contract, so consult it here: a newly pinned but unreviewed action would
+    // otherwise reach a job that can push an image.
+    if (Array.isArray(publisherJob?.steps)) {
+      for (const [index, step] of publisherJob.steps.entries()) {
+        if (isRecord(step) && 'uses' in step) {
+          auditActionUse(
+            step.uses,
+            step,
+            repositoryRoot,
+            `${displayPath}:jobs.${publisherJobName}.steps.${index}.uses`,
+            errors,
+            visitedActions
+          );
+        }
+      }
+    }
+  }
+
+  try {
+    verifyServicePublisherWorkflow({
+      descriptor,
+      ciSource: readFileSync(join(repositoryRoot, ciPathFor(service)), 'utf8'),
+      publishSource: text,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'publisher policy failed';
+    errors.push(`${displayPath}: ${message}`);
+  }
+};
+
 const auditRuntimePublisher = (
   expectedEvents,
   repositoryRoot,
@@ -1415,6 +1553,14 @@ export const auditRepository = (repositoryRoot = defaultRepositoryRoot) => {
     }
     if (workflow === 'safe-app-backend-publish.yml') {
       auditSafeAppBackendPublisher(root, join(workflowPath, workflow), errors);
+    } else if (servicePublishers.has(workflow)) {
+      auditServicePublisher(
+        servicePublishers.get(workflow),
+        root,
+        join(workflowPath, workflow),
+        errors,
+        visitedActions
+      );
     } else if (workflow === 'runtime-publish.yml') {
       auditRuntimePublisher(
         workflowPolicies.get(workflow),

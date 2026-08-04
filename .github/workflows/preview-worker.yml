@@ -7,8 +7,8 @@ on:
       - main
   push:
     branches:
-      - dev
       - main
+  workflow_call:
 
 permissions:
   contents: read
@@ -17,7 +17,7 @@ jobs:
   preview-worker:
     name: Verify server-side preview derivation
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     concurrency:
       group: preview-worker-${{ github.event.pull_request.number || github.run_id }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -36,3 +36,50 @@ jobs:
       - run: pnpm --dir packages/preview-worker --ignore-workspace lint
       - name: Prove the derivation boundary, bounds and negative authorization
         run: pnpm --dir packages/preview-worker --ignore-workspace test
+      - name: Validate shell scripts
+        run: |
+          shellcheck packages/preview-worker/scripts/*.sh
+          bash -n packages/preview-worker/scripts/image-metadata.sh
+          bash -n packages/preview-worker/scripts/verify-image.sh
+          sh -n packages/preview-worker/scripts/verify-runtime.sh
+      - name: Derive source-addressed image metadata
+        id: image-metadata
+        env:
+          IMAGE_REVISION: ${{ github.sha }}
+        run: >-
+          bash packages/preview-worker/scripts/image-metadata.sh
+          "${IMAGE_REVISION}" >> "${GITHUB_OUTPUT}"
+      - name: Build the release image locally
+        env:
+          IMAGE_BUILD_DATE: ${{ steps.image-metadata.outputs.build_date }}
+          IMAGE_REVISION: ${{ steps.image-metadata.outputs.revision }}
+          IMAGE_SOURCE_DATE_EPOCH: ${{ steps.image-metadata.outputs.source_date_epoch }}
+          IMAGE_VERSION: ${{ steps.image-metadata.outputs.version }}
+        run: >-
+          docker build
+          --build-arg "VERSION=${IMAGE_VERSION}"
+          --build-arg "BUILD_REVISION=${IMAGE_REVISION}"
+          --build-arg "BUILD_DATE=${IMAGE_BUILD_DATE}"
+          --build-arg "SOURCE_DATE_EPOCH=${IMAGE_SOURCE_DATE_EPOCH}"
+          --tag preview-worker:ci
+          packages/preview-worker
+      - name: Reject fixed high or critical image vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: preview-worker:ci
+          version: v0.72.0
+          scanners: vuln
+          vuln-type: os,library
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+      - name: Verify runtime identity and embedded revision
+        env:
+          EXPECTED_BASE_DIGEST: sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+          EXPECTED_BASE_NAME: docker.io/library/alpine:3.24.1
+          EXPECTED_BUILD_DATE: ${{ steps.image-metadata.outputs.build_date }}
+          EXPECTED_BUILD_REVISION: ${{ steps.image-metadata.outputs.revision }}
+          EXPECTED_SOURCE: https://github.com/Reya-Labs/cannon
+          EXPECTED_SOURCE_DATE_EPOCH: ${{ steps.image-metadata.outputs.source_date_epoch }}
+          EXPECTED_VERSION: ${{ steps.image-metadata.outputs.version }}
+        run: bash packages/preview-worker/scripts/verify-image.sh preview-worker:ci

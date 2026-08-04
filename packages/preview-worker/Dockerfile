@@ -38,7 +38,9 @@ RUN pnpm install --prod --frozen-lockfile --ignore-scripts --no-optional
 # binary, so a final stage that can run Anvil has to be glibc-based, and the
 # engine is built from the monorepo, so the build context has to widen past
 # this package. See "Runtime the image must provide" in README.md. A worker
-# started with PREVIEW_SIMULATOR_MODE=fork on this image fails to start.
+# started with PREVIEW_SIMULATOR_MODE=fork on this image fails to start, and
+# scripts/verify-runtime.sh asserts both prerequisites really are absent rather
+# than leaving that to convention.
 FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 WORKDIR /usr/app
@@ -81,6 +83,8 @@ EXPOSE ${PORT}
 COPY --from=production-dependencies /usr/app/package.json ./package.json
 COPY --from=production-dependencies /usr/app/node_modules ./node_modules
 COPY ./src ./src
+COPY ./scripts/verify-runtime.sh /usr/local/bin/verify-runtime
+RUN chmod 0555 /usr/local/bin/verify-runtime
 
 USER node
 

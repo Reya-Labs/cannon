@@ -39,6 +39,8 @@ jobs:
       - run: node .github/scripts/validate-runtime-image-inventory.test.mjs
       - run: node .github/scripts/validate-runtime-image-inventory.mjs .github/runtime-image-inventory.json
       - run: node .github/scripts/verify-runtime-bundle-input.test.mjs
+      - run: node .github/scripts/verify-service-publisher-workflows.mjs
+      - run: node .github/scripts/verify-service-publisher-workflows.test.mjs
       - run: bash -n .github/scripts/generate-expected-runtime-sbom.sh .github/scripts/scan-runtime-image.sh .github/scripts/verify-runtime-image.sh
 
   dependency-review:

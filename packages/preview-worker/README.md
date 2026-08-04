@@ -180,11 +180,28 @@ selects what gets imported, so an operator cannot substitute an engine. If the
 image lacks it, `startServer` throws before the socket is opened rather than
 serving previews from a degraded path.
 
-Those image changes are deliberately not part of the change that added this
-simulator: they alter the base image and the build context, and no workflow
-builds this image today, so they cannot be verified alongside it. Until they
-land, `PREVIEW_SIMULATOR_MODE` must stay `disabled` in every deployed profile —
-and a profile that sets `fork` anyway will fail to start rather than serve.
+Those image changes remain deferred. The published image is the `disabled`-mode
+worker: shipping it unblocks deployment now, whereas a `fork`-capable image
+needs a glibc final stage and a build context widened past this package, and
+neither can be scanned or verified by the per-package pipeline that gates this
+image. Until they land, `PREVIEW_SIMULATOR_MODE` must stay `disabled` in every
+deployed profile — and a profile that sets `fork` anyway will fail to start
+rather than serve.
+
+That is an asserted property, not a convention: `scripts/verify-runtime.sh`
+fails the build if the Cannon engine or a Foundry binary ever appears in this
+image, and separately requires `loadPreviewEngine()` to reject inside it.
+
+## Published image
+
+`ghcr.io/reya-labs/preview-worker`, tagged with the source revision and
+addressed by digest. `.github/workflows/preview-worker-publish.yml` runs the
+full CI workflow — including the image build, the Trivy scan and the runtime
+verification above — and publishes only if that succeeded, only from a
+protected `dev` head, only inside the `cannon-image-publish` environment, and
+only while the `CANNON_PREVIEW_WORKER_PUBLISH_ENABLED` repository variable is
+`true`. The pushed digest is re-pulled, re-verified and attested before the run
+reports success.
 
 ## Configuration
 
