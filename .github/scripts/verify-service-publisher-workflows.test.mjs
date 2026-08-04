@@ -258,4 +258,124 @@ assertRejected(
   'is not pinned to a commit SHA'
 );
 
+assertRejected(
+  'CI workflow inherits the whole secret store into a called workflow',
+  (sources) =>
+    replace(
+      sources,
+      ciPathFor('rpc-gateway'),
+      '    runs-on: ubuntu-24.04\n    timeout-minutes: 20',
+      '    secrets: inherit\n    runs-on: ubuntu-24.04\n    timeout-minutes: 20'
+    ),
+  'must not consume secrets'
+);
+
+assertRejected(
+  'CI workflow takes the blanket write-all grant',
+  (sources) =>
+    replace(
+      sources,
+      ciPathFor('source-gateway'),
+      '    runs-on: ubuntu-24.04\n    timeout-minutes: 20',
+      '    permissions: write-all\n    runs-on: ubuntu-24.04\n    timeout-minutes: 20'
+    ),
+  'must not request write permissions'
+);
+
+assertRejected(
+  'CI workflow pushes an image with the string form of the input',
+  (sources) =>
+    replace(
+      sources,
+      ciPathFor('preview-worker'),
+      "          exit-code: '1'",
+      "          exit-code: '1'\n          push: 'true'"
+    ),
+  'must not push an image'
+);
+
+assertRejected(
+  'CI workflow scans an image it never built',
+  (sources) =>
+    replace(
+      sources,
+      ciPathFor('rpc-gateway'),
+      '          image-ref: rpc-gateway:ci',
+      '          image-ref: alpine:3.24.1'
+    ),
+  'must scan rpc-gateway:ci, the image built from this package'
+);
+
+assertRejected(
+  'CI workflow scans a tag nothing builds',
+  (sources) =>
+    replace(
+      sources,
+      ciPathFor('source-gateway'),
+      '          --tag source-gateway:ci',
+      '          --tag source-gateway:unscanned'
+    ),
+  'must build source-gateway:ci from packages/source-gateway before scanning it'
+);
+
+assertRejected(
+  'CI workflow downgrades the scan to a warning',
+  (sources) =>
+    replace(
+      sources,
+      ciPathFor('preview-worker'),
+      "          exit-code: '1'",
+      "          exit-code: '0'"
+    ),
+  'scan must fail the job on a finding'
+);
+
+assertRejected(
+  'CI workflow narrows the scan below the reviewed severity',
+  (sources) =>
+    replace(
+      sources,
+      ciPathFor('rpc-gateway'),
+      '          severity: HIGH,CRITICAL',
+      '          severity: CRITICAL'
+    ),
+  'scan must cover high and critical findings'
+);
+
+assertRejected(
+  'CI workflow stops scanning library packages',
+  (sources) =>
+    replace(
+      sources,
+      ciPathFor('source-gateway'),
+      '          vuln-type: os,library',
+      '          vuln-type: os'
+    ),
+  'scan must cover both OS and library packages'
+);
+
+assertRejected(
+  'CI workflow drops the vulnerability scanner but keeps the step',
+  (sources) =>
+    replace(
+      sources,
+      ciPathFor('source-gateway'),
+      '          scanners: vuln,secret',
+      '          scanners: secret'
+    ),
+  'scan must include the vulnerability scanner'
+);
+
+assertRejected(
+  'CI workflow floats the scanner version',
+  (sources) =>
+    replace(
+      sources,
+      ciPathFor('preview-worker'),
+      '          version: v0.72.0',
+      '          version: latest'
+    ),
+  'must scan with the reviewed pinned scanner version'
+);
+
 process.stdout.write('Service publisher policy negative probes passed\n');

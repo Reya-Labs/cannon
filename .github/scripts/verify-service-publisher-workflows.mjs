@@ -310,8 +310,19 @@ function walkStrings(value, visit, path = 'workflow') {
   }
   if (!isRecord(value)) return;
   for (const [key, entry] of Object.entries(value)) {
+    // Keys carry authority too. `secrets: inherit` hands the whole secret store
+    // to a called workflow, and its value string — "inherit" — says nothing
+    // about that, so a value-only walk would wave it through.
+    visit(key, `${path}.${key} (key)`);
     walkStrings(entry, visit, `${path}.${key}`);
   }
+}
+
+function collectSteps(workflow) {
+  const jobs = isRecord(workflow.jobs) ? Object.values(workflow.jobs) : [];
+  return jobs.flatMap((job) =>
+    isRecord(job) && Array.isArray(job.steps) ? job.steps.filter(isRecord) : []
+  );
 }
 
 function assertNoSecretsContext(workflow, workflowName) {
@@ -369,6 +380,12 @@ function assertPinnedRemoteActions(workflow, workflowName) {
 }
 
 function hasWritePermission(value, parentKey) {
+  // `permissions: write-all` is a bare string, not a mapping, so a mapping-only
+  // walk would miss the broadest grant GitHub accepts. `read-all` is the only
+  // string form that grants nothing.
+  if (parentKey === 'permissions' && typeof value === 'string') {
+    return value !== 'read-all';
+  }
   if (Array.isArray(value)) {
     return value.some((entry) => hasWritePermission(entry, parentKey));
   }
@@ -383,9 +400,11 @@ function hasWritePermission(value, parentKey) {
 function hasEnabledImagePush(value) {
   if (Array.isArray(value)) return value.some(hasEnabledImagePush);
   if (!isRecord(value)) return false;
+  // Action inputs are strings as often as booleans; `push: "true"` pushes.
   return Object.entries(value).some(
     ([key, entry]) =>
-      (key === 'push' && entry === true) || hasEnabledImagePush(entry)
+      (key === 'push' && (entry === true || entry === 'true')) ||
+      hasEnabledImagePush(entry)
   );
 }
 
@@ -437,11 +456,57 @@ export function verifyServicePublisherWorkflow({
 
   // The publisher only runs when this workflow succeeded, so the scan has to
   // live here. Without it the gate would attest to nothing.
+  //
+  // Presence alone is too weak to be worth much: an edit could keep Trivy in
+  // the job and point it at an unrelated image, and the publisher would still
+  // release. So bind the scan to the exact tag this workflow builds from this
+  // package, and pin the settings that decide whether a finding fails the job.
+  const ciImageTag = `${service}:ci`;
+  const scanSteps = collectSteps(ciWorkflow).filter(
+    (step) =>
+      typeof step.uses === 'string' &&
+      step.uses.startsWith('aquasecurity/trivy-action@')
+  );
   invariant(
-    ciActions.some((action) =>
-      action.startsWith('aquasecurity/trivy-action@')
-    ),
+    scanSteps.length === 1,
     `${ciName} must scan the built image before the publisher can be gated on it`
+  );
+  const scan = isRecord(scanSteps[0].with) ? scanSteps[0].with : {};
+  invariant(
+    scan['image-ref'] === ciImageTag,
+    `${ciName} must scan ${ciImageTag}, the image built from this package`
+  );
+  invariant(
+    scan.version === 'v0.72.0',
+    `${ciName} must scan with the reviewed pinned scanner version`
+  );
+  invariant(
+    typeof scan.scanners === 'string' &&
+      scan.scanners.split(',').includes('vuln'),
+    `${ciName} scan must include the vulnerability scanner`
+  );
+  invariant(
+    scan['vuln-type'] === 'os,library',
+    `${ciName} scan must cover both OS and library packages`
+  );
+  invariant(
+    scan.severity === 'HIGH,CRITICAL',
+    `${ciName} scan must cover high and critical findings`
+  );
+  invariant(
+    scan['exit-code'] === '1',
+    `${ciName} scan must fail the job on a finding, otherwise the publisher gate means nothing`
+  );
+
+  // A scan of a tag nothing built would pass vacuously.
+  invariant(
+    collectSteps(ciWorkflow).some(
+      (step) =>
+        typeof step.run === 'string' &&
+        step.run.includes(`--tag ${ciImageTag}`) &&
+        step.run.includes(`packages/${service}`)
+    ),
+    `${ciName} must build ${ciImageTag} from packages/${service} before scanning it`
   );
 
   assertPublisherSecretsContract(publishWorkflow, publisherName);
