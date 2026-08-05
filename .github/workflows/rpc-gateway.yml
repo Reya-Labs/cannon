@@ -7,8 +7,8 @@ on:
       - main
   push:
     branches:
-      - dev
       - main
+  workflow_call:
 
 permissions:
   contents: read

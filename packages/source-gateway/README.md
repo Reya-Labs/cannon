@@ -46,3 +46,14 @@ RUN_NETWORK_TESTS=1 pnpm test
 
 The opt-in network test downloads one pinned public archive and verifies the
 real `reya_network.toml` include closure. It never writes to GitHub or GCP.
+
+## Published image
+
+`ghcr.io/reya-labs/source-gateway`, tagged with the source revision and
+addressed by digest. `.github/workflows/source-gateway-publish.yml` runs this
+package's full CI workflow — including the image build, the Trivy scan and
+`scripts/verify-image.sh` — and publishes only if that succeeded, only from a
+protected `dev` head, only inside the `cannon-image-publish` environment, and
+only while the `CANNON_SOURCE_GATEWAY_PUBLISH_ENABLED` repository variable is
+`true`. The pushed digest is re-pulled, re-verified and attested before the run
+reports success.

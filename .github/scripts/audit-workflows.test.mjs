@@ -1203,4 +1203,90 @@ assertRejected(
   'source must exactly match the reviewed workflow digest'
 );
 
+assertRejected(
+  'deleted service publisher',
+  (root) =>
+    rmSync(join(root, '.github/workflows/source-gateway-publish.yml'), {
+      force: true,
+    }),
+  'source-gateway-publish.yml: required workflow is missing'
+);
+
+assertRejected(
+  'service publisher escalates job permissions',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/rpc-gateway-publish.yml'),
+      '    permissions:\n      artifact-metadata: write\n      attestations: write\n      contents: read',
+      '    permissions:\n      artifact-metadata: write\n      attestations: write\n      contents: write'
+    ),
+  'publisher job permissions must match the reviewed GHCR and attestation set'
+);
+
+assertRejected(
+  'service publisher leaves the protected environment',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/preview-worker-publish.yml'),
+      '    environment: cannon-image-publish\n',
+      ''
+    ),
+  'publisher environment, runner and timeout must remain cannon-image-publish'
+);
+
+assertRejected(
+  'service publisher gains a manual trigger',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/source-gateway-publish.yml'),
+      'on:\n  push:',
+      'on:\n  workflow_dispatch:\n  push:'
+    ),
+  'events must be exactly'
+);
+
+assertRejected(
+  'service publisher uses an unreviewed pinned action',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/rpc-gateway-publish.yml'),
+      'docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c',
+      'docker/setup-buildx-action@0000000000000000000000000000000000000000'
+    ),
+  'action is not in the reviewed allowlist'
+);
+
+assertRejected(
+  'service publisher stops calling its reviewed CI gate',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/preview-worker-publish.yml'),
+      '    uses: ./.github/workflows/preview-worker.yml',
+      '    uses: ./.github/workflows/source-gateway.yml'
+    ),
+  'must be an exact read-only call to the reviewed reusable workflow'
+);
+
+assertRejected(
+  'service CI stops being callable by its publisher',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/source-gateway.yml'),
+      '  push:\n    branches:\n      - main\n  workflow_call:',
+      '  push:\n    branches:\n      - dev\n      - main'
+    ),
+  'events must be exactly'
+);
+
+assertRejected(
+  'service CI stops scanning the image its publisher is gated on',
+  (root) =>
+    replace(
+      join(root, '.github/workflows/preview-worker.yml'),
+      '        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0',
+      '        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0'
+    ),
+  'must scan the built image before the publisher can be gated on it'
+);
+
 console.log('Workflow policy negative probes passed.');
